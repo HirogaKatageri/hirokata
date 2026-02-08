@@ -125,6 +125,55 @@ Complete requirements-to-implementation workflow with 7-phase architecture.
 
 The plugin includes skills for development workflow support:
 
+### `develop:comprehensive-review` *(NEW in 0.2.3)*
+
+Orchestrates a complete multi-dimensional review of code changes, running four specialized review agents in parallel.
+
+**Responsibilities:**
+- Run all four code review agents simultaneously (product, business-logic, edge-case, architecture)
+- Collect and consolidate reports from all agents
+- Present comprehensive analysis with prioritized action items
+- Provide executive summary across all review dimensions
+
+**Trigger Phrases:**
+- "review my changes"
+- "run comprehensive review"
+- "review against requirements"
+- "check all my code"
+- "run all reviewers"
+- "comprehensive code review"
+
+**Review Dimensions:**
+1. **Requirements Compliance** - Verify all requirements are implemented
+2. **Test Coverage** - Ensure business logic is testable and tested
+3. **Edge Case Handling** - Identify unhandled edge cases
+4. **Architectural Alignment** - Check clean architecture compliance
+
+**Features:**
+- Parallel agent execution for fast reviews (2-5 minutes)
+- Consolidated reporting with priority rankings
+- Detailed interpretation guides and decision matrices
+- Go/no-go assessment for PR readiness
+- Evidence-based findings with file paths and line numbers
+
+**Supporting Resources:**
+- `references/agent-capabilities.md` - Detailed agent documentation
+- `references/review-interpretation.md` - How to interpret findings
+- `examples/phase-completion-review.md` - Phase completion example
+- `examples/pr-readiness-review.md` - PR readiness example with security issue
+
+**Workflow:**
+1. Identify review scope (requirements, recent changes)
+2. Launch all 4 agents in parallel
+3. Collect agent reports
+4. Present consolidated report with executive summary and prioritized actions
+
+**Output Format:**
+- Executive summary (overall status, critical issues, warnings)
+- Review dimensions summary (compliance %, test coverage, edge cases, architecture)
+- Priority actions (Must Fix/Should Fix/Consider)
+- Detailed reports from each agent
+
 ### `develop:split-plan`
 
 Analyzes a master plan file and splits it into 7 phase-specific implementation plans organized by feature tracks.
@@ -239,6 +288,120 @@ Transforms feature ideas into structured requirements documents using the produc
 - `examples/BIOMETRIC_SIGNIN_REQUIREMENTS.md` - Complete requirements example
 
 ## Agents
+
+### Code Review Agents *(NEW in 0.2.3)*
+
+The plugin includes four specialized code review agents that work together to provide comprehensive code quality analysis:
+
+#### `develop:product-reviewer`
+
+Verifies implementation satisfies all documented requirements from master plans, phase plans, and requirements documents.
+
+**Responsibilities:**
+- Compare recent changes against requirements documents
+- Verify all requirements are implemented
+- Identify missing or incomplete functionality
+- Report gaps between planned features and implementation
+- Validate features match intended specifications
+
+**Color:** Magenta
+
+**Model:** Haiku (fast, cost-effective reviews)
+
+**Tools:** Read, Grep, Glob, Bash
+
+**Output:**
+- Implementation percentage (Implemented/Partial/Missing)
+- Detailed requirements status with evidence
+- Prioritized recommendations to close gaps
+
+#### `develop:code-reviewer-business-logic`
+
+Ensures business logic is designed for testability and has adequate unit test coverage.
+
+**Responsibilities:**
+- Review business logic for testability patterns
+- Identify missing unit tests
+- Find testability anti-patterns (tight coupling, hard-coded dependencies)
+- Provide refactoring suggestions for improved testability
+- Verify test coverage adequacy
+
+**Color:** Green
+
+**Model:** Haiku (fast, cost-effective reviews)
+
+**Tools:** Read, Grep, Glob, Bash
+
+**Output:**
+- Test coverage percentage
+- Testability issues with refactoring recommendations
+- Missing test scenarios by function/method
+- Test quality assessment
+
+#### `develop:code-reviewer-edge-case`
+
+Identifies unhandled edge cases, boundary conditions, error scenarios, and exceptional situations.
+
+**Responsibilities:**
+- Analyze input handling and validation
+- Identify boundary conditions (null, empty, overflow)
+- Find error scenarios not properly handled
+- Review data structure edge cases
+- Check concurrency and resource management issues
+
+**Color:** Yellow
+
+**Model:** Haiku (fast, cost-effective reviews)
+
+**Tools:** Read, Grep, Glob, Bash
+
+**Output:**
+- Critical edge cases (high likelihood × high impact)
+- Warning edge cases (medium risk)
+- Info edge cases (low risk)
+- Specific code examples and recommended fixes
+- Testing suggestions
+
+**Edge Case Categories:**
+- Null/undefined handling
+- Empty collections
+- Numeric boundaries
+- String edge cases
+- Date/time issues
+- Concurrency problems
+- External dependency failures
+
+#### `develop:code-reviewer-architecture`
+
+Reviews code for alignment with clean architecture principles and the 7-phase development structure.
+
+**Responsibilities:**
+- Verify dependency rule (dependencies point inward)
+- Check layer separation and boundaries
+- Identify architectural violations and anti-patterns
+- Ensure code is in correct architectural phase
+- Provide architectural improvement recommendations
+
+**Color:** Cyan
+
+**Model:** Haiku (fast, cost-effective reviews)
+
+**Tools:** Read, Grep, Glob, Bash
+
+**Output:**
+- Dependency direction compliance percentage
+- Critical architectural violations
+- Layer misplacements
+- Architectural warnings and recommendations
+- Architectural debt assessment
+
+**Checks:**
+- Dependency Rule compliance
+- Layer separation
+- Business logic independence
+- Framework coupling
+- Interface design
+- God classes and circular dependencies
 
 ### `develop:software-architect` *(NEW in 0.2.2)*
 
@@ -530,19 +693,31 @@ Always review the master plan and phase structure before execution:
 ```
 cc-develop-plugin/
 ├── .claude-plugin/
-│   └── plugin.json              # Plugin manifest
+│   └── plugin.json                      # Plugin manifest
 ├── agents/
-│   ├── software-architect.md    # Software architect agent (NEW in 0.2.2)
-│   ├── product-owner.md         # Product owner agent (NEW in 0.1.1)
-│   ├── development-planner.md   # Development planner agent
-│   └── senior-developer.md      # Senior developer agent
+│   ├── software-architect.md            # Software architect agent (NEW in 0.2.2)
+│   ├── product-owner.md                 # Product owner agent (NEW in 0.1.1)
+│   ├── development-planner.md           # Development planner agent
+│   ├── senior-developer.md              # Senior developer agent
+│   ├── product-reviewer.md              # Requirements compliance reviewer (NEW in 0.2.3)
+│   ├── code-reviewer-business-logic.md  # Testability and test coverage reviewer (NEW in 0.2.3)
+│   ├── code-reviewer-edge-case.md       # Edge case and boundary reviewer (NEW in 0.2.3)
+│   └── code-reviewer-architecture.md    # Architecture alignment reviewer (NEW in 0.2.3)
 ├── commands/
-│   └── develop-project.md       # Main workflow command
+│   └── develop-project.md               # Main workflow command
 ├── skills/
-│   ├── split-plan/              # Split master plan into phases
-│   ├── estimate-task/           # Task estimation
-│   ├── categorize-task/         # Task categorization
-│   ├── conventional-commit/     # Conventional commit generator (NEW in 0.1.2)
+│   ├── split-plan/                      # Split master plan into phases
+│   ├── estimate-task/                   # Task estimation
+│   ├── categorize-task/                 # Task categorization
+│   ├── comprehensive-review/            # Multi-dimensional code review (NEW in 0.2.3)
+│   │   ├── SKILL.md
+│   │   ├── references/
+│   │   │   ├── agent-capabilities.md
+│   │   │   └── review-interpretation.md
+│   │   └── examples/
+│   │       ├── phase-completion-review.md
+│   │       └── pr-readiness-review.md
+│   ├── conventional-commit/             # Conventional commit generator (NEW in 0.1.2)
 │   │   ├── SKILL.md
 │   │   ├── references/
 │   │   │   ├── conventional-commits-spec.md
@@ -592,6 +767,21 @@ For issues, questions, or feature requests:
 3. Include relevant error messages or logs
 
 ## Changelog
+
+### 0.2.3
+- **Four Code Review Agents** - Comprehensive multi-dimensional code review system
+  - **product-reviewer** - Verifies implementation against requirements
+  - **code-reviewer-business-logic** - Ensures testability and test coverage
+  - **code-reviewer-edge-case** - Identifies unhandled edge cases
+  - **code-reviewer-architecture** - Reviews architectural alignment
+  - All agents use Haiku model for fast, cost-effective reviews
+- **New Skill: comprehensive-review** - Orchestrates all four review agents in parallel
+  - Runs complete analysis in single command (2-5 minutes)
+  - Generates consolidated report with prioritized action items
+  - Provides executive summary and detailed findings
+  - Includes interpretation guides and decision matrices
+  - Two comprehensive examples (phase completion, PR readiness)
+  - Reference documentation for agent capabilities and review interpretation
 
 ### 0.2.2
 - **New Agent: software-architect** - Dedicated agent for master plan creation

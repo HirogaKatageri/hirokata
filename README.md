@@ -28,19 +28,25 @@ A comprehensive project and task management system with intelligent agents and s
 
 [View Documentation →](plugins/cc-tracker-plugin/README.md)
 
-### 2. Develop Plugin (v0.2.2)
+### 2. Develop Plugin (v0.2.3)
 
-Automated requirements-to-implementation workflow using a 7-phase clean architecture approach with intelligent commit generation and dedicated software architecture planning.
+Automated requirements-to-implementation workflow using a 7-phase clean architecture approach with intelligent commit generation, dedicated software architecture planning, and comprehensive code review system.
 
 **Features:**
 - Converts requirements documents into working code
 - 7-phase clean architecture (Foundational → Models → Services → Data → Rules → State Management → UI)
 - Adaptive parallelism (1-8 developer agents based on task complexity)
-- **NEW in 0.2.2: Software architect agent** for comprehensive master plan creation
+- **NEW in 0.2.3: Four specialized code review agents**
+  - Product reviewer for requirements compliance
+  - Business logic reviewer for testability and test coverage
+  - Edge case reviewer for boundary conditions and error handling
+  - Architecture reviewer for clean architecture alignment
+- **NEW in 0.2.3: Comprehensive review skill** - Parallel multi-dimensional code review in 2-5 minutes
+- Software architect agent for comprehensive master plan creation
 - Conventional commit generator with intelligent change grouping
 - Resume capability for interrupted workflows
 - Integrates with tracker system for real-time progress
-- Specialized agents: software architect, product owner, development planner, and senior developer
+- Specialized agents: software architect, product owner, development planner, senior developer, and 4 code reviewers
 
 **Use Cases:**
 - Transforming requirements into implementation plans
@@ -48,6 +54,9 @@ Automated requirements-to-implementation workflow using a 7-phase clean architec
 - Large-scale feature development
 - Structured refactoring projects
 - Creating semantic, well-organized commit history
+- Pre-PR comprehensive code quality reviews
+- Requirements compliance verification
+- Test coverage and edge case analysis
 
 [View Documentation →](plugins/cc-develop-plugin/README.md)
 

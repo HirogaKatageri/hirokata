@@ -5,6 +5,42 @@ All notable changes to the Develop Plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-02-08
+
+### Added
+- **Four Code Review Agents** - Comprehensive multi-dimensional code review system
+  - **product-reviewer** (Magenta, Haiku) - Verifies implementation against requirements
+    - Compares changes to master plans, phase plans, and requirements documents
+    - Identifies missing or incomplete functionality
+    - Reports implementation compliance with evidence
+  - **code-reviewer-business-logic** (Green, Haiku) - Ensures testability and test coverage
+    - Verifies business logic is designed for testability
+    - Identifies missing unit tests and untestable code patterns
+    - Provides refactoring suggestions for improved testability
+  - **code-reviewer-edge-case** (Yellow, Haiku) - Identifies unhandled edge cases
+    - Analyzes code for boundary conditions and error scenarios
+    - Categorizes findings by severity (Critical/Warning/Info)
+    - Suggests defensive programming improvements
+  - **code-reviewer-architecture** (Cyan, Haiku) - Reviews architectural alignment
+    - Verifies clean architecture principles and 7-phase structure
+    - Identifies dependency violations and layer misplacements
+    - Provides architectural improvement recommendations
+
+- **comprehensive-review skill** - Orchestrates all four review agents in parallel
+  - Runs complete multi-dimensional analysis in single command
+  - Generates consolidated report with prioritized action items
+  - Provides executive summary across all review dimensions
+  - Includes detailed interpretation guides and decision matrices
+  - Two comprehensive examples: phase completion and PR readiness reviews
+  - Reference documentation: agent capabilities and review interpretation
+
+### Improved
+- Code quality assurance workflow with systematic multi-dimensional reviews
+- Requirements compliance verification with automated tracking
+- Test coverage analysis integrated into development workflow
+- Edge case identification for production-ready code
+- Architectural alignment verification throughout development
+
 ## [0.2.2] - 2026-02-08
 
 ### Added
