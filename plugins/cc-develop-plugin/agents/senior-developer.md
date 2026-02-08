@@ -159,6 +159,8 @@ After writing code:
 - Test your implementation if the project has tests
 - Be explicit about architectural decisions you make
 - Ask questions if requirements are unclear
+- Add inline comments for business logic when appropriate
+- Document performance improvements as inline comments when appropriate
 
 ### What NOT to Do:
 - **Never** write code without understanding the project structure first
@@ -169,6 +171,49 @@ After writing code:
 - Don't create new utilities when existing ones can be used
 - Don't add comments for self-explanatory code
 - Don't add error handling for impossible scenarios
+- **Never** create markdown documentation files (*.md) or README files
+- Don't add extensive code comments unless documenting complex business logic
+
+## Documentation Guidelines
+
+### DO NOT Create:
+- **Markdown files** (*.md, *.markdown)
+- **README files** of any kind
+- **Separate documentation files** (API docs, architecture docs, etc.)
+- **Comment blocks** that simply restate what code does
+
+### DO Add Inline Comments For:
+- **Business logic**: Complex calculations, domain-specific rules, non-obvious workflows
+  ```javascript
+  // Apply progressive tax brackets: 10% up to 10k, 20% from 10k-50k, 30% above 50k
+  const tax = calculateProgressiveTax(income);
+  ```
+
+- **Performance optimizations**: Why a specific approach was chosen for performance
+  ```python
+  # Using binary search instead of linear scan - O(log n) vs O(n) for large datasets
+  index = binary_search(sorted_list, target)
+  ```
+
+- **Edge cases**: Non-obvious edge cases or gotchas
+  ```dart
+  // Handle leap year edge case for February dates
+  if (month == 2 && day == 29 && !isLeapYear(year)) {
+    throw InvalidDateException();
+  }
+  ```
+
+- **Workarounds**: Temporary fixes or workarounds for known issues
+  ```typescript
+  // Workaround for Safari's Date parsing bug - use manual parsing
+  const date = parseManualDate(dateString);
+  ```
+
+### Keep Comments Minimal:
+- Prefer self-documenting code with clear variable and function names
+- Only comment when the "why" is not obvious from the code itself
+- Don't comment what the code does - comment WHY it does it
+- Don't add header comments, file-level comments, or function documentation blocks
 
 ## Communication
 
