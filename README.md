@@ -2,6 +2,26 @@
 
 A curated collection of Claude Code plugins for enhanced development workflows, featuring intelligent task tracking and automated requirements-to-implementation pipelines.
 
+**📋 [View Changelog](CHANGELOG.md)** | **🔗 Version 0.3.0**
+
+## What's New
+
+### Latest Updates (v0.3.0 - Feb 2026)
+
+**Comprehensive Code Review System** - The Develop plugin now includes four specialized review agents that work in parallel to provide complete code quality analysis:
+- ✅ **Product Review**: Verify implementation matches requirements
+- 🧪 **Business Logic Review**: Ensure testability and test coverage
+- ⚠️ **Edge Case Review**: Identify boundary conditions and error handling
+- 🏗️ **Architecture Review**: Validate clean architecture alignment
+
+Use `/develop:comprehensive-review` to run all four reviews in parallel (2-5 minutes) for complete pre-PR validation.
+
+**Software Architect Agent** - Dedicated agent for creating comprehensive master plans that analyze requirements and existing codebases to design implementation strategies.
+
+**Requirements Generation** - New `/develop:generate-requirements` skill transforms ideas into structured requirements documents with templates and best practices.
+
+[View Full Changelog →](CHANGELOG.md)
+
 ## Overview
 
 This marketplace provides production-ready Claude Code plugins that extend Claude's capabilities with specialized agents, skills, and workflows designed for software development teams.
@@ -236,19 +256,21 @@ hirokata-cc-marketplace/
 
 ## Roadmap
 
+See [CHANGELOG.md](CHANGELOG.md) for detailed version history and upcoming features.
+
 ### Planned Plugins
 
 - **Test Plugin**: Automated test generation and execution
-- **Review Plugin**: Code review assistance and suggestions
 - **Deploy Plugin**: Deployment automation workflows
 - **Docs Plugin**: Documentation generation from code
 
-### Enhancements
+### Planned Enhancements
 
 - Web-based marketplace browser
 - Plugin dependency management
 - Version compatibility checking
 - Community plugin submissions
+- Enhanced plugin discovery and search
 
 ## License
 
@@ -281,7 +303,11 @@ Built for the Claude Code ecosystem by developers who believe in:
 
 ## Resources
 
+### Documentation
+- [Marketplace Changelog](CHANGELOG.md)
+- [Tracker Plugin Docs](plugins/cc-tracker-plugin/README.md) | [Changelog](plugins/cc-tracker-plugin/CHANGELOG.md)
+- [Develop Plugin Docs](plugins/cc-develop-plugin/README.md) | [Changelog](plugins/cc-develop-plugin/CHANGELOG.md)
+
+### Claude Code
 - [Claude Code Documentation](https://docs.anthropic.com/claude/docs)
 - [Plugin Development Guide](https://docs.anthropic.com/claude/docs/claude-code-plugins)
-- [Tracker Plugin Docs](plugins/cc-tracker-plugin/README.md)
-- [Develop Plugin Docs](plugins/cc-develop-plugin/README.md)
