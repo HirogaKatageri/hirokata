@@ -6,15 +6,16 @@ version: 0.1.0
 
 # Comprehensive Review
 
-This skill orchestrates a complete multi-dimensional review of code changes against requirements, running four specialized review agents in parallel to provide comprehensive feedback on implementation quality.
+This skill orchestrates a complete multi-dimensional review of code changes against requirements, running five specialized review agents in parallel to provide comprehensive feedback on implementation quality.
 
 ## Purpose
 
-Provide a thorough analysis of recent code changes across four critical dimensions:
+Provide a thorough analysis of recent code changes across five critical dimensions:
 1. **Requirements Compliance** - Verify all requirements are implemented
 2. **Test Coverage** - Ensure business logic is testable and tested
 3. **Edge Case Handling** - Identify unhandled edge cases and boundary conditions
 4. **Architectural Alignment** - Check compliance with clean architecture principles
+5. **Security** - Identify security vulnerabilities and risks
 
 ## When to Use This Skill
 
@@ -49,7 +50,7 @@ First, determine what needs to be reviewed:
 
 ### Step 2: Launch Review Agents in Parallel
 
-Execute all four review agents concurrently for maximum efficiency:
+Execute all five review agents concurrently for maximum efficiency:
 
 ```markdown
 Launch the following agents in parallel using multiple Task tool invocations in a single message:
@@ -64,10 +65,13 @@ Launch the following agents in parallel using multiple Task tool invocations in 
    - Prompt: "Review recent changes for unhandled edge cases, boundary conditions, and error scenarios. Identify potential edge case issues."
 
 4. **code-reviewer-architecture** agent
-   - Prompt: "Review recent changes for architectural alignment with clean architecture principles and the 7-phase structure. Identify architectural violations and provide recommendations."
+   - Prompt: "Review recent changes for architectural alignment with clean architecture principles and the 8-phase structure. Identify architectural violations and provide recommendations."
+
+5. **code-reviewer-security** agent
+   - Prompt: "Review recent changes for security vulnerabilities including injection flaws, authentication issues, sensitive data exposure, access control weaknesses, and cryptographic misconfigurations. Identify all security risks and provide remediation guidance."
 ```
 
-**Important:** Launch all four agents in a single message with multiple Task tool calls to maximize parallelization and reduce total review time.
+**Important:** Launch all five agents in a single message with multiple Task tool calls to maximize parallelization and reduce total review time.
 
 ### Step 3: Collect Agent Reports
 
@@ -123,6 +127,13 @@ Provide a comprehensive summary to the user:
 - Status: [Good/Needs Work]
 - [Link to detailed report below]
 
+### ✅ Security
+- Critical Vulnerabilities: [count]
+- High Vulnerabilities: [count]
+- Medium Vulnerabilities: [count]
+- Status: [Secure/Needs Attention/At Risk/Critical Risk]
+- [Link to detailed report below]
+
 ## Priority Actions
 
 List the most critical items across all reviews:
@@ -167,6 +178,12 @@ List the most critical items across all reviews:
 
 ---
 
+### 5. Security Review Report
+
+[Full code-reviewer-security agent report]
+
+---
+
 ## Next Steps
 
 Recommended actions based on all reviews:
@@ -179,7 +196,7 @@ Recommended actions based on all reviews:
 
 ### Efficient Agent Usage
 
-- **Parallel execution:** Always launch all four agents in parallel
+- **Parallel execution:** Always launch all five agents in parallel
 - **Clear prompts:** Provide specific requirements file paths to agents
 - **Scope clarity:** Be explicit about what commits or changes to review
 
@@ -216,6 +233,12 @@ Continuing with remaining reviews...
 [Present reports from successful agents]
 
 Note: [agent-name] review incomplete. May need to run separately.
+```
+
+**Security review not applicable:**
+```markdown
+No security-sensitive code detected in recent changes.
+Security review skipped. If this is incorrect, specify which files to review.
 ```
 
 ## Tips for Effective Reviews
@@ -279,12 +302,13 @@ Expected flow:
 
 ## Agent Descriptions
 
-For reference, the four agents provide:
+For reference, the five agents provide:
 
 - **product-reviewer:** Compares implementation against requirements documents, identifies missing or incomplete features
 - **code-reviewer-business-logic:** Verifies business logic is testable and has proper unit test coverage
 - **code-reviewer-edge-case:** Identifies unhandled edge cases, boundary conditions, and error scenarios
-- **code-reviewer-architecture:** Reviews architectural alignment with clean architecture and 7-phase structure
+- **code-reviewer-architecture:** Reviews architectural alignment with clean architecture and 8-phase structure
+- **code-reviewer-security:** Identifies security vulnerabilities (OWASP Top 10), authentication flaws, injection risks, sensitive data exposure, and provides remediation guidance
 
 ## Performance Notes
 

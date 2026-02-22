@@ -151,7 +151,7 @@ Identifies unhandled edge cases, boundary conditions, error scenarios, and excep
 ## Code Reviewer - Architecture Agent
 
 ### Purpose
-Reviews code for alignment with clean architecture principles and the 7-phase development structure.
+Reviews code for alignment with clean architecture principles and the 8-phase development structure.
 
 ### What It Analyzes
 - Layer dependencies and dependency direction
@@ -202,7 +202,7 @@ Reviews code for alignment with clean architecture principles and the 7-phase de
 3. **Business Logic Independence:** No framework coupling
 4. **Testability:** Inner layers easily testable
 
-### 7-Phase Architecture Structure
+### 8-Phase Architecture Structure
 - **Phase 1 - Foundational:** Config, constants, infrastructure (no business logic)
 - **Phase 2 - Models/Entities:** Domain models (no external dependencies)
 - **Phase 3 - Services/Use Cases:** Business logic (no UI/framework)
@@ -210,6 +210,7 @@ Reviews code for alignment with clean architecture principles and the 7-phase de
 - **Phase 5 - Business Rules:** Validation, authorization (pure rules)
 - **Phase 6 - State Management:** Orchestration (delegates to Services)
 - **Phase 7 - UI/Presentation:** Controllers, views (no business logic)
+- **Phase 8 - Tests:** Unit tests, integration tests, e2e tests, test utilities (test code only)
 
 ### Common Architectural Anti-Patterns
 - **Tight Coupling:** Direct instantiation instead of DI
@@ -221,13 +222,71 @@ Reviews code for alignment with clean architecture principles and the 7-phase de
 - **God Class:** Single class handling too many concerns
 - **Feature Envy:** Class using another class's data more than its own
 
+## Code Reviewer - Security Agent
+
+### Purpose
+Identifies security vulnerabilities, weaknesses, and anti-patterns in code changes aligned with OWASP Top 10 and security best practices.
+
+### What It Analyzes
+- Injection vulnerabilities (SQL, command, LDAP, template injection)
+- Authentication and session management flaws
+- Sensitive data exposure (unencrypted PII, secrets in code, logging)
+- Broken access control and authorization issues
+- Security misconfigurations and weak cryptography
+- Input validation and output encoding (XSS, CSRF)
+- Hardcoded secrets, API keys, and credentials
+- Insecure dependencies and transitive vulnerabilities
+
+### Analysis Process
+1. Identifies changed code via git diff
+2. Scans for injection vulnerability patterns
+3. Reviews authentication and authorization logic
+4. Audits sensitive data handling and storage
+5. Checks cryptographic usage and key management
+6. Inspects error handling for information disclosure
+7. Searches for hardcoded secrets
+
+### Report Structure
+- **Summary:** Vulnerability counts by severity and overall security posture
+- **Critical Vulnerabilities:** RCE, auth bypass, direct data breach risks
+- **High Vulnerabilities:** Privilege escalation, SQL injection, significant exposure
+- **Medium Vulnerabilities:** XSS, CSRF, information disclosure, weak crypto
+- **Low / Informational:** Security header gaps, verbose errors, best practice improvements
+- **Secrets Audit:** Hardcoded credentials and sensitive data in logs
+- **Security Strengths:** Good security practices already in use
+- **Remediation Priority:** Prioritized action list with code examples
+
+### Key Metrics
+- Critical vulnerability count
+- High vulnerability count
+- Medium vulnerability count
+- Overall security posture (Secure/Needs Attention/At Risk/Critical Risk)
+- Secrets found (count)
+
+### Severity Classification
+- **Critical:** Remote code execution, authentication bypass, direct data breach
+- **High:** Privilege escalation, SQL injection, significant data exposure
+- **Medium:** XSS, CSRF, information disclosure, weak cryptography
+- **Low:** Missing security headers, verbose errors, minor misconfigurations
+- **Info:** Best practice improvements, defense-in-depth recommendations
+
+### When It Flags Issues
+- String concatenation in SQL queries or shell commands
+- Missing authentication or authorization checks on protected resources
+- Hardcoded passwords, API keys, or tokens in source code
+- Use of deprecated cryptographic algorithms (MD5, SHA1, DES)
+- Sensitive data (PII, credentials) written to logs
+- Missing input validation on user-controlled data
+- Insecure randomness for security-sensitive operations
+
 ## Cross-Agent Insights
 
 ### Issue Overlap
 Some issues may appear in multiple reports:
 - **Business logic in UI:** Flagged by architecture agent (layer violation) and business-logic agent (testability issue)
 - **Untestable external dependencies:** Flagged by business-logic agent (testability) and architecture agent (tight coupling)
-- **Missing validation:** Flagged by edge-case agent (unhandled inputs) and potentially architecture agent (responsibility misplacement)
+- **Missing validation:** Flagged by edge-case agent (unhandled inputs), architecture agent (responsibility misplacement), and security agent (injection risk)
+- **Authentication flaws:** Flagged by security agent (vulnerability) and potentially architecture agent (layer violation)
 
 ### Complementary Analysis
 Agents provide different perspectives on the same code:
@@ -235,13 +294,15 @@ Agents provide different perspectives on the same code:
 - Business-logic reviewer: "Is feature X testable and tested?"
 - Edge-case reviewer: "Does feature X handle all edge cases?"
 - Architecture reviewer: "Is feature X in the right layer?"
+- Security reviewer: "Is feature X safe from attack?"
 
 ### Priority Determination
 When consolidating reports, prioritize:
 1. **Critical + Critical:** Issue flagged as critical by multiple agents
-2. **Requirement gap + Architecture violation:** Missing feature with structural problems
-3. **Untestable + Missing tests:** Code that can't be tested and isn't tested
-4. **Edge case + Architecture issue:** Safety concern with design problem
+2. **Security critical + any other critical:** Security issues always take precedence
+3. **Requirement gap + Architecture violation:** Missing feature with structural problems
+4. **Untestable + Missing tests:** Code that can't be tested and isn't tested
+5. **Edge case + Architecture issue:** Safety concern with design problem
 
 ## Interpreting Severity Levels
 
@@ -304,7 +365,7 @@ Evaluate:
 - **Business context:** Agents rely on documented requirements
 - **Domain expertise:** Some edge cases require domain knowledge
 - **Performance:** Agents don't profile or benchmark
-- **Security:** Specialized security review may be needed
+- **Advanced security:** Penetration testing, threat modeling, and runtime security require human expertise beyond code analysis
 - **UX/Design:** Human evaluation required
 
 ## Performance Characteristics
@@ -314,6 +375,7 @@ Evaluate:
 - **Business-logic reviewer:** ~1-2 minutes (depends on code changes)
 - **Edge-case reviewer:** ~2-3 minutes (more thorough analysis)
 - **Architecture reviewer:** ~1-2 minutes (depends on codebase size)
+- **Security reviewer:** ~2-3 minutes (thorough vulnerability scanning)
 
 **Parallel execution:** Total time ≈ slowest agent (~2-3 minutes)
 
