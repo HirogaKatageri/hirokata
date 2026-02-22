@@ -5,6 +5,38 @@ All notable changes to the Develop Plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-22
+
+### Added
+- **code-reviewer-security agent** - Dedicated security review agent expanding parallel review from 4 to 5 agents
+  - OWASP Top 10 vulnerability detection (injection, broken auth, XSS, etc.)
+  - Sensitive data exposure and hardcoded secrets identification
+  - Cryptography and authentication flaw analysis
+  - Security findings prioritized above all other review categories
+  - Integrated into comprehensive-review skill for automated security checks
+- **Phase 8 (Tests)** - Added dedicated testing phase to clean architecture workflow
+  - Separate phase for unit tests, integration tests, and e2e tests
+  - Cleaner separation between production code phases and test phases
+  - Updated all agents and skills to reflect 8-phase structure
+
+### Changed
+- **develop-project** - Moved from commands to skills for consistency
+- **development-planner agent** - Updated model from sonnet to haiku
+- **categorize-task skill** - Updated to reflect 8-phase architecture
+- **split-plan skill** - Complexity scoring integrated; estimate-task removed
+- **senior-developer agent** - Added comprehensive documentation and comment guidelines
+  - Explicit prohibition of creating markdown files and READMEs
+  - Rules for when to add inline comments (business logic, performance, edge cases)
+  - Emphasis on self-documenting code with minimal comments
+
+### Removed
+- **estimate-task skill** - Complexity scoring consolidated into split-plan skill
+
+### Improved
+- Security coverage with automated OWASP-aligned review
+- Architecture clarity with dedicated test phase
+- Developer documentation guidelines for cleaner codebases
+
 ## [0.2.3] - 2026-02-08
 
 ### Added

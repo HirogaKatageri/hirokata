@@ -16,6 +16,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin dependency management
 - Version compatibility checking
 
+## [0.4.0] - 2026-02-22
+
+### Updated
+- **Develop Plugin v0.3.0** - Security review and 8-phase architecture upgrade
+  - New code-reviewer-security agent with OWASP Top 10 coverage
+  - Phase 8 (Tests) added to clean architecture workflow
+  - develop-project moved from commands to skills
+  - estimate-task removed; complexity scoring integrated into split-plan
+  - development-planner model updated to haiku for efficiency
+  - senior-developer agent enhanced with strict documentation guidelines
+
+### Improved
+- Security posture with automated vulnerability detection in code reviews
+- Architecture clarity by separating test tasks into dedicated Phase 8
+- Workflow consistency with develop-project as a skill
+- Developer documentation quality guidelines
+
 ## [0.3.0] - 2026-02-08
 
 ### Added
@@ -111,6 +128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No breaking changes between current versions
 
 ### Migration Notes
+- **0.3.0 → 0.4.0**: Minor breaking change — estimate-task skill removed; develop-project moved to skills
 - **0.2.0 → 0.3.0**: No breaking changes, new review features are additive
 - **0.1.0 → 0.2.0**: No breaking changes, enhanced documentation and new agents
 - **0.0.1 → 0.1.0**: No breaking changes, documentation improvements
