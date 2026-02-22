@@ -1,18 +1,18 @@
 ---
 name: categorize-task
-description: Reference guide for classifying development tasks into the 7-phase clean architecture structure (Foundational → Models → Services → Data → Rules → State Management → UI). Use when you need to determine which architectural phase a task belongs to.
+description: Reference guide for classifying development tasks into the 8-phase clean architecture structure (Foundational → Models → Services → Data → Rules → State Management → UI → Tests). Use when you need to determine which architectural phase a task belongs to.
 user-invocable: false
 ---
 
 # Categorize Task
 
-Classify development tasks into the 7-phase clean architecture structure. This helps organize work into the correct architectural layer.
+Classify development tasks into the 8-phase clean architecture structure. This helps organize work into the correct architectural layer.
 
 ## Purpose
 
-Provide a reference guide for determining which architectural phase (Foundational → Models → Services → Data → Rules → State Management → UI) a development task belongs to.
+Provide a reference guide for determining which architectural phase (Foundational → Models → Services → Data → Rules → State Management → UI → Tests) a development task belongs to.
 
-## The 7 Phases
+## The 8 Phases
 
 Tasks must be classified into one of these sequential phases:
 
@@ -157,6 +157,26 @@ Tasks must be classified into one of these sequential phases:
 
 ---
 
+### Phase 8: Tests
+**Purpose**: Unit tests, integration tests, e2e tests, test utilities, test fixtures
+
+**Belongs here if the task involves**:
+- Writing unit tests for business logic or services
+- Creating integration tests across layers
+- Building end-to-end test scenarios
+- Setting up test utilities, mocks, or fixtures
+- Configuring test infrastructure (test runners, coverage tools)
+- Writing test helpers or shared test data
+
+**Examples**:
+- "Write unit tests for login use case"
+- "Add integration tests for checkout flow"
+- "Create e2e tests for authentication"
+- "Set up mock repository for testing"
+- "Add test fixtures for product data"
+
+---
+
 ## Classification Process
 
 To classify a task, ask these questions in order:
@@ -168,12 +188,13 @@ To classify a task, ask these questions in order:
 5. **Is it business logic/rules?** → Phase 5
 6. **Does it manage application state?** → Phase 6
 7. **Is it user interface?** → Phase 7
+8. **Does it write tests or test utilities?** → Phase 8
 
 ## Clean Architecture Principle
 
 Remember: Dependencies flow inward
 ```
-UI → State Management → Rules → Data → Services → Models → Foundational
+Tests → UI → State Management → Rules → Data → Services → Models → Foundational
 ```
 
 - **Outer layers** depend on **inner layers**
@@ -191,6 +212,7 @@ UI → State Management → Rules → Data → Services → Models → Foundatio
 | Use cases, business rules | 5 - Rules |
 | ViewModels, Blocs, state handlers | 6 - State Management |
 | Screens, widgets, components | 7 - UI |
+| Unit tests, integration tests, e2e tests | 8 - Tests |
 
 ## Complex Task Classification
 
@@ -208,6 +230,7 @@ Some tasks may span multiple phases. In these cases:
 - Phase 5: Create login/logout use cases
 - Phase 6: Build AuthenticationBloc/ViewModel
 - Phase 7: Create login/signup screens
+- Phase 8: Write unit and integration tests for auth flow
 
 ## Edge Cases
 
@@ -217,7 +240,7 @@ Some tasks may span multiple phases. In these cases:
 
 **Error handling**: Goes with the phase where the error occurs
 
-**Testing**: Typically same phase as the code being tested
+**Testing**: Always Phase 8 (Tests), regardless of which phase the tested code belongs to
 
 **Documentation**: Same phase as the feature being documented
 

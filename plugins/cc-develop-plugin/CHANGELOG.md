@@ -22,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     - Categorizes findings by severity (Critical/Warning/Info)
     - Suggests defensive programming improvements
   - **code-reviewer-architecture** (Cyan, Haiku) - Reviews architectural alignment
-    - Verifies clean architecture principles and 7-phase structure
+    - Verifies clean architecture principles and 8-phase structure
     - Identifies dependency violations and layer misplacements
     - Provides architectural improvement recommendations
 
@@ -127,7 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Initial release
-- 7-phase clean architecture workflow
+- 8-phase clean architecture workflow
 - Adaptive parallel execution (1-8 agents)
 - Master plan and phase plan generation
 - Tracker integration

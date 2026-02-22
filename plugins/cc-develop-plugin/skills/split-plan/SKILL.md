@@ -1,6 +1,6 @@
 ---
 name: split-plan
-description: Analyze a master plan file and split it into 7 phase-specific implementation plans organized by feature tracks. Automatically identifies tracks, classifies tasks by phase, scores complexity, and generates detailed phase plan files following clean architecture principles.
+description: Analyze a master plan file and split it into 8 phase-specific implementation plans organized by feature tracks. Automatically identifies tracks, classifies tasks by phase, scores complexity, and generates detailed phase plan files following clean architecture principles.
 user-invocable: false
 arguments:
   - name: master-plan-path
@@ -13,15 +13,15 @@ arguments:
 
 # Split Plan
 
-Transform a master plan into 7 phase-specific implementation plans organized by feature tracks with complexity scoring.
+Transform a master plan into 8 phase-specific implementation plans organized by feature tracks with complexity scoring.
 
 ## Purpose
 
-Analyze a master plan file and generate 7 separate plan files, one for each phase of clean architecture (Foundational, Models, Services, Data, Rules, State Management, UI).
+Analyze a master plan file and generate 8 separate plan files, one for each phase of clean architecture (Foundational, Models, Services, Data, Rules, State Management, UI, Tests).
 
 ## Overview
 
-Analyze a master plan file and generate 7 separate plan files, one for each phase of clean architecture:
+Analyze a master plan file and generate 8 separate plan files, one for each phase of clean architecture:
 
 1. **Foundational** - Base abstractions, utilities, infrastructure
 2. **Models** - Data entities, DTOs, value objects
@@ -30,6 +30,7 @@ Analyze a master plan file and generate 7 separate plan files, one for each phas
 5. **Rules** - Business logic, use cases, validation
 6. **State Management** - ViewModels, presenters, state handlers
 7. **UI** - Screens, components, widgets
+8. **Tests** - Unit tests, integration tests, test utilities
 
 ## Inputs
 
@@ -38,7 +39,7 @@ Analyze a master plan file and generate 7 separate plan files, one for each phas
 
 ## Outputs
 
-Seven phase plan files in `.trackers/${base-name}/plans/`:
+Eight phase plan files in `.trackers/${base-name}/plans/`:
 - `${base-name}-01-foundational.md`
 - `${base-name}-02-models.md`
 - `${base-name}-03-services.md`
@@ -46,6 +47,7 @@ Seven phase plan files in `.trackers/${base-name}/plans/`:
 - `${base-name}-05-rules.md`
 - `${base-name}-06-state-management.md`
 - `${base-name}-07-ui.md`
+- `${base-name}-08-tests.md`
 
 ## Workflow
 
@@ -74,6 +76,7 @@ Read the master plan from `${master-plan-path}` and:
 5. Contains business logic? → Phase 5 (Rules)
 6. Manages app state? → Phase 6 (State Management)
 7. Renders UI? → Phase 7 (UI)
+8. Writes tests (unit, integration, e2e)? → Phase 8 (Tests)
 
 **Score complexity** for each task (1-3):
 - **1 (Low)**: Simple, straightforward (add field, create model, basic utility)
@@ -90,11 +93,11 @@ mkdir -p .trackers/${base-name}/plans
 
 ### 2. Generate Phase Plan Files
 
-For each phase (1-7), create a plan file using the template below.
+For each phase (1-8), create a plan file using the template below.
 
 **File naming**: `.trackers/${base-name}/plans/${base-name}-{NN}-{name}.md`
-- Use zero-padded numbers: 01, 02, ..., 07
-- Use lowercase phase names: foundational, models, services, data, rules, state-management, ui
+- Use zero-padded numbers: 01, 02, ..., 08
+- Use lowercase phase names: foundational, models, services, data, rules, state-management, ui, tests
 
 **If phase has no tasks**: Use the empty phase template (below)
 
@@ -106,13 +109,13 @@ For each phase (1-7), create a plan file using the template below.
 
 ### 3. Verify and Report
 
-**Verify all 7 files exist**:
+**Verify all 8 files exist**:
 ```bash
 ls -la .trackers/${base-name}/plans/
 ```
 
 **Report execution results**:
-- Files created (7/7)
+- Files created (8/8)
 - Total tracks identified
 - Total tasks across all phases
 - Complexity distribution
@@ -204,7 +207,7 @@ After completing all tasks in this phase, verify:
 - [ ] Tests are written and passing
 - [ ] Documentation is updated
 - [ ] No errors or warnings
-- [ ] Ready to proceed to Phase {N+1}
+- [ ] Ready to proceed to Phase {N+1} (or "Complete" if Phase 8)
 
 ## Notes
 
@@ -235,7 +238,7 @@ This phase may be populated in future iterations as the project evolves. {Phase 
 ## Phase Completion Checklist
 
 - [ ] Phase marked as complete (no tasks to implement)
-- [ ] Ready to proceed to Phase {N+1}
+- [ ] Ready to proceed to Phase {N+1} (or "Complete" if Phase 8)
 
 ## Notes
 
@@ -286,14 +289,23 @@ This phase will be skipped during implementation as no tasks are currently plann
 - Navigation, layouts, styling
 - Visual elements, user interactions
 
+### Phase 8: Tests
+- Unit tests for all layers (models, services, repositories, use cases, view models)
+- Integration tests for API clients, repositories, and complex workflows
+- UI tests, widget tests, component tests, end-to-end tests
+- Test utilities, mocks, fakes, stubs, and fixtures
+- Test configuration, test runners, CI test setup
+- Performance tests, snapshot tests
+
 ## Dependency Flow
 
 Dependencies flow inward in clean architecture:
 
 ```
-UI → State Management → Rules → Data → Services → Models → Foundational
+Tests → UI → State Management → Rules → Data → Services → Models → Foundational
 ```
 
+- Tests validate all layers (Tests may depend on any layer)
 - Outer layers depend on inner layers
 - Inner layers never depend on outer layers
 - Each phase can only depend on earlier phases
@@ -338,8 +350,8 @@ UI → State Management → Rules → Data → Services → Models → Foundatio
 
 **You MUST**:
 - Read the entire master plan before generating any phase plans
-- Create ALL 7 phase plan files (use empty template if no tasks)
-- Use zero-padded numbers in filenames (01-07, not 1-7)
+- Create ALL 8 phase plan files (use empty template if no tasks)
+- Use zero-padded numbers in filenames (01-08, not 1-8)
 - Assign every task a complexity score (1, 2, or 3)
 - Organize tasks by feature tracks within each phase
 - Follow the naming convention: `${base-name}-{NN}-{name}.md`
@@ -347,8 +359,8 @@ UI → State Management → Rules → Data → Services → Models → Foundatio
 - Ask for user confirmation before finishing
 
 **You MUST NOT**:
-- Skip any of the 7 phases
-- Create custom phases outside the defined 7
+- Skip any of the 8 phases
+- Create custom phases outside the defined 8
 - Assign tasks to incorrect phases
 - Create overly granular tracks (prefer broader groupings)
 - Forget complexity scores on tasks

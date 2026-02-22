@@ -9,7 +9,7 @@ The **develop** plugin transforms requirements documents into working code throu
 ### Key Features
 
 - **Automated Planning**: Converts requirements into comprehensive master plans
-- **Phase-Based Architecture**: Organizes implementation into 7 sequential clean architecture phases
+- **Phase-Based Architecture**: Organizes implementation into 8 sequential clean architecture phases
 - **Feature Tracking**: Groups related tasks into feature tracks across phases
 - **Complexity Scoring**: Analyzes task complexity for better estimation
 - **Adaptive Parallelism**: Spawns 1-8 developer agents based on task complexity
@@ -18,13 +18,13 @@ The **develop** plugin transforms requirements documents into working code throu
 
 ## Architecture
 
-This plugin implements a **7-phase clean architecture** workflow:
+This plugin implements an **8-phase clean architecture** workflow:
 
 ```
-Foundational → Models → Services → Data → Rules → State Management → UI
+Foundational → Models → Services → Data → Rules → State Management → UI → Tests
 ```
 
-### The 7 Phases
+### The 8 Phases
 
 1. **Foundational** - Base abstractions, utilities, infrastructure, and tooling setup
 2. **Models** - Data entities, model classes, DTOs, and value objects
@@ -33,6 +33,7 @@ Foundational → Models → Services → Data → Rules → State Management →
 5. **Rules** - Business logic, use cases, validation, and domain rules
 6. **State Management** - View models, presenters, state handlers, and controllers
 7. **UI** - Screens, components, views, and user interface
+8. **Tests** - Unit tests, integration tests, e2e tests, and test utilities
 
 **Why This Order?**
 
@@ -56,7 +57,7 @@ Within each phase, tasks are organized by track. For example, Phase 2 (Models) m
 
 ### `/develop:develop-project`
 
-Complete requirements-to-implementation workflow with 7-phase architecture.
+Complete requirements-to-implementation workflow with 8-phase architecture.
 
 **Usage:**
 ```
@@ -93,7 +94,7 @@ Complete requirements-to-implementation workflow with 7-phase architecture.
 2. **develop:software-architect Agent** creates comprehensive master plan from requirements
 3. **User Reviews** and approves the master plan
 4. **develop:development-planner Agent** analyzes master plan using `develop:split-plan` skill and organizes tasks into:
-   - 7 sequential phases (Foundational → Models → Services → Data → Rules → State Management → UI)
+   - 8 sequential phases (Foundational → Models → Services → Data → Rules → State Management → UI → Tests)
    - Feature-based tracks (authentication, products, etc.)
    - Complexity scores for each task (1-3)
 5. **tracker:tracker Agent** creates and populates tracker from phase plans
@@ -118,6 +119,7 @@ Complete requirements-to-implementation workflow with 7-phase architecture.
     ├── {BASE_NAME}-05-rules.md            # Phase 5 plan
     ├── {BASE_NAME}-06-state-management.md # Phase 6 plan
     ├── {BASE_NAME}-07-ui.md               # Phase 7 plan
+    ├── {BASE_NAME}-08-tests.md            # Phase 8 plan
     └── {BASE_NAME}-SUMMARY.md             # Summary report
 ```
 
@@ -176,7 +178,7 @@ Orchestrates a complete multi-dimensional review of code changes, running four s
 
 ### `develop:split-plan`
 
-Analyzes a master plan file and splits it into 7 phase-specific implementation plans organized by feature tracks.
+Analyzes a master plan file and splits it into 8 phase-specific implementation plans organized by feature tracks.
 
 **Responsibilities:**
 - Automatically identifies feature tracks
@@ -186,26 +188,9 @@ Analyzes a master plan file and splits it into 7 phase-specific implementation p
 
 **Used by:** development-planner agent during plan analysis
 
-### `develop:estimate-task`
-
-Reference guide for scoring task complexity using a 3-level system (1=Low, 2=Medium, 3=High).
-
-**Scoring System:**
-- **Score 1 (Low)**: Simple, straightforward tasks (constants, simple models, documentation)
-  - Examples: Add API constant, create basic model, update README
-  - Estimated effort: Minutes to 1-2 hours
-- **Score 2 (Medium)**: Implementation tasks requiring moderate effort (features, services, UI components)
-  - Examples: Implement login service, create form with validation, build state management
-  - Estimated effort: Half-day to 2 days
-- **Score 3 (High)**: Complex architectural tasks (authentication systems, payment integration, real-time features)
-  - Examples: Implement full auth system, integrate payment gateway, set up state framework
-  - Estimated effort: 2+ days
-
-**Used by:** development-planner agent during task complexity analysis
-
 ### `develop:categorize-task`
 
-Reference guide for classifying development tasks into the 7-phase clean architecture structure.
+Reference guide for classifying development tasks into the 8-phase clean architecture structure.
 
 **Classification System:**
 - **Phase 1 (Foundational)**: Infrastructure, utilities, abstract classes, base setup
@@ -215,6 +200,7 @@ Reference guide for classifying development tasks into the 7-phase clean archite
 - **Phase 5 (Rules)**: Business logic, use cases, validation, domain rules
 - **Phase 6 (State Management)**: View models, presenters, state handlers, controllers
 - **Phase 7 (UI)**: Screens, components, views, user interface
+- **Phase 8 (Tests)**: Unit tests, integration tests, e2e tests, test utilities
 
 **Used by:** development-planner agent during task organization
 
@@ -373,7 +359,7 @@ Identifies unhandled edge cases, boundary conditions, error scenarios, and excep
 
 #### `develop:code-reviewer-architecture`
 
-Reviews code for alignment with clean architecture principles and the 7-phase development structure.
+Reviews code for alignment with clean architecture principles and the 8-phase development structure.
 
 **Responsibilities:**
 - Verify dependency rule (dependencies point inward)
@@ -459,13 +445,13 @@ Transforms ambiguous ideas into well-structured requirements, user stories, and 
 
 ### `develop:development-planner`
 
-Analyzes master plans and organizes tasks into the 7-phase architecture with feature tracks using the `develop:split-plan` skill.
+Analyzes master plans and organizes tasks into the 8-phase architecture with feature tracks using the `develop:split-plan` skill.
 
 **Responsibilities:**
 - Parse master plan files
 - Identify feature tracks (authentication, products, etc.)
 - Map tasks to appropriate phases using `develop:split-plan` skill
-- Create phase-specific plan files (01-07)
+- Create phase-specific plan files (01-08)
 - Add complexity scores to tasks (1-3)
 - Generate dependency analysis
 - Create tracker structure
@@ -707,7 +693,6 @@ cc-develop-plugin/
 │   └── develop-project.md               # Main workflow command
 ├── skills/
 │   ├── split-plan/                      # Split master plan into phases
-│   ├── estimate-task/                   # Task estimation
 │   ├── categorize-task/                 # Task categorization
 │   ├── comprehensive-review/            # Multi-dimensional code review (NEW in 0.2.3)
 │   │   ├── SKILL.md
@@ -773,7 +758,7 @@ For issues, questions, or feature requests:
   - **product-reviewer** - Verifies implementation against requirements
   - **code-reviewer-business-logic** - Ensures testability and test coverage
   - **code-reviewer-edge-case** - Identifies unhandled edge cases
-  - **code-reviewer-architecture** - Reviews architectural alignment
+  - **code-reviewer-architecture** - Reviews 8-phase architectural alignment
   - All agents use Haiku model for fast, cost-effective reviews
 - **New Skill: comprehensive-review** - Orchestrates all four review agents in parallel
   - Runs complete analysis in single command (2-5 minutes)
@@ -838,7 +823,7 @@ For issues, questions, or feature requests:
 - Enhanced agent ecosystem with specialized roles (product-owner, development-planner, senior-developer)
 
 ### 0.1.0 (Initial Release)
-- Phase-based requirements-to-implementation workflow
+- 8-phase requirements-to-implementation workflow
 - Development planner agent for plan analysis and task organization
 - Senior developer agent for implementation
 - Start and resume commands
