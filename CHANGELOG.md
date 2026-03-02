@@ -16,6 +16,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin dependency management
 - Version compatibility checking
 
+## [0.4.1] - 2026-03-02
+
+### Updated
+- **Develop Plugin v0.3.1** - Workflow streamlining and developer experience improvements
+  - Streamlined develop-project from 8 to 6 steps with a single user gate (master plan review only)
+  - Removed development-planner agent; split-plan skill now called directly from develop-project
+  - Three-state resume support: TASKS.md (execution resume), master plan only (split-plan resume), or fresh run
+  - senior-developer model downgraded to Haiku for cost efficiency during concurrent agent execution
+  - TASKS.md replaces tracker plugin integration for progress tracking
+
+### Improved
+- Reduced cognitive overhead with a streamlined, largely automated develop-project workflow
+- Cost efficiency with Haiku model for concurrent senior-developer agents during parallel phase execution
+
 ## [0.4.0] - 2026-02-22
 
 ### Updated
@@ -128,6 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No breaking changes between current versions
 
 ### Migration Notes
+- **0.4.0 → 0.4.1**: No breaking changes; develop-project workflow streamlined, development-planner agent removed (internal)
 - **0.3.0 → 0.4.0**: Minor breaking change — estimate-task skill removed; develop-project moved to skills
 - **0.2.0 → 0.3.0**: No breaking changes, new review features are additive
 - **0.1.0 → 0.2.0**: No breaking changes, enhanced documentation and new agents

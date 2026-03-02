@@ -2,23 +2,21 @@
 
 A curated collection of Claude Code plugins for enhanced development workflows, featuring intelligent task tracking and automated requirements-to-implementation pipelines.
 
-**📋 [View Changelog](CHANGELOG.md)** | **🔗 Version 0.3.0**
+**📋 [View Changelog](CHANGELOG.md)** | **🔗 Version 0.4.1**
 
 ## What's New
 
-### Latest Updates (v0.3.0 - Feb 2026)
+### Latest Updates (v0.4.1 - Mar 2026)
 
-**Comprehensive Code Review System** - The Develop plugin now includes four specialized review agents that work in parallel to provide complete code quality analysis:
-- ✅ **Product Review**: Verify implementation matches requirements
-- 🧪 **Business Logic Review**: Ensure testability and test coverage
-- ⚠️ **Edge Case Review**: Identify boundary conditions and error handling
-- 🏗️ **Architecture Review**: Validate clean architecture alignment
+**Streamlined 6-Step Workflow** - The Develop plugin workflow has been simplified from 8 steps to 6 steps, reducing overhead and making automated runs faster and more predictable. The development-planner agent has been removed; the split-plan skill is now called directly.
 
-Use `/develop:comprehensive-review` to run all four reviews in parallel (2-5 minutes) for complete pre-PR validation.
+**Smart Three-State Resume Support** - Interrupted runs are detected and resumed intelligently based on what files exist: if TASKS.md is present the workflow resumes execution from where it left off; if only a master plan exists (no TASKS.md) it skips ahead to split-plan; if neither is found it starts a fresh run.
 
-**Software Architect Agent** - Dedicated agent for creating comprehensive master plans that analyze requirements and existing codebases to design implementation strategies.
+**Fixed Parallelism** - Adaptive parallelism modes have been removed in favour of a simple fixed rule: up to 3 developer agents run in parallel when there are 3 or more tasks in a phase, otherwise a single agent is used.
 
-**Requirements Generation** - New `/develop:generate-requirements` skill transforms ideas into structured requirements documents with templates and best practices.
+**Post-Implementation Comprehensive Review Loop** - After all phases complete, the plugin automatically runs a comprehensive review and applies fixes, repeating up to 2 iterations until the codebase passes review.
+
+**Single User Gate** - Only the master plan review requires your approval. Everything else runs automatically end-to-end.
 
 [View Full Changelog →](CHANGELOG.md)
 
@@ -48,25 +46,26 @@ A comprehensive project and task management system with intelligent agents and s
 
 [View Documentation →](plugins/cc-tracker-plugin/README.md)
 
-### 2. Develop Plugin (v0.2.3)
+### 2. Develop Plugin (v0.3.1)
 
-Automated requirements-to-implementation workflow using a 7-phase clean architecture approach with intelligent commit generation, dedicated software architecture planning, and comprehensive code review system.
+Automated requirements-to-implementation workflow using an 8-phase clean architecture approach with intelligent commit generation, dedicated software architecture planning, and comprehensive code review system.
 
 **Features:**
 - Converts requirements documents into working code
-- 7-phase clean architecture (Foundational → Models → Services → Data → Rules → State Management → UI)
-- Adaptive parallelism (1-8 developer agents based on task complexity)
-- **NEW in 0.2.3: Four specialized code review agents**
+- 8-phase clean architecture (Foundational → Models → Services → Data → Rules → State Management → UI → Review)
+- Fixed parallelism (up to 3 developer agents per phase)
+- Four specialized code review agents
   - Product reviewer for requirements compliance
   - Business logic reviewer for testability and test coverage
   - Edge case reviewer for boundary conditions and error handling
   - Architecture reviewer for clean architecture alignment
-- **NEW in 0.2.3: Comprehensive review skill** - Parallel multi-dimensional code review in 2-5 minutes
+- Comprehensive review skill - Parallel multi-dimensional code review in 2-5 minutes
+- Post-implementation review loop with auto-fix (up to 2 iterations)
 - Software architect agent for comprehensive master plan creation
 - Conventional commit generator with intelligent change grouping
-- Resume capability for interrupted workflows
-- Integrates with tracker system for real-time progress
-- Specialized agents: software architect, product owner, development planner, senior developer, and 4 code reviewers
+- Three-state resume capability for interrupted workflows (TASKS.md, master plan only, or fresh start)
+- Progress tracked via TASKS.md file
+- Specialized agents: software architect, product owner, senior developer, and 4 code reviewers (including code-reviewer-security)
 
 **Use Cases:**
 - Transforming requirements into implementation plans
@@ -157,33 +156,30 @@ tracker:tracker Agent: [Guides you through structured project setup with intelli
 /develop:develop-project requirements.md
 
 # The plugin will:
-# 1. Create a comprehensive master plan
-# 2. Wait for your review
-# 3. Organize tasks into 7 phases
-# 4. Let you select which phases to execute
-# 5. Spawn developer agents to implement code
-# 6. Track progress in real-time
-
-# View progress anytime
-/tracker:review-tracker my-project
+# 1. Create a comprehensive master plan (software-architect agent)
+# 2. Wait for your review and approval
+# 3. Split plan into 8 phases and build TASKS.md
+# 4. Execute all 8 phases sequentially (up to 3 agents per phase)
+# 5. Run comprehensive review and fix issues (up to 2 iterations)
+# 6. Generate final summary report
 ```
 
 ### Using Both Together
 
 ```bash
-# Use develop plugin for complete project workflow
+# Use develop plugin for complete automated project workflow
 /develop:develop-project requirements/my-app.md
 
-# The develop plugin automatically:
-# - Creates a tracker for the project
-# - Organizes work into phases and tracks
-# - Updates tracker as implementation progresses
+# The develop plugin manages its own progress via TASKS.md.
+# It does not create or update a tracker automatically.
 
-# Review overall progress anytime
-/tracker:review-tracker my-app
-
-# Or use tracker skills directly for manual task management
+# Use tracker plugin independently for manual task management
+# alongside your develop workflow:
+/tracker:create-tracker my-app
 /tracker:add-task my-app --phase=1 --track=authentication
+
+# Review tracker progress anytime
+/tracker:review-tracker my-app
 ```
 
 ## Plugin Architecture

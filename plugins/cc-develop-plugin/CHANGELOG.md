@@ -5,6 +5,19 @@ All notable changes to the Develop Plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-03-02
+
+### Changed
+- **develop-project workflow** - Streamlined from 8 steps to 6 steps with a single user gate (master plan review only); execution auto-continues across all phases with a post-implementation review after completion
+- **Progress tracking** - TASKS.md replaces tracker plugin integration for phase and task tracking; tracker-based tracking removed
+- **development-planner agent** - Removed; split-plan skill is now called directly from develop-project, with results reported back to the caller instead of prompting the user for confirmation
+- **senior-developer agent model** - Downgraded from Sonnet to Haiku to reduce cost during parallel phase execution where multiple senior-developer agents run concurrently
+- **Resume support** - Expanded to three-state detection: (1) TASKS.md exists → show per-phase task summary and jump to execution; (2) master plan exists without TASKS.md → skip plan regeneration and go to split-plan; (3) neither exists → fresh run from Step 1
+
+### Improved
+- **Post-implementation review** - Comprehensive review loop runs once after all phases complete, with a maximum of 2 fix iterations and auto-continuation
+- **Parallelism model** - Simplified to fixed rule: 3 agents when task count is ≥ 3, 1 agent otherwise (replaces previous adaptive system)
+
 ## [0.3.0] - 2026-02-22
 
 ### Added
