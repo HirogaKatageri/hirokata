@@ -40,17 +40,39 @@ If `FILE_PATH_OR_QUERY` is empty: ask "Please provide the name or path to your r
 - Must not be empty
 - If invalid, ask for different file and retry
 
-### 1.5 Check for Existing TASKS.md (Resume)
+### 1.5 Check for Existing Progress (Resume)
 
-Check if `.trackers/{BASE_NAME}/TASKS.md` exists (where `BASE_NAME` = filename without extension).
+Check for existing progress files to determine resume mode. Set `RESUME_MODE` based on what is found.
 
-- **Exists** → Read TASKS.md. Inform user: "Resuming from existing task list." Skip phases where all tasks are `[x]` in Step 5.
-- **Does not exist** → Fresh run, continue normally.
+**Check 1**: Does `.trackers/{BASE_NAME}/TASKS.md` exist?
+
+- **Yes** → Set `RESUME_MODE = tasks`. Read TASKS.md. For each phase, count `[x]` (done), `[ ]` and `[~]` and `[!]` (remaining) tasks. Present a resume summary to the user:
+
+  ```
+  Resuming existing build for {BASE_NAME}.
+
+  Phase 1: Foundational  [complete]     — {X}/{total} tasks done
+  Phase 2: Models        [complete]     — {X}/{total} tasks done
+  Phase 3: Services      [in_progress]  — {X}/{total} tasks done, {remaining} remaining
+  Phase 4: Data          [pending]      — 0/{total} tasks done
+  ...
+
+  Total remaining: {count} tasks across {count} phases.
+  Skipping plan generation — jumping to execution.
+  ```
+
+  Then jump directly to Step 5 (skip Steps 2, 3, and 4).
+
+**Check 2** (only if TASKS.md not found): Does `.trackers/{BASE_NAME}/plans/{BASE_NAME}-master-plan.md` exist?
+
+- **Yes** → Set `RESUME_MODE = plan`. Inform user: "Found existing master plan. Skipping regeneration." Skip Step 2 (jump directly to Step 3).
+- **No** → Set `RESUME_MODE = none`. Fresh run, continue normally.
 
 ### 1.6 Store Configuration
 
 - `RESOLVED_FILE_PATH`
 - `BASE_NAME` (filename without extension)
+- `RESUME_MODE` (`none` | `plan` | `tasks`)
 
 **TaskUpdate Task 1 → completed**
 
@@ -58,7 +80,11 @@ Check if `.trackers/{BASE_NAME}/TASKS.md` exists (where `BASE_NAME` = filename w
 
 ## Step 2: Generate Master Plan from Requirements
 
-**TaskUpdate Task 2 → in_progress**
+**Skip this step if `RESUME_MODE = plan` or `RESUME_MODE = tasks`.**
+
+**TaskUpdate Task 2 → completed** (mark immediately if skipping)
+
+**TaskUpdate Task 2 → in_progress** (only if running fresh)
 
 1. Read `RESOLVED_FILE_PATH`
 2. Create directory: `mkdir -p .trackers/{BASE_NAME}/plans`

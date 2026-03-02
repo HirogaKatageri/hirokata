@@ -140,7 +140,7 @@ All output goes under `.trackers/{BASE_NAME}/`:
 - **Single user gate**: Only one confirmation required — at master plan review (Step 3)
 - **No tracker plugin**: All task tracking via TASKS.md using Edit tool
 - **No development-planner agent**: split-plan Skill called directly by the orchestrator
-- **Resume support**: Re-running the skill skips phases where all tasks are `[x]` in TASKS.md
+- **Resume support**: Re-running detects three states — (1) TASKS.md exists: show per-phase remaining task summary and jump to execution (skip Steps 2–4); (2) only master plan exists: skip Step 2 regeneration, go to Step 3 for review; (3) neither: fresh run
 
 ## Additional Resources
 
