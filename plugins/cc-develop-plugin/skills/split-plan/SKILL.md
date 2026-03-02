@@ -121,10 +121,8 @@ ls -la .trackers/${base-name}/plans/
 - Complexity distribution
 - Any errors or warnings
 
-**Ask for confirmation**:
-Use AskUserQuestion to confirm:
-- "Does the phase planning look correct?"
-- Options: "Looks good", "Need to review", "Regenerate"
+**Report to caller**:
+Output a brief summary of results so the orchestrator can continue.
 
 ## Phase Plan File Template
 
@@ -356,7 +354,7 @@ Tests → UI → State Management → Rules → Data → Services → Models →
 - Organize tasks by feature tracks within each phase
 - Follow the naming convention: `${base-name}-{NN}-{name}.md`
 - Verify all files exist before reporting completion
-- Ask for user confirmation before finishing
+- Report results to caller upon completion
 
 **You MUST NOT**:
 - Skip any of the 8 phases
