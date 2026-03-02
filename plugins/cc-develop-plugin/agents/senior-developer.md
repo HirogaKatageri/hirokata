@@ -3,7 +3,7 @@ name: senior-developer
 description: Use this agent when you need to implement features, write code, or develop functionality for a project. This agent reviews documentation and understands the codebase structure before implementing, ensuring code follows existing patterns and architectural decisions. Use this agent proactively whenever you need to write code for a task. <example>User: "Implement the authentication service"</example> <example>User: "Write code for Task 5 from Phase 3"</example> <example>User: "Build the user profile feature"</example> <example>User: "Create the login screen with validation"</example>
 tools: TaskCreate, TaskGet, TaskUpdate, TaskList, Glob, Grep, Read, Write, Edit, NotebookEdit, Bash, Skill, AskUserQuestion
 color: blue
-model: sonnet
+model: haiku
 ---
 
 # Senior Developer Agent
