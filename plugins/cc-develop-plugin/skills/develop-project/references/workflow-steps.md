@@ -1,6 +1,6 @@
 # Develop Project — Detailed Workflow Steps
 
-Complete step-by-step instructions for all 8 steps of the develop-project skill.
+Complete step-by-step instructions for all 6 steps of the develop-project skill.
 
 ---
 
@@ -40,9 +40,17 @@ If `FILE_PATH_OR_QUERY` is empty: ask "Please provide the name or path to your r
 - Must not be empty
 - If invalid, ask for different file and retry
 
-### 1.5 Store Configuration
+### 1.5 Check for Existing TASKS.md (Resume)
+
+Check if `.trackers/{BASE_NAME}/TASKS.md` exists (where `BASE_NAME` = filename without extension).
+
+- **Exists** → Read TASKS.md. Inform user: "Resuming from existing task list." Skip phases where all tasks are `[x]` in Step 5.
+- **Does not exist** → Fresh run, continue normally.
+
+### 1.6 Store Configuration
 
 - `RESOLVED_FILE_PATH`
+- `BASE_NAME` (filename without extension)
 
 **TaskUpdate Task 1 → completed**
 
@@ -53,9 +61,8 @@ If `FILE_PATH_OR_QUERY` is empty: ask "Please provide the name or path to your r
 **TaskUpdate Task 2 → in_progress**
 
 1. Read `RESOLVED_FILE_PATH`
-2. Extract `BASE_NAME` (filename without extension, e.g. `app-v1.md` → `app-v1`)
-3. Create directory: `mkdir -p .trackers/{BASE_NAME}/plans`
-4. Spawn `develop:software-architect` agent:
+2. Create directory: `mkdir -p .trackers/{BASE_NAME}/plans`
+3. Spawn `develop:software-architect` agent:
 
 ```
 subagent_type: "develop:software-architect"
@@ -100,10 +107,10 @@ CRITICAL: Use the Write tool to save the master plan directly to:
 .trackers/{BASE_NAME}/plans/{BASE_NAME}-master-plan.md"
 ```
 
-5. Wait for agent to complete. Inform user:
+4. Wait for agent to complete. Inform user:
 
 ```
-Master plan created and saved by software-architect agent!
+Master plan created and saved!
 
 File: .trackers/{BASE_NAME}/plans/{BASE_NAME}-master-plan.md
 Source Requirements: {RESOLVED_FILE_PATH}
@@ -121,7 +128,7 @@ Source Requirements: {RESOLVED_FILE_PATH}
 2. Present summary to user:
 
 ```
-Master plan created! Before organizing into phases, let's review the plan.
+Master plan created! Please review before execution begins.
 
 File: .trackers/{BASE_NAME}/plans/{BASE_NAME}-master-plan.md
 Source Requirements: {RESOLVED_FILE_PATH}
@@ -130,7 +137,7 @@ Master Plan Summary:
 [Brief overview: key features, major task groups, suggested architecture, total tasks]
 
 Options:
-- Type "proceed" to continue with split-plan workflow
+- Type "proceed" to continue with phase splitting and full execution
 - Type "review" to see the full master plan details
 - Type "edit" to make changes to the master plan
 ```
@@ -144,142 +151,20 @@ Options:
 
 ---
 
-## Step 4: Split Master Plan into Phase Plans
+## Step 4: Split Master Plan and Build TASKS.md
 
 **TaskUpdate Task 4 → in_progress**
 
-Spawn **3 `develop:development-planner` agents in parallel** (single message, three Task calls), each responsible for a subset of phases:
+### 4.1 Call develop:split-plan Skill Directly
 
-**Agent 1 — Phases 1, 2, 3**:
 ```
-subagent_type: "develop:development-planner"
-description: "Create phase plans 1-3 from master plan"
-prompt: "Analyze the master plan and generate phase plan files for Phases 1, 2, and 3 only.
-
-## Master Plan Location
-File: .trackers/{BASE_NAME}/plans/{BASE_NAME}-master-plan.md
-
-## Base Name
-Use base name: {BASE_NAME}
-
-## Output Directory
-.trackers/{BASE_NAME}/plans/
-
-## Your Task
-
-Read the entire master plan, then generate ONLY these 3 phase plan files:
-- {BASE_NAME}-01-foundational.md  (Phase 1: Foundational — base abstractions, utilities, infrastructure)
-- {BASE_NAME}-02-models.md        (Phase 2: Models — data entities, DTOs, value objects)
-- {BASE_NAME}-03-services.md      (Phase 3: Services — external APIs, service integrations)
-
-For each phase:
-1. Identify all tasks from the master plan that belong to this phase
-2. Group tasks by feature tracks (lowercase-with-hyphens naming)
-3. Score task complexity (1=Low, 2=Medium, 3=High)
-4. Write the phase plan file using the standard phase plan template
-5. If a phase has no tasks, use the empty phase template
-
-Follow the develop:split-plan skill's phase classification rules:
-- Phase 1: Sets up base infrastructure, abstract classes, project scaffolding
-- Phase 2: Defines data structures, entities, models
-- Phase 3: Calls external APIs, network layer, service integrations
-
-After creating all 3 files, verify they exist and report:
-- Files created (3/3)
-- Tracks identified per phase
-- Tasks per phase
-- Complexity distribution"
+Skill: "develop:split-plan"
+args: "--master-plan-path .trackers/{BASE_NAME}/plans/{BASE_NAME}-master-plan.md --base-name {BASE_NAME}"
 ```
 
-**Agent 2 — Phases 4, 5, 6**:
-```
-subagent_type: "develop:development-planner"
-description: "Create phase plans 4-6 from master plan"
-prompt: "Analyze the master plan and generate phase plan files for Phases 4, 5, and 6 only.
+Wait for skill to complete. It will create all 8 phase plan files in `.trackers/{BASE_NAME}/plans/`.
 
-## Master Plan Location
-File: .trackers/{BASE_NAME}/plans/{BASE_NAME}-master-plan.md
-
-## Base Name
-Use base name: {BASE_NAME}
-
-## Output Directory
-.trackers/{BASE_NAME}/plans/
-
-## Your Task
-
-Read the entire master plan, then generate ONLY these 3 phase plan files:
-- {BASE_NAME}-04-data.md             (Phase 4: Data — repositories, DAOs, local storage)
-- {BASE_NAME}-05-rules.md            (Phase 5: Rules — business logic, use cases, validation)
-- {BASE_NAME}-06-state-management.md (Phase 6: State Management — ViewModels, presenters, state handlers)
-
-For each phase:
-1. Identify all tasks from the master plan that belong to this phase
-2. Group tasks by feature tracks (lowercase-with-hyphens naming)
-3. Score task complexity (1=Low, 2=Medium, 3=High)
-4. Write the phase plan file using the standard phase plan template
-5. If a phase has no tasks, use the empty phase template
-
-Follow the develop:split-plan skill's phase classification rules:
-- Phase 4: Accesses local storage, repositories, data access layer
-- Phase 5: Contains business logic, use cases, domain validation
-- Phase 6: Manages app state, ViewModels, reactive state management
-
-After creating all 3 files, verify they exist and report:
-- Files created (3/3)
-- Tracks identified per phase
-- Tasks per phase
-- Complexity distribution"
-```
-
-**Agent 3 — Phases 7, 8**:
-```
-subagent_type: "develop:development-planner"
-description: "Create phase plans 7-8 from master plan"
-prompt: "Analyze the master plan and generate phase plan files for Phases 7 and 8 only.
-
-## Master Plan Location
-File: .trackers/{BASE_NAME}/plans/{BASE_NAME}-master-plan.md
-
-## Base Name
-Use base name: {BASE_NAME}
-
-## Output Directory
-.trackers/{BASE_NAME}/plans/
-
-## Your Task
-
-Read the entire master plan, then generate ONLY these 2 phase plan files:
-- {BASE_NAME}-07-ui.md    (Phase 7: UI — screens, components, widgets, navigation)
-- {BASE_NAME}-08-tests.md (Phase 8: Tests — unit tests, integration tests, test utilities)
-
-For each phase:
-1. Identify all tasks from the master plan that belong to this phase
-2. Group tasks by feature tracks (lowercase-with-hyphens naming)
-3. Score task complexity (1=Low, 2=Medium, 3=High)
-4. Write the phase plan file using the standard phase plan template
-5. If a phase has no tasks, use the empty phase template
-
-Follow the develop:split-plan skill's phase classification rules:
-- Phase 7: Renders UI, screens, components, widgets, user interactions, navigation
-- Phase 8: Unit tests, integration tests, end-to-end tests, test utilities, mocks/fakes
-
-For Phase 8 (Tests), identify all testing tasks:
-- Unit tests for models, services, repositories, use cases, state management
-- Integration tests for API clients, repositories, and complex workflows
-- UI tests / widget tests / component tests
-- Test utilities, mocks, fakes, and fixtures
-- Test configuration and setup
-
-After creating both files, verify they exist and report:
-- Files created (2/2)
-- Tracks identified per phase
-- Tasks per phase
-- Complexity distribution"
-```
-
-Wait for **all 3 agents to complete**. Expected output files:
-
+Expected files after skill:
 ```
 .trackers/{BASE_NAME}/plans/
 ├── {BASE_NAME}-01-foundational.md
@@ -292,158 +177,93 @@ Wait for **all 3 agents to complete**. Expected output files:
 └── {BASE_NAME}-08-tests.md
 ```
 
-Verify all 8 files exist, then present results to user:
+### 4.2 Build TASKS.md
+
+Read all 8 phase plan files. For each phase:
+- Extract the phase name
+- Extract all tracks (lines starting with `## Track:`)
+- Extract all tasks (lines starting with `### Task`)
+- Extract each task's title and complexity score
+
+Create `.trackers/{BASE_NAME}/TASKS.md` using Write tool:
+
+```markdown
+# Tasks - {BASE_NAME}
+
+**Requirements**: {RESOLVED_FILE_PATH}
+**Status**: In Progress
+
+---
+
+## Phase 1: Foundational [pending]
+
+### Track: {track-name}
+- [ ] Task 1: {task-title} (complexity: {score})
+- [ ] Task 2: {task-title} (complexity: {score})
+
+## Phase 2: Models [pending]
+
+### Track: {track-name}
+- [ ] Task 3: {task-title} (complexity: {score})
+
+[...continue for all phases and tasks, numbering tasks sequentially across all phases...]
+
+---
+
+## Phase 8: Tests [pending]
+
+### Track: {track-name}
+- [ ] Task N: {task-title} (complexity: {score})
+```
+
+**Rules for TASKS.md**:
+- Number tasks sequentially (1, 2, 3…) across all phases — each task has a unique global ID
+- If a phase has no tasks (empty phase), include the phase header with `[pending]` and a note: `- (no tasks)`
+- Task status markers: `[ ]` pending · `[~]` in_progress · `[x]` complete · `[!]` blocked
+
+### 4.3 Inform User
 
 ```
-Phase plans generated! All 8 phase plan files created.
+Phase plans created and task list built!
 
-Options:
-- Type "proceed" to continue with tracker creation
-- Type "review [phase-number]" to see a specific phase plan
-- Type "review all" to see summary of all phases
+Plans: .trackers/{BASE_NAME}/plans/
+Tasks: .trackers/{BASE_NAME}/TASKS.md
+
+Total tasks: {count} across {non-empty-phase-count} phases
+Starting execution now...
 ```
-
-Wait for response:
-   - **"proceed"** → Step 5
-   - **"review [N]"** → Read and display that phase plan, ask again
-   - **"review all"** → Read all 8 plans, show summary, ask to proceed
 
 **TaskUpdate Task 4 → completed**
 
 ---
 
-## Step 5: Create Tracker and Populate from Phase Plans
+## Step 5: Execute All Phases
 
 **TaskUpdate Task 5 → in_progress**
 
-1. Create empty tracker:
-   ```
-   Skill: "tracker:create-tracker"
-   args: "{BASE_NAME}"
-   ```
+For each phase 1→8 in order:
 
-2. Read all 8 phase plan files to understand overall structure.
+### 5.1 Check Phase Status
 
-3. For each phase plan file (01–08) sequentially:
+Read TASKS.md. Find the section for this phase.
 
-   a. Read the file; extract: phase name, tracks, tasks (title, description, complexity, priority, track)
+- If all tasks in this phase are `[x]` → log "Phase {N} already complete, skipping." → next phase
+- If no tasks (`(no tasks)`) → log "Phase {N} has no tasks, skipping." → next phase
+- Otherwise → proceed
 
-   b. Add phase to tracker:
-      ```
-      Skill: "tracker:add-phase"
-      args: "{BASE_NAME} --name='{Phase Name}' --description='{description}'"
-      ```
+### 5.2 Update Phase Status
 
-   c. For each track in this phase:
-      - If new track: add it:
-        ```
-        Skill: "tracker:add-track"
-        args: "{BASE_NAME} --name='{track-name}' --description='{desc}' --phase='{Phase Name}'"
-        ```
-      - If already added: skip
+Edit TASKS.md: change `## Phase {N}: {Name} [pending]` → `## Phase {N}: {Name} [in_progress]`
 
-   d. For each task in each track:
-      ```
-      Skill: "tracker:add-task"
-      args: "{BASE_NAME} --phase='{Phase Name}' --track='{track}' --title='{title}' --description='{desc}' --complexity={1|2|3} --priority={high|medium|low}"
-      ```
+Read the phase plan: `.trackers/{BASE_NAME}/plans/{BASE_NAME}-{NN}-{name}.md`
 
-   e. Inform user: "Phase {N} added to tracker: {track_count} tracks, {task_count} tasks"
+### 5.3 Get Pending Tasks
 
-4. Verify tracker:
-   ```
-   Skill: "tracker:review-tracker"
-   args: "{BASE_NAME} --detailed"
-   ```
+Parse TASKS.md for this phase: collect all `- [ ] Task {id}: …` lines.
 
-5. Inform user:
-   ```
-   Tracker creation complete!
-   Tracker: {BASE_NAME}
-   Location: .trackers/{BASE_NAME}/TRACKER.md
-   Total Phases: 8 | Tracks: {count} | Tasks: {count}
-   ```
+Extract for each: task ID, title, complexity score, track name.
 
-**TaskUpdate Task 5 → completed**
-
----
-
-## Step 6: Present Analysis and Select Phases
-
-**TaskUpdate Task 6 → in_progress**
-
-1. Run tracker review:
-   ```
-   Skill: "tracker:review-tracker"
-   args: "{BASE_NAME} --detailed"
-   ```
-
-2. Present the full structure to user:
-
-```
-Analysis complete!
-
-Source Requirements: {RESOLVED_FILE_PATH}
-Master Plan: .trackers/{BASE_NAME}/plans/{BASE_NAME}-master-plan.md
-Phase Plans: {BASE_NAME}-01 through {BASE_NAME}-08
-Tracker: {BASE_NAME}
-
-Feature Tracks Identified:
-[List tracks from phase plan files with brief descriptions]
-
-Phase Structure (Sequential execution):
-
-Phase 1: Foundational
-- Track: core ([X] tasks)
-- Purpose: Set up base abstractions and toolings
-
-Phase 2: Models
-- Track: authentication ([X] tasks)
-- Track: products ([X] tasks)
-...
-
-[Continue for phases 3–8]
-
-Summary: Total Tasks: {count} | Tracks: {count} | Avg Complexity: {score}
-
-Which phases would you like to execute?
-- "All" — Execute all incomplete phases
-- "Phase [N]" — Execute specific phase(s)
-- "Phase [N] to [M]" — Execute a range
-- "Review first" — Skip execution, go to summary
-```
-
-3. Wait for user response:
-   - **Adjust organization** → Handle edits to phase plans, then ask again
-   - **"Review first"** → Skip to Step 8
-   - **Phase selection** → Parse selection, continue to Step 7
-
-**NEVER proceed without explicit user confirmation on structure AND phase selection.**
-
-**TaskUpdate Task 6 → completed**
-
----
-
-## Step 7: Execute Implementations
-
-**TaskUpdate Task 7 → in_progress**
-
-For each selected phase, in order (1→2→...→8):
-
-### 7.1 Read Phase Plan
-
-Read `.trackers/{BASE_NAME}/plans/{BASE_NAME}-{NN}-{name}.md`
-
-### 7.2 Get Pending Tasks
-
-```
-Skill: "tracker:review-tracker"
-args: "{BASE_NAME} --phase={N} --status=pending"
-```
-
-Extract: task ID, name, description, track, complexity score, plan file reference. If no pending tasks, skip this phase.
-
-### 7.3 Determine Agent Count
+### 5.4 Determine Agent Count
 
 ```
 If pending tasks ≥ 3 → AGENT_COUNT = 3
@@ -454,52 +274,61 @@ Log to user:
 ```
 Phase {N} — {name}:
 - Pending Tasks: {count}
-- Spawning {count} developer agent(s)...
+- Spawning {AGENT_COUNT} developer agent(s)...
 ```
 
-### 7.4 Mark Tasks In Progress
-
-For each pending task in the current batch:
-```
-Skill: "tracker:mark-status"
-args: "{BASE_NAME} --task={task-id} --status=in-progress"
-```
-
-### 7.5 Execute Batches
+### 5.5 Execute Batches
 
 Split pending tasks into batches of size `AGENT_COUNT`.
 
-For each batch — spawn developer agents **in parallel** (single message, multiple Task calls):
+**Before each batch** — Edit TASKS.md to mark batch tasks in_progress:
+Replace each `- [ ] Task {id}:` → `- [~] Task {id}:` for tasks in this batch.
+
+For each batch — spawn developer agents **in parallel** (single message, multiple Agent tool calls):
 
 ```
 subagent_type: "develop:senior-developer"
-description: "Implement Task {id}"
-prompt: "Implement Task {id} from Phase {N}: {name}
+description: "Implement Task {id}: {title}"
+prompt: "Implement Task {id} from Phase {N}: {phase-name}
 
 ## Task Details
-{Full task description}
+Title: {title}
 Complexity: {score} ({Low|Medium|High})
 Track: {track-name}
 
 ## Context
-- Phase {N}: {name}
-- Detailed plan: .trackers/{BASE_NAME}/plans/{plan-file-reference}
-- Read the phase plan for full architectural context
+- Phase {N}: {phase-name}
+- Detailed plan: .trackers/{BASE_NAME}/plans/{BASE_NAME}-{NN}-{name}.md
+- Read the phase plan for full architectural context and acceptance criteria
 
 ## Implementation
 Read the detailed phase plan, then implement this specific task.
 Follow the project's existing patterns and architecture."
 ```
 
-Wait for batch to complete, then update tracker:
-- Success: `tracker:mark-status` → `complete`
-- Failure: `tracker:mark-status` → `blocked`
+Wait for batch to complete.
+
+**After each batch** — Edit TASKS.md to mark results:
+- Success: `- [~] Task {id}:` → `- [x] Task {id}:`
+- Failure/blocked: `- [~] Task {id}:` → `- [!] Task {id}:`
 
 Repeat batches until all pending tasks for this phase are processed.
 
-### 7.6 Post-Phase Comprehensive Review Loop
+### 5.6 Complete Phase
 
-After all tasks in this phase are implemented, run a review loop (max 4 iterations):
+Edit TASKS.md: change `## Phase {N}: {Name} [in_progress]` → `## Phase {N}: {Name} [complete]`
+
+Log to user:
+```
+Phase {N}: {name} complete. ({completed-count}/{total-count} tasks)
+Proceeding to Phase {next-N}...
+```
+
+Auto-continue to next phase — no user confirmation needed between phases.
+
+### 5.7 Post-Implementation Comprehensive Review Loop
+
+After all 8 phases are complete, run a review loop (max 2 iterations):
 
 **Iteration tracking**: Start `REVIEW_ITERATION = 1`
 
@@ -509,13 +338,13 @@ After all tasks in this phase are implemented, run a review loop (max 4 iteratio
    ```
    Skill: "develop:comprehensive-review"
    ```
-   Pass context: the phase plan file and the changes made in this phase.
+   Pass context: the requirements file and all phase plan files.
 
 2. Collect all issues from the review report.
 
-3. If **no issues found** → log "Phase {N} review passed. No issues found." → exit loop.
+3. If **no issues found** → log "Implementation review passed. No issues found." → exit loop.
 
-4. If **issues found** AND `REVIEW_ITERATION < 4`:
+4. If **issues found** AND `REVIEW_ITERATION < 2`:
    - Create a `TodoWrite` todo for **each issue** found, with the issue description and file reference
    - For each todo (batch in groups of AGENT_COUNT):
      - Spawn `develop:senior-developer` agent(s) to fix the issue
@@ -524,50 +353,25 @@ After all tasks in this phase are implemented, run a review loop (max 4 iteratio
    - Set `REVIEW_ITERATION = REVIEW_ITERATION + 1`
    - Go back to step 1 (re-run review)
 
-5. If `REVIEW_ITERATION == 4` (4th iteration):
+5. If `REVIEW_ITERATION == 2` (2nd iteration):
    - Run the review one final time
-   - Present remaining issues to the user but **do not fix further**
-   - Log:
+   - If issues remain, present them to the user and ask:
      ```
-     Phase {N} review reached maximum iterations (4).
-     Remaining issues: {count}
-     Proceeding to next phase. Issues can be addressed in a follow-up run.
+     Review complete. {count} issue(s) remain after 2 passes.
+     Would you like to fix the remaining issues, or proceed to the summary report?
      ```
-   - Exit loop
+   - **"fix"** → create todos, spawn fix agents, then generate summary
+   - **"proceed"** → exit loop and continue to Step 6
 
-### 7.7 After Phase Completion
-
-```
-Skill: "tracker:review-tracker"
-args: "{BASE_NAME} --phase={N}"
-```
-
-Ask user:
-```
-Phase {N}: {name} completed!
-[Show tracker summary]
-
-Next Phase: Phase {next-N}: {name}
-
-Type "continue" to proceed, or "pause" to stop here.
-```
-
-- **"continue"** → next selected phase
-- **"pause"** → go to Step 8
-
-**TaskUpdate Task 7 → completed**
+**TaskUpdate Task 5 → completed**
 
 ---
 
-## Step 8: Generate Final Summary Report
+## Step 6: Generate Final Summary Report
 
-**TaskUpdate Task 8 → in_progress**
+**TaskUpdate Task 6 → in_progress**
 
-1. Run tracker review:
-   ```
-   Skill: "tracker:review-tracker"
-   args: "{BASE_NAME} --detailed"
-   ```
+1. Read `.trackers/{BASE_NAME}/TASKS.md` to collect completion counts.
 
 2. Write summary to `.trackers/{BASE_NAME}/plans/{BASE_NAME}-SUMMARY.md` — see `references/summary-report.md` for the template.
 
@@ -576,13 +380,12 @@ Type "continue" to proceed, or "pause" to stop here.
    Build workflow complete!
 
    Summary: .trackers/{BASE_NAME}/plans/{BASE_NAME}-SUMMARY.md
-   Tracker: .trackers/{BASE_NAME}/TRACKER.md
+   Tasks:   .trackers/{BASE_NAME}/TASKS.md
 
    Completed: {count} phases, {count} tasks
-   Remaining: {count} phases, {count} tasks
+   Remaining: {count} phases, {count} tasks (blocked or skipped)
 
-   To view progress: /tracker:review-tracker {BASE_NAME}
-   Resume at any time by running /develop-project again.
+   To resume at any time: run /develop:develop-project again with the same requirements file.
    ```
 
-**TaskUpdate Task 8 → completed**
+**TaskUpdate Task 6 → completed**
