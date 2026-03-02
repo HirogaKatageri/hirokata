@@ -12,8 +12,7 @@ The **develop** plugin transforms requirements documents into working code throu
 - **Phase-Based Architecture**: Organizes implementation into 8 sequential clean architecture phases
 - **Feature Tracking**: Groups related tasks into feature tracks across phases
 - **Complexity Scoring**: Analyzes task complexity for better estimation
-- **Adaptive Parallelism**: Spawns 1-8 developer agents based on task complexity
-- **Progress Tracking**: Integrates with tracker system for real-time visibility
+- **Fixed Parallelism**: Spawns up to 3 developer agents per phase based on task count
 - **Resume Capability**: Continue work from any point if interrupted
 
 ## Architecture
@@ -61,14 +60,11 @@ Complete requirements-to-implementation workflow with 8-phase architecture.
 
 **Usage:**
 ```
-/develop:develop-project [file-path-or-query] [options]
+/develop:develop-project [file-path-or-query]
 ```
 
 **Arguments:**
 - `[file-path-or-query]` - Path to requirements document (markdown) or search query (optional)
-- `--max-parallel=N` - Override max parallel agents (1-8, default: adaptive)
-- `--sequential` - Force sequential execution (1 agent at a time)
-- `--aggressive` - Increase parallelism (1.5x multiplier)
 
 **Examples:**
 ```bash
@@ -78,40 +74,28 @@ Complete requirements-to-implementation workflow with 8-phase architecture.
 # Search for requirements file
 /develop:develop-project app-requirements
 
-# Start with custom parallelism
-/develop:develop-project requirements.md --max-parallel=4
-
-# Start in sequential mode
-/develop:develop-project requirements.md --sequential
-
-# Start in aggressive mode (more parallel agents)
-/develop:develop-project requirements.md --aggressive
+# Interactive mode (prompts for file)
+/develop:develop-project
 ```
 
 **Workflow:**
 
 1. **Parse arguments** and resolve requirements file path
 2. **develop:software-architect Agent** creates comprehensive master plan from requirements
-3. **User Reviews** and approves the master plan
-4. **develop:development-planner Agent** analyzes master plan using `develop:split-plan` skill and organizes tasks into:
-   - 8 sequential phases (Foundational → Models → Services → Data → Rules → State Management → UI → Tests)
-   - Feature-based tracks (authentication, products, etc.)
-   - Complexity scores for each task (1-3)
-5. **tracker:tracker Agent** creates and populates tracker from phase plans
-6. **Present analysis and select phases** - user reviews structure and chooses which phases to execute
-7. **develop:senior-developer Agents** execute selected phases adaptively based on task complexity:
-   - Phases run sequentially (1→2→3→4→5→6→7)
-   - Within each phase, 1-8 agents run in parallel based on task complexity
-   - Tracker updates in real-time
-8. **Generate final summary report** with progress and next steps
+3. **User Reviews** and approves the master plan *(only user gate)*
+4. **develop:split-plan Skill** splits master plan into 8 phase plan files and builds `TASKS.md`
+5. **develop:senior-developer Agents** execute all 8 phases sequentially:
+   - Phases run sequentially (1→2→3→4→5→6→7→8)
+   - Within each phase, up to 3 agents run in parallel based on task count
+   - After all phases: runs `develop:comprehensive-review` and fixes issues (max 2 iterations)
+6. **Generate final summary report** with progress and next steps
 
 **Files Generated:**
 ```
 .trackers/{BASE_NAME}/
-├── TRACKER.md                        # Progress tracker
+├── TASKS.md                               # Progress tracker
 └── plans/
     ├── {BASE_NAME}-master-plan.md         # Comprehensive master plan
-    ├── {BASE_NAME}-DEPENDENCIES.md        # Dependency analysis
     ├── {BASE_NAME}-01-foundational.md     # Phase 1 plan
     ├── {BASE_NAME}-02-models.md           # Phase 2 plan
     ├── {BASE_NAME}-03-services.md         # Phase 3 plan
@@ -127,12 +111,12 @@ Complete requirements-to-implementation workflow with 8-phase architecture.
 
 The plugin includes skills for development workflow support:
 
-### `develop:comprehensive-review` *(NEW in 0.2.3)*
+### `develop:comprehensive-review`
 
-Orchestrates a complete multi-dimensional review of code changes, running four specialized review agents in parallel.
+Orchestrates a complete multi-dimensional review of code changes, running five specialized review agents in parallel.
 
 **Responsibilities:**
-- Run all four code review agents simultaneously (product, business-logic, edge-case, architecture)
+- Run all five code review agents simultaneously (product, business-logic, edge-case, architecture, security)
 - Collect and consolidate reports from all agents
 - Present comprehensive analysis with prioritized action items
 - Provide executive summary across all review dimensions
@@ -150,6 +134,7 @@ Orchestrates a complete multi-dimensional review of code changes, running four s
 2. **Test Coverage** - Ensure business logic is testable and tested
 3. **Edge Case Handling** - Identify unhandled edge cases
 4. **Architectural Alignment** - Check clean architecture compliance
+5. **Security** - Identify security vulnerabilities and risks
 
 **Features:**
 - Parallel agent execution for fast reviews (2-5 minutes)
@@ -166,13 +151,13 @@ Orchestrates a complete multi-dimensional review of code changes, running four s
 
 **Workflow:**
 1. Identify review scope (requirements, recent changes)
-2. Launch all 4 agents in parallel
+2. Launch all 5 agents in parallel
 3. Collect agent reports
 4. Present consolidated report with executive summary and prioritized actions
 
 **Output Format:**
 - Executive summary (overall status, critical issues, warnings)
-- Review dimensions summary (compliance %, test coverage, edge cases, architecture)
+- Review dimensions summary (compliance %, test coverage, edge cases, architecture, security)
 - Priority actions (Must Fix/Should Fix/Consider)
 - Detailed reports from each agent
 
@@ -186,7 +171,7 @@ Analyzes a master plan file and splits it into 8 phase-specific implementation p
 - Scores task complexity (1-3)
 - Generates detailed phase plan files following clean architecture principles
 
-**Used by:** development-planner agent during plan analysis
+**Used by:** `develop:develop-project` skill during plan splitting (Step 4)
 
 ### `develop:categorize-task`
 
@@ -202,9 +187,7 @@ Reference guide for classifying development tasks into the 8-phase clean archite
 - **Phase 7 (UI)**: Screens, components, views, user interface
 - **Phase 8 (Tests)**: Unit tests, integration tests, e2e tests, test utilities
 
-**Used by:** development-planner agent during task organization
-
-### `develop:conventional-commit` *(NEW in 0.1.2)*
+### `develop:conventional-commit`
 
 Generates properly formatted conventional commits by analyzing changes, grouping related modifications, and creating semantic commit messages.
 
@@ -226,18 +209,13 @@ Generates properly formatted conventional commits by analyzing changes, grouping
 **Features:**
 - Interactive commit grouping with user choice
 - Follows Conventional Commits specification
-- Includes validation scripts and grouping utilities
-- Comprehensive reference documentation and examples
 - Supports breaking changes, issue references, co-authors
 
 **Supporting Resources:**
 - `references/conventional-commits-spec.md` - Full specification
 - `references/commit-patterns.md` - Patterns and anti-patterns
-- `examples/multi-commit-workflow.sh` - Working examples
-- `scripts/validate-commit-msg.sh` - Message validator
-- `scripts/group-changes.py` - Change grouping analyzer
 
-### `develop:generate-requirements` *(NEW in 0.2.0)*
+### `develop:generate-requirements`
 
 Transforms feature ideas into structured requirements documents using the product-owner agent.
 
@@ -275,9 +253,9 @@ Transforms feature ideas into structured requirements documents using the produc
 
 ## Agents
 
-### Code Review Agents *(NEW in 0.2.3)*
+### Code Review Agents
 
-The plugin includes four specialized code review agents that work together to provide comprehensive code quality analysis:
+The plugin includes five specialized code review agents that work together to provide comprehensive code quality analysis:
 
 #### `develop:product-reviewer`
 
@@ -389,7 +367,32 @@ Reviews code for alignment with clean architecture principles and the 8-phase de
 - Interface design
 - God classes and circular dependencies
 
-### `develop:software-architect` *(NEW in 0.2.2)*
+#### `develop:code-reviewer-security`
+
+Identifies security vulnerabilities, weaknesses, and anti-patterns aligned with OWASP Top 10 and security best practices.
+
+**Responsibilities:**
+- Review code for injection vulnerabilities (SQL, command, LDAP, template)
+- Identify authentication and session management flaws
+- Detect sensitive data exposure (unencrypted PII, hardcoded secrets, logging)
+- Find broken access control and authorization issues
+- Check cryptographic usage and key management
+- Provide OWASP-referenced remediation guidance
+
+**Color:** Red
+
+**Model:** Haiku (fast, cost-effective reviews)
+
+**Tools:** Read, Grep, Glob, Bash
+
+**Output:**
+- Vulnerability counts by severity (Critical/High/Medium/Low/Info)
+- Overall security posture assessment
+- Hardcoded secrets and sensitive data audit
+- Concrete remediation code examples
+- Security strengths already in use
+
+### `develop:software-architect`
 
 Analyzes requirements and creates comprehensive master implementation plans.
 
@@ -443,32 +446,6 @@ Transforms ambiguous ideas into well-structured requirements, user stories, and 
 - User Stories (primary): As a [role], I want [action], so that [value]
 - Use Cases (secondary): Detailed workflow documentation for complex scenarios
 
-### `develop:development-planner`
-
-Analyzes master plans and organizes tasks into the 8-phase architecture with feature tracks using the `develop:split-plan` skill.
-
-**Responsibilities:**
-- Parse master plan files
-- Identify feature tracks (authentication, products, etc.)
-- Map tasks to appropriate phases using `develop:split-plan` skill
-- Create phase-specific plan files (01-08)
-- Add complexity scores to tasks (1-3)
-- Generate dependency analysis
-- Create tracker structure
-- Present analysis for user review
-
-**Color:** Orange
-
-**Model:** Sonnet (comprehensive analysis and planning)
-
-**Tools:** Read, Write, Edit, Glob, Grep, Bash, Skill, AskUserQuestion
-
-**Skills:** develop:split-plan
-
-**Triggers:**
-- Called by `/develop:develop-project` command after master plan creation
-- Can be invoked manually to analyze and split master plans
-
 ### `develop:senior-developer`
 
 Implements features and writes production-ready code following project patterns.
@@ -480,22 +457,28 @@ Implements features and writes production-ready code following project patterns.
 - Write clean, maintainable code
 - Handle errors appropriately
 - Integrate with existing code
-- Update tracker status as tasks complete
 
 **Color:** Blue
 
-**Model:** Sonnet (advanced code generation and reasoning)
+**Model:** Haiku (fast, cost-effective implementation)
 
 **Tools:** TaskCreate, TaskGet, TaskUpdate, TaskList, Glob, Grep, Read, Write, Edit, NotebookEdit, Bash, Skill, AskUserQuestion
 
 **Triggers:**
 - Spawned by `/develop:develop-project` command during phase execution
-- 1-8 agents run in parallel per phase based on task complexity
+- Up to 3 agents run in parallel per phase (3 when ≥3 tasks, 1 when <3 tasks)
 - Can be invoked manually for specific implementation tasks
+
+## Parallelism
+
+Within each phase, the number of parallel developer agents is fixed based on task count:
+
+- **≥ 3 pending tasks** → spawn **3** `develop:senior-developer` agents in parallel
+- **< 3 pending tasks** → spawn **1** `develop:senior-developer` agent
 
 ## Complexity Scoring
 
-Tasks are assigned complexity scores to determine optimal parallelism:
+Tasks are assigned complexity scores used for estimation and plan organization:
 
 ### Low Complexity (Score: 1)
 Simple, straightforward tasks:
@@ -503,8 +486,6 @@ Simple, straightforward tasks:
 - Create simple model classes
 - Add utility functions
 - Update documentation
-
-**Parallelism:** Up to 10 agents
 
 ### Medium Complexity (Score: 2)
 Implementation tasks requiring moderate effort:
@@ -514,8 +495,6 @@ Implementation tasks requiring moderate effort:
 - Implement repository patterns
 - Add validation logic
 
-**Parallelism:** Up to 5 agents
-
 ### High Complexity (Score: 3)
 Complex or architectural tasks:
 - Implement authentication systems
@@ -523,35 +502,6 @@ Complex or architectural tasks:
 - Integrate payment gateways
 - Implement real-time features
 - Complex business logic
-
-**Parallelism:** Up to 3 agents
-
-## Adaptive Parallelism
-
-The plugin automatically calculates optimal parallel agent count based on task complexity:
-
-```
-BASE_PARALLEL = floor(10.0 / AVG_COMPLEXITY)
-```
-
-**Modes:**
-
-1. **Normal Mode** (default)
-   - Adaptive based on complexity
-   - Example: Avg complexity 2.0 → 5 agents
-
-2. **Sequential Mode** (`--sequential`)
-   - Forces 1 agent at a time
-   - Best for debugging or limited resources
-
-3. **Aggressive Mode** (`--aggressive`)
-   - 1.5x parallelism multiplier
-   - Example: Base 5 agents → 7 agents
-   - Best for powerful machines
-
-4. **Override Mode** (`--max-parallel=N`)
-   - User-specified parallelism (1-8)
-   - Respects task count and complexity constraints
 
 ## Example Usage
 
@@ -564,35 +514,24 @@ BASE_PARALLEL = floor(10.0 / AVG_COMPLEXITY)
 # The plugin will:
 # - Create master plan using develop:software-architect agent
 # - Wait for your review and approval
-# - Analyze with develop:development-planner agent using develop:split-plan skill
-# - Show you the phase/track structure
-# - Ask for phase selection
-# - Begin implementation phase by phase with develop:senior-developer agents
+# - Split plan into 8 phase files using develop:split-plan skill
+# - Execute all phases with develop:senior-developer agents
+# - Run comprehensive review and fix any issues
+# - Generate final summary report
 
-# 2. Monitor progress
-# Tracker updates show in terminal as work progresses
-
-# 3. View tracker status anytime
-/tracker:review-tracker my-app
-
-# 4. If needed, rerun with different parallelism
-/develop:develop-project requirements/my-app.md --max-parallel=2
+# 2. Resume interrupted work
+/develop:develop-project requirements/my-app.md
+# Detects existing TASKS.md and resumes from where it stopped
 ```
 
-### Starting with Options
+### Starting Without a File Path
 
 ```bash
-# Conservative approach (sequential)
-/develop:develop-project requirements.md --sequential
-
-# Aggressive approach (more parallelism)
-/develop:develop-project requirements.md --aggressive
-
-# Controlled parallelism
-/develop:develop-project requirements.md --max-parallel=3
-
 # Interactive mode (prompts for file)
 /develop:develop-project
+
+# Search by keyword
+/develop:develop-project my-feature
 ```
 
 ## Installation
@@ -622,8 +561,6 @@ BASE_PARALLEL = floor(10.0 / AVG_COMPLEXITY)
 ## Requirements
 
 - **Claude Code**: Latest version
-- **Tracker System**: Plugin integrates with tracker commands (create-tracker, add-task, mark-status, review-tracker)
-- **Software Architect Agent**: develop:software-architect agent for master plan creation (included in plugin)
 - **Requirements Format**: Markdown files with clear feature descriptions
 
 ## Best Practices
@@ -661,14 +598,13 @@ Brief description of the project
 
 ### Resuming Work
 
-- The plugin tracks progress automatically
+- The plugin tracks progress automatically in `TASKS.md`
 - You can pause at any time (Ctrl+C)
-- Resume picks up exactly where you left off
-- Blocked tasks can be retried or skipped
+- Resume picks up exactly where you left off — runs that find an existing `TASKS.md` skip plan generation and jump straight to execution
 
 ### Reviewing Plans
 
-Always review the master plan and phase structure before execution:
+Always review the master plan before execution:
 - Verify feature groupings make sense
 - Check task assignments to phases
 - Confirm complexity scores are reasonable
@@ -681,20 +617,23 @@ cc-develop-plugin/
 ├── .claude-plugin/
 │   └── plugin.json                      # Plugin manifest
 ├── agents/
-│   ├── software-architect.md            # Software architect agent (NEW in 0.2.2)
-│   ├── product-owner.md                 # Product owner agent (NEW in 0.1.1)
-│   ├── development-planner.md           # Development planner agent
+│   ├── software-architect.md            # Software architect agent
+│   ├── product-owner.md                 # Product owner agent
 │   ├── senior-developer.md              # Senior developer agent
-│   ├── product-reviewer.md              # Requirements compliance reviewer (NEW in 0.2.3)
-│   ├── code-reviewer-business-logic.md  # Testability and test coverage reviewer (NEW in 0.2.3)
-│   ├── code-reviewer-edge-case.md       # Edge case and boundary reviewer (NEW in 0.2.3)
-│   └── code-reviewer-architecture.md    # Architecture alignment reviewer (NEW in 0.2.3)
-├── commands/
-│   └── develop-project.md               # Main workflow command
+│   ├── product-reviewer.md              # Requirements compliance reviewer
+│   ├── code-reviewer-business-logic.md  # Testability and test coverage reviewer
+│   ├── code-reviewer-edge-case.md       # Edge case and boundary reviewer
+│   ├── code-reviewer-architecture.md    # Architecture alignment reviewer
+│   └── code-reviewer-security.md        # Security vulnerability reviewer
 ├── skills/
 │   ├── split-plan/                      # Split master plan into phases
-│   ├── categorize-task/                 # Task categorization
-│   ├── comprehensive-review/            # Multi-dimensional code review (NEW in 0.2.3)
+│   ├── categorize-task/                 # Task categorization reference
+│   ├── develop-project/                 # Main workflow skill
+│   │   ├── SKILL.md
+│   │   └── references/
+│   │       ├── workflow-steps.md
+│   │       └── summary-report.md
+│   ├── comprehensive-review/            # Multi-dimensional code review
 │   │   ├── SKILL.md
 │   │   ├── references/
 │   │   │   ├── agent-capabilities.md
@@ -702,18 +641,13 @@ cc-develop-plugin/
 │   │   └── examples/
 │   │       ├── phase-completion-review.md
 │   │       └── pr-readiness-review.md
-│   ├── conventional-commit/             # Conventional commit generator (NEW in 0.1.2)
+│   ├── conventional-commit/             # Conventional commit generator
 │   │   ├── SKILL.md
 │   │   ├── references/
 │   │   │   ├── conventional-commits-spec.md
 │   │   │   └── commit-patterns.md
-│   │   ├── examples/
-│   │   │   ├── multi-commit-workflow.sh
-│   │   │   └── commit-messages.txt
-│   │   └── scripts/
-│   │       ├── validate-commit-msg.sh
-│   │       └── group-changes.py
-│   └── generate-requirements/   # Requirements generator (NEW in 0.2.0)
+│   │   └── examples/
+│   └── generate-requirements/           # Requirements generator
 │       ├── SKILL.md
 │       ├── references/
 │       │   ├── requirements-template.md
@@ -722,7 +656,7 @@ cc-develop-plugin/
 │           └── BIOMETRIC_SIGNIN_REQUIREMENTS.md
 ├── .gitignore
 ├── LICENSE                      # MIT License
-└── README.md                   # This file
+└── README.md                    # This file
 ```
 
 ## Contributing
@@ -752,6 +686,20 @@ For issues, questions, or feature requests:
 3. Include relevant error messages or logs
 
 ## Changelog
+
+### 0.3.0
+- **Streamlined develop-project workflow** - Reduced from 8 to 6 steps
+  - Removed `development-planner` agent; `split-plan` skill is now called directly
+  - Removed `tracker` plugin dependency; progress tracked via `TASKS.md` file
+  - Removed adaptive parallelism modes (`--sequential`, `--aggressive`, `--max-parallel`); fixed parallelism: 3 agents when ≥3 tasks, 1 agent when <3 tasks
+  - Added post-implementation comprehensive review loop (max 2 iterations with auto-fix)
+  - Single user gate: only master plan review requires approval
+- **New Agent: code-reviewer-security** - Security vulnerability analysis
+  - Reviews against OWASP Top 10 categories
+  - Identifies injection flaws, auth issues, sensitive data exposure, access control weaknesses
+  - Provides severity-classified findings (Critical/High/Medium/Low/Info) with remediation code
+- **Updated comprehensive-review skill** - Now orchestrates all 5 review agents (added security)
+- **Updated senior-developer agent** - Downgraded to Haiku model for cost efficiency
 
 ### 0.2.3
 - **Four Code Review Agents** - Comprehensive multi-dimensional code review system
@@ -804,14 +752,8 @@ For issues, questions, or feature requests:
   - Interactive commit strategy selection (separate/combined/single)
   - Generates properly formatted conventional commit messages
   - Follows Conventional Commits specification
-  - Includes validation scripts and change grouping utilities
-  - Comprehensive reference documentation with patterns and examples
   - Handles edge cases: pre-commit hooks, conflicts, large changesets
   - Supports breaking changes, issue references, and co-authors
-- Production-quality supporting tools:
-  - `validate-commit-msg.sh` - Commit message format validator
-  - `group-changes.py` - Intelligent change grouping analyzer
-  - Complete reference docs and working examples
 
 ### 0.1.1
 - **New Agent: product-owner** - Expert requirements engineering agent for translating ideas into structured user stories
@@ -826,6 +768,5 @@ For issues, questions, or feature requests:
 - 8-phase requirements-to-implementation workflow
 - Development planner agent for plan analysis and task organization
 - Senior developer agent for implementation
-- Start and resume commands
 - Adaptive parallelism based on complexity
 - Tracker integration for progress management

@@ -271,7 +271,7 @@ User: "I've completed Phase 3, run comprehensive review against phase-3.md"
 Expected flow:
 1. Locate docs/phase-3.md
 2. Get recent changes since Phase 3 started
-3. Launch all 4 agents with phase-3.md as requirements
+3. Launch all 5 agents with phase-3.md as requirements
 4. Present consolidated report
 ```
 
@@ -284,7 +284,7 @@ Expected flow:
 1. Determine feature branch and base branch
 2. Get changes: git diff main..feature-branch
 3. Find relevant requirements in requirements/ or plans/
-4. Launch all 4 agents
+4. Launch all 5 agents
 5. Present consolidated report with PR readiness assessment
 ```
 
@@ -296,7 +296,7 @@ User: "Check if my authentication feature implementation is complete"
 Expected flow:
 1. Look for authentication requirements in requirements/
 2. Find authentication-related changes in recent commits
-3. Launch all 4 agents focused on authentication code
+3. Launch all 5 agents focused on authentication code
 4. Present findings specifically about authentication implementation
 ```
 

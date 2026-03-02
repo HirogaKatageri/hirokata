@@ -329,7 +329,7 @@ When consolidating reports, prioritize:
 ## Using Agent Reports Together
 
 ### Step 1: Review Executive Summary
-Check overall status across all four dimensions.
+Check overall status across all five dimensions.
 
 ### Step 2: Address Critical Issues First
 Focus on:
