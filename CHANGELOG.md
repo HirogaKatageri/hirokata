@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin dependency management
 - Version compatibility checking
 
+## [0.4.2] - 2026-03-03
+
+### Fixed
+- **Develop Plugin v0.3.2** - Agent frontmatter YAML formatting hotfix
+  - Converted single-line description strings to proper YAML block scalar format across all 8 agents
+
 ## [0.4.1] - 2026-03-02
 
 ### Updated
