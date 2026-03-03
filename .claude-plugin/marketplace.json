@@ -10,7 +10,7 @@
     {
       "name": "develop",
       "source": "./plugins/cc-develop-plugin",
-      "version": "0.3.1",
+      "version": "0.5.0",
       "description": "Requirements-to-implementation workflow with 8-phase clean architecture, automated planning, adaptive parallel execution, intelligent conventional commit generation, and comprehensive requirements documentation.",
       "author": {
         "name": "Gian Patrick Quintana",
