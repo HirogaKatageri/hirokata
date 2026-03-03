@@ -5,6 +5,37 @@ All notable changes to the Develop Plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-03-03
+
+### Summary
+
+Consolidation release covering the full 0.3.x development cycle. All changes below were delivered incrementally across 0.3.0–0.3.2 and are now collected here as a stable milestone.
+
+### Added
+- **code-reviewer-security agent** - Dedicated OWASP Top 10 security review (injection, broken auth, XSS, sensitive data exposure, access control, cryptography)
+- **Phase 8 (Tests)** - Dedicated testing phase added to the clean architecture workflow (unit, integration, e2e)
+- **comprehensive-review skill** - Orchestrates all 5 review agents (product, business-logic, edge-case, architecture, security) in parallel; produces consolidated report with prioritized action items and executive summary
+
+### Changed
+- **develop-project workflow** - Streamlined from 8 to 6 steps with a single user gate (master plan review only); all phases and post-implementation review run automatically
+- **Progress tracking** - Switched from tracker plugin integration to TASKS.md for phase and task tracking
+- **development-planner agent** - Removed; split-plan skill is now called directly from develop-project
+- **senior-developer agent model** - Downgraded from Sonnet to Haiku for cost efficiency during parallel phase execution
+- **Resume support** - Three-state detection: (1) TASKS.md exists → resume execution; (2) master plan exists without TASKS.md → resume from split-plan; (3) neither exists → fresh run
+- **develop-project** - Moved from commands to skills for consistency
+- **split-plan skill** - Complexity scoring integrated; estimate-task removed
+- **categorize-task skill** - Updated to reflect 8-phase architecture
+
+### Removed
+- **estimate-task skill** - Complexity scoring consolidated into split-plan
+- **Tracker plugin dependency** - Progress tracking is now self-contained via TASKS.md
+
+### Fixed
+- **Agent frontmatter YAML** - Converted single-line description strings to proper YAML block scalar format across all 8 agents
+
+### Parallelism
+- Fixed rule: 3 `develop:senior-developer` agents when phase has ≥3 tasks, 1 agent otherwise
+
 ## [0.3.2] - 2026-03-03
 
 ### Fixed

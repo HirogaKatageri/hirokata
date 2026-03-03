@@ -2,21 +2,21 @@
 
 A curated collection of Claude Code plugins for enhanced development workflows, featuring intelligent task tracking and automated requirements-to-implementation pipelines.
 
-**📋 [View Changelog](CHANGELOG.md)** | **🔗 Version 0.4.1**
+**📋 [View Changelog](CHANGELOG.md)** | **🔗 Version 0.5.0**
 
 ## What's New
 
-### Latest Updates (v0.4.1 - Mar 2026)
+### Latest Updates (v0.5.0 - Mar 2026)
 
-**Streamlined 6-Step Workflow** - The Develop plugin workflow has been simplified from 8 steps to 6 steps, reducing overhead and making automated runs faster and more predictable. The development-planner agent has been removed; the split-plan skill is now called directly.
+**8-Phase Clean Architecture** - The develop plugin implements a complete 8-phase workflow: Foundational → Models → Services → Data → Rules → State Management → UI → Tests, with each phase building on the previous.
 
-**Smart Three-State Resume Support** - Interrupted runs are detected and resumed intelligently based on what files exist: if TASKS.md is present the workflow resumes execution from where it left off; if only a master plan exists (no TASKS.md) it skips ahead to split-plan; if neither is found it starts a fresh run.
+**5-Agent Comprehensive Review** - Five specialized review agents run in parallel after all phases complete: product compliance, business logic and testability, edge cases, architecture alignment, and OWASP Top 10 security. Issues are fixed automatically (up to 2 iterations).
 
-**Fixed Parallelism** - Adaptive parallelism modes have been removed in favour of a simple fixed rule: up to 3 developer agents run in parallel when there are 3 or more tasks in a phase, otherwise a single agent is used.
+**Streamlined 6-Step Workflow with Single User Gate** - Only the master plan review requires your input. Everything else — plan splitting, phase execution, review, and fix loops — runs automatically end-to-end.
 
-**Post-Implementation Comprehensive Review Loop** - After all phases complete, the plugin automatically runs a comprehensive review and applies fixes, repeating up to 2 iterations until the codebase passes review.
+**Three-State Resume** - Interrupted runs are detected and resumed intelligently: TASKS.md present resumes execution, master plan only skips to split-plan, neither starts fresh.
 
-**Single User Gate** - Only the master plan review requires your approval. Everything else runs automatically end-to-end.
+**Self-Contained Progress Tracking** - Progress is tracked via TASKS.md; the tracker plugin is no longer required.
 
 [View Full Changelog →](CHANGELOG.md)
 
@@ -46,7 +46,7 @@ A comprehensive project and task management system with intelligent agents and s
 
 [View Documentation →](plugins/cc-tracker-plugin/README.md)
 
-### 2. Develop Plugin (v0.3.1)
+### 2. Develop Plugin (v0.5.0)
 
 Automated requirements-to-implementation workflow using an 8-phase clean architecture approach with intelligent commit generation, dedicated software architecture planning, and comprehensive code review system.
 

@@ -687,6 +687,9 @@ For issues, questions, or feature requests:
 
 ## Changelog
 
+### 0.5.0
+- Consolidation of the full 0.3.x development cycle — see [CHANGELOG.md](CHANGELOG.md) for full details
+
 ### 0.3.0
 - **Streamlined develop-project workflow** - Reduced from 8 to 6 steps
   - Removed `development-planner` agent; `split-plan` skill is now called directly

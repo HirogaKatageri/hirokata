@@ -16,6 +16,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin dependency management
 - Version compatibility checking
 
+## [0.5.0] - 2026-03-03
+
+### Updated
+- **Develop Plugin v0.5.0** - Consolidation release for the full 0.3.x development cycle
+  - 8-phase clean architecture workflow (Foundational → Models → Services → Data → Rules → State Management → UI → Tests)
+  - 5-agent comprehensive review system running in parallel: product, business logic, edge case, architecture, and security (OWASP Top 10)
+  - Streamlined 6-step develop-project workflow with a single user gate (master plan review only)
+  - Three-state resume: TASKS.md present → resume execution; master plan only → resume from split-plan; neither → fresh run
+  - Fixed parallelism: 3 senior-developer agents per phase when ≥3 tasks, 1 otherwise
+  - Self-contained progress tracking via TASKS.md (tracker plugin dependency removed)
+  - Complexity scoring integrated into split-plan; estimate-task skill removed
+  - YAML frontmatter formatting fixed across all 8 agents
+
+### Migration Notes
+- **0.4.x → 0.5.0**: No breaking changes for end users; estimate-task skill removed (use split-plan instead); tracker plugin no longer required
+
 ## [0.4.2] - 2026-03-03
 
 ### Fixed
@@ -148,6 +164,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - No breaking changes between current versions
 
 ### Migration Notes
+- **0.4.x → 0.5.0**: No breaking changes for end users; estimate-task skill removed (use split-plan instead); tracker plugin no longer required by develop plugin
 - **0.4.0 → 0.4.1**: No breaking changes; develop-project workflow streamlined, development-planner agent removed (internal)
 - **0.3.0 → 0.4.0**: Minor breaking change — estimate-task skill removed; develop-project moved to skills
 - **0.2.0 → 0.3.0**: No breaking changes, new review features are additive
