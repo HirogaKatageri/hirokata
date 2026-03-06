@@ -541,19 +541,19 @@ Complex or architectural tasks:
 1. Clone this repository:
    ```bash
    git clone <repository-url>
-   cd cc-develop-plugin
+   cd software-development-workflow
    ```
 
 2. Use the plugin with Claude Code:
    ```bash
-   cc --plugin-dir /path/to/cc-develop-plugin
+   cc --plugin-dir /path/to/software-development-workflow
    ```
 
 ### Project-Specific
 
 1. Copy plugin to your project:
    ```bash
-   cp -r cc-develop-plugin /path/to/your-project/.claude-plugin/develop
+   cp -r software-development-workflow /path/to/your-project/.claude-plugin/develop
    ```
 
 2. The plugin will be automatically loaded by Claude Code
@@ -613,7 +613,7 @@ Always review the master plan before execution:
 ## File Structure
 
 ```
-cc-develop-plugin/
+software-development-workflow/
 ├── .claude-plugin/
 │   └── plugin.json                      # Plugin manifest
 ├── agents/

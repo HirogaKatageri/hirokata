@@ -5,6 +5,13 @@ All notable changes to the Develop Plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-03-06
+
+### Changed
+- **senior-developer agent** - Added Phase 0 (Understand Requirements): agent now reads the requirements document before any documentation or code analysis; maps each task to its requirements section and notes acceptance criteria as the definition of done
+- **develop-project skill** - Switched from batch-per-task execution to team-based execution: 3 senior-developer agents are spawned once per phase, tasks distributed round-robin, each developer works tasks sequentially — no repeated spawning between batches
+- **senior-developer agent model** - Upgraded from Haiku to inherit for improved implementation quality
+
 ## [0.5.0] - 2026-03-03
 
 ### Summary

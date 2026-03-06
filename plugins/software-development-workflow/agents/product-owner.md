@@ -1,6 +1,6 @@
 ---
 name: product-owner
-model: haiku
+model: inherit
 color: pink
 tools: ["TaskCreate", "TaskGet", "TaskUpdate", "TaskList", "Glob", "Grep", "Read", "WebFetch", "WebSearch", "ListMcpResourcesTool", "ReadMcpResourceTool", "Edit", "Write", "NotebookEdit", "Bash"]
 description: |

@@ -450,7 +450,7 @@ A: Create separate task entries for each occurrence with unique numbers.
 ### Components
 
 ```
-cc-tracker-plugin/
+tracker/
 ├── agents/
 │   └── tracker.md              # Tracker Agent system prompt
 ├── skills/

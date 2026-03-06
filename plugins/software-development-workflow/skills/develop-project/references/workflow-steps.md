@@ -300,45 +300,53 @@ Log to user:
 ```
 Phase {N} — {name}:
 - Pending Tasks: {count}
-- Spawning {AGENT_COUNT} developer agent(s)...
+- Spawning {AGENT_COUNT} developer(s) as a team...
 ```
 
-### 5.5 Execute Batches
+### 5.5 Execute with Developer Team
 
-Split pending tasks into batches of size `AGENT_COUNT`.
+Distribute all pending tasks across the team using round-robin:
+- Dev 1 → tasks at indices 0, 3, 6, …
+- Dev 2 → tasks at indices 1, 4, 7, …
+- Dev 3 → tasks at indices 2, 5, 8, …
 
-**Before each batch** — Edit TASKS.md to mark batch tasks in_progress:
-Replace each `- [ ] Task {id}:` → `- [~] Task {id}:` for tasks in this batch.
+**Mark all pending tasks as in_progress** — Edit TASKS.md, replace every `- [ ] Task {id}:` in this phase with `- [~] Task {id}:`.
 
-For each batch — spawn developer agents **in parallel** (single message, multiple Agent tool calls):
+Spawn all AGENT_COUNT developers **in parallel** (single message, multiple Agent tool calls). Each developer receives their full task list and implements tasks one at a time:
 
 ```
 subagent_type: "develop:senior-developer"
-description: "Implement Task {id}: {title}"
-prompt: "Implement Task {id} from Phase {N}: {phase-name}
+description: "Developer {DEV_N} — Phase {N}: {phase-name}"
+prompt: "You are Developer {DEV_N} of {AGENT_COUNT} working on Phase {N}: {phase-name}.
 
-## Task Details
-Title: {title}
-Complexity: {score} ({Low|Medium|High})
-Track: {track-name}
+## Requirements
+Read and understand the project requirements before implementing:
+{RESOLVED_FILE_PATH}
+
+## Your Task Queue
+Work through these tasks one at a time, in order:
+{For each task in this developer's list:}
+- Task {id}: {title} (complexity: {score}) — Track: {track-name}
 
 ## Context
-- Phase {N}: {phase-name}
-- Detailed plan: .trackers/{BASE_NAME}/plans/{BASE_NAME}-{NN}-{name}.md
-- Read the phase plan for full architectural context and acceptance criteria
+- Detailed phase plan: .trackers/{BASE_NAME}/plans/{BASE_NAME}-{NN}-{name}.md
 
-## Implementation
-Read the detailed phase plan, then implement this specific task.
-Follow the project's existing patterns and architecture."
+## Implementation Instructions
+1. Read the requirements document to understand the project scope and your tasks' purpose
+2. Read the detailed phase plan for architectural context and acceptance criteria
+3. For each task in your queue:
+   a. Review its acceptance criteria in the phase plan
+   b. Analyze existing code patterns
+   c. Implement the task fully and correctly
+   d. Verify it meets acceptance criteria before moving to the next task
+Follow the project's existing patterns and architecture throughout."
 ```
 
-Wait for batch to complete.
+Wait for all agents to complete.
 
-**After each batch** — Edit TASKS.md to mark results:
+**Mark results** — Edit TASKS.md for all tasks in this phase:
 - Success: `- [~] Task {id}:` → `- [x] Task {id}:`
 - Failure/blocked: `- [~] Task {id}:` → `- [!] Task {id}:`
-
-Repeat batches until all pending tasks for this phase are processed.
 
 ### 5.6 Complete Phase
 

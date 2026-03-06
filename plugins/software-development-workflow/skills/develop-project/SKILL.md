@@ -1,7 +1,7 @@
 ---
 name: develop-project
 description: This skill should be used when the user asks to "develop a project", "implement requirements", "build from requirements", "start a project from requirements", "turn my requirements into code", "build my app from my spec", "implement my app from this document", "scaffold from requirements", "I have a requirements doc and want to start coding", "I have a spec and want to start building", "full requirements-to-implementation workflow", or "build project using phases". Transforms a requirements document into a fully implemented, phase-structured codebase using automated planning and parallel execution across 8 clean architecture phases.
-version: 0.3.0
+version: 0.4.0
 ---
 
 # Develop Project Workflow Skill
@@ -94,11 +94,13 @@ All task tracking is done via `.trackers/{BASE_NAME}/TASKS.md`. This file is cre
 
 Use the **Edit tool** to update statuses inline — no external skill calls required.
 
-## Parallel Execution Rules (Step 5)
+## Team Execution Rules (Step 5)
 
-Within each phase, the number of parallel developer agents is fixed based on task count:
-- **≥ 3 pending tasks** → spawn **3** `develop:senior-developer` agents in parallel
+For each phase, a fixed team of developer agents is spawned once and works through all tasks:
+- **≥ 3 pending tasks** → spawn **3** `develop:senior-developer` agents as a team
 - **< 3 pending tasks** → spawn **1** `develop:senior-developer` agent
+
+Tasks are distributed round-robin across the team (Dev 1 gets tasks 1, 4, 7…; Dev 2 gets 2, 5, 8…; Dev 3 gets 3, 6, 9…). Each developer implements their assigned tasks **one at a time, sequentially**. All agents run in parallel until every task in the phase is complete — no repeated spawning between batches.
 
 See **`references/workflow-steps.md` Step 5** for the full execution process.
 
@@ -135,7 +137,7 @@ All output goes under `.trackers/{BASE_NAME}/`:
 ## Key Rules
 
 - **Sequential phases**: Always execute 1→2→3→4→5→6→7→8 in order
-- **Fixed parallelism**: Spawn 3 developer agents when ≥3 tasks, 1 agent when <3 tasks
+- **Team-based execution**: Spawn 3 developer agents as a team when ≥3 tasks (1 agent when <3 tasks); distribute tasks round-robin; each developer works tasks sequentially; no repeated spawning between batches
 - **Post-implementation review loop**: After all phases complete, run comprehensive review and fix issues (max 2 iterations); ask user if issues remain after 2nd pass
 - **Single user gate**: Only one confirmation required — at master plan review (Step 3)
 - **No tracker plugin**: All task tracking via TASKS.md using Edit tool
