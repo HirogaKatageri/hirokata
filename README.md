@@ -44,7 +44,7 @@ A comprehensive project and task management system with intelligent agents and s
 - Sprint planning and progress tracking
 - Team task organization
 
-[View Documentation →](plugins/cc-tracker-plugin/README.md)
+[View Documentation →](plugins/tracker/README.md)
 
 ### 2. Develop Plugin (v0.5.0)
 
@@ -77,7 +77,7 @@ Automated requirements-to-implementation workflow using an 8-phase clean archite
 - Requirements compliance verification
 - Test coverage and edge case analysis
 
-[View Documentation →](plugins/cc-develop-plugin/README.md)
+[View Documentation →](plugins/software-development-workflow/README.md)
 
 ## Installation
 
@@ -85,15 +85,15 @@ Automated requirements-to-implementation workflow using an 8-phase clean archite
 
 ```bash
 git clone https://github.com/hirogakatageri/hirokata-cc-marketplace.git
-cd hirokata-cc-marketplace
+cd hirokata
 ```
 
 Then use with Claude Code:
 
 ```bash
-cc --plugin-dir ./plugins/cc-tracker-plugin
+cc --plugin-dir ./plugins/tracker
 # or
-cc --plugin-dir ./plugins/cc-develop-plugin
+cc --plugin-dir ./plugins/software-development-workflow
 ```
 
 ### Option 2: Install Individual Plugins
@@ -102,10 +102,10 @@ Copy specific plugins to your project:
 
 ```bash
 # Install tracker plugin
-cp -r hirokata-cc-marketplace/plugins/cc-tracker-plugin /path/to/your-project/.claude-plugin/tracker
+cp -r hirokata/plugins/tracker /path/to/your-project/.claude-plugin/tracker
 
 # Install develop plugin
-cp -r hirokata-cc-marketplace/plugins/cc-develop-plugin /path/to/your-project/.claude-plugin/develop
+cp -r hirokata/plugins/software-development-workflow /path/to/your-project/.claude-plugin/develop
 ```
 
 ### Option 3: Use Multiple Plugins
@@ -117,8 +117,8 @@ To use both plugins simultaneously:
 mkdir -p /path/to/your-project/.claude-plugin
 
 # Copy both plugins
-cp -r hirokata-cc-marketplace/plugins/cc-tracker-plugin /path/to/your-project/.claude-plugin/tracker
-cp -r hirokata-cc-marketplace/plugins/cc-develop-plugin /path/to/your-project/.claude-plugin/develop
+cp -r hirokata/plugins/tracker /path/to/your-project/.claude-plugin/tracker
+cp -r hirokata/plugins/software-development-workflow /path/to/your-project/.claude-plugin/develop
 ```
 
 Claude Code will automatically load all plugins in `.claude-plugin/`.
@@ -244,8 +244,8 @@ hirokata-cc-marketplace/
 ├── .claude-plugin/
 │   └── marketplace.json     # Marketplace manifest
 ├── plugins/
-│   ├── cc-tracker-plugin/   # Task tracking plugin
-│   └── cc-develop-plugin/   # Development workflow plugin
+│   ├── tracker/                       # Task tracking plugin
+│   └── software-development-workflow/ # Development workflow plugin
 ├── LICENSE                  # MIT License
 └── README.md               # This file
 ```
@@ -301,8 +301,8 @@ Built for the Claude Code ecosystem by developers who believe in:
 
 ### Documentation
 - [Marketplace Changelog](CHANGELOG.md)
-- [Tracker Plugin Docs](plugins/cc-tracker-plugin/README.md) | [Changelog](plugins/cc-tracker-plugin/CHANGELOG.md)
-- [Develop Plugin Docs](plugins/cc-develop-plugin/README.md) | [Changelog](plugins/cc-develop-plugin/CHANGELOG.md)
+- [Tracker Plugin Docs](plugins/tracker/README.md) | [Changelog](plugins/tracker/CHANGELOG.md)
+- [Develop Plugin Docs](plugins/software-development-workflow/README.md) | [Changelog](plugins/software-development-workflow/CHANGELOG.md)
 
 ### Claude Code
 - [Claude Code Documentation](https://docs.anthropic.com/claude/docs)

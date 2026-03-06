@@ -1,5 +1,5 @@
 {
-  "name": "hirokata-cc-marketplace",
+  "name": "hirokata",
   "owner": {
     "name": "Gian Patrick Quintana",
     "email": "gian.quintana@hirokata.dev"
@@ -9,8 +9,8 @@
   "plugins": [
     {
       "name": "develop",
-      "source": "./plugins/cc-develop-plugin",
-      "version": "0.5.0",
+      "source": "./plugins/software-development-workflow",
+      "version": "0.6.0",
       "description": "Requirements-to-implementation workflow with 8-phase clean architecture, automated planning, adaptive parallel execution, intelligent conventional commit generation, and comprehensive requirements documentation.",
       "author": {
         "name": "Gian Patrick Quintana",
@@ -21,7 +21,7 @@
     },
     {
       "name": "tracker",
-      "source": "./plugins/cc-tracker-plugin",
+      "source": "./plugins/tracker",
       "version": "0.2.0",
       "description": "A structured task tracking system with phases, tracks, and detailed progress reporting.",
       "author": {

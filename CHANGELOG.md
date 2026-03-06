@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin dependency management
 - Version compatibility checking
 
+## [0.6.0] - 2026-03-06
+
+### Updated
+- **Develop Plugin v0.6.0**
+  - Team-based phase execution: 3 senior-developer agents spawned once per phase, tasks distributed round-robin, each developer works sequentially through their queue
+  - Senior developer now reads requirements document first (Phase 0) before any code or documentation analysis
+  - Senior developer model upgraded from Haiku to inherit
+
 ## [0.5.0] - 2026-03-03
 
 ### Updated
@@ -172,5 +180,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **0.0.1 → 0.1.0**: No breaking changes, documentation improvements
 
 ## See Also
-- [Tracker Plugin Changelog](plugins/cc-tracker-plugin/CHANGELOG.md)
-- [Develop Plugin Changelog](plugins/cc-develop-plugin/CHANGELOG.md)
+- [Tracker Plugin Changelog](plugins/tracker/CHANGELOG.md)
+- [Develop Plugin Changelog](plugins/software-development-workflow/CHANGELOG.md)
