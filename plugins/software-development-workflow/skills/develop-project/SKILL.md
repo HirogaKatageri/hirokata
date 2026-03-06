@@ -100,7 +100,7 @@ For each phase, a fixed team of developer agents is spawned once and works throu
 - **≥ 3 pending tasks** → spawn **3** `develop:senior-developer` agents as a team
 - **< 3 pending tasks** → spawn **1** `develop:senior-developer` agent
 
-Tasks are distributed round-robin across the team (Dev 1 gets tasks 1, 4, 7…; Dev 2 gets 2, 5, 8…; Dev 3 gets 3, 6, 9…). Each developer implements their assigned tasks **one at a time, sequentially**. All agents run in parallel until every task in the phase is complete — no repeated spawning between batches.
+All agents run in parallel. Instead of pre-assigned tasks, each agent uses a **claim-and-work loop**: find the next `[ ]` task in the phase → mark it `[~]` to claim it → implement it → mark it `[x]` or `[!]` → repeat until no `[ ]` tasks remain. This ensures faster agents pick up more work and no agent idles waiting for others.
 
 See **`references/workflow-steps.md` Step 5** for the full execution process.
 
@@ -137,7 +137,7 @@ All output goes under `.trackers/{BASE_NAME}/`:
 ## Key Rules
 
 - **Sequential phases**: Always execute 1→2→3→4→5→6→7→8 in order
-- **Team-based execution**: Spawn 3 developer agents as a team when ≥3 tasks (1 agent when <3 tasks); distribute tasks round-robin; each developer works tasks sequentially; no repeated spawning between batches
+- **Team-based execution**: Spawn 3 developer agents as a team when ≥3 tasks (1 agent when <3 tasks); each agent claims the next available `[ ]` task, marks it `[~]`, implements it, then repeats until no tasks remain; no repeated spawning between batches
 - **Post-implementation review loop**: After all phases complete, run comprehensive review and fix issues (max 2 iterations); ask user if issues remain after 2nd pass
 - **Single user gate**: Only one confirmation required — at master plan review (Step 3)
 - **No tracker plugin**: All task tracking via TASKS.md using Edit tool
