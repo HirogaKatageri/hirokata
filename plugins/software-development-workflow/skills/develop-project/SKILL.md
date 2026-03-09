@@ -64,6 +64,7 @@ At the **start of each step**: `TaskUpdate` → `in_progress`. At the **end**: `
 All task tracking is done via `.trackers/{BASE_NAME}/TASKS.md`. This file is created in Step 4 and updated throughout Step 5.
 
 **Format**:
+
 ```markdown
 # Tasks - {BASE_NAME}
 
@@ -85,6 +86,7 @@ All task tracking is done via `.trackers/{BASE_NAME}/TASKS.md`. This file is cre
 ```
 
 **Task status markers**:
+
 - `[ ]` = pending
 - `[~]` = in_progress
 - `[x]` = complete
@@ -97,6 +99,7 @@ Use the **Edit tool** to update statuses inline — no external skill calls requ
 ## Team Execution Rules (Step 5)
 
 For each phase, a fixed team of developer agents is spawned once and works through all tasks:
+
 - **≥ 3 pending tasks** → spawn **3** `develop:senior-developer` agents as a team
 - **< 3 pending tasks** → spawn **1** `develop:senior-developer` agent
 
@@ -107,7 +110,8 @@ See **`references/workflow-steps.md` Step 5** for the full execution process.
 ## Post-Implementation Review Loop (Step 5)
 
 After all 8 phases are complete, run a comprehensive review loop (max 2 iterations):
-1. Execute `develop:comprehensive-review` against the requirements and all phase plans
+
+1. Execute `Skill: develop:comprehensive-review` against the requirements and all phase plans
 2. If no issues → done
 3. If issues found on iteration 1 → create `TodoWrite` todos, fix with developer agents, re-run review
 4. If issues remain after iteration 2 → **ask user** whether to fix remaining issues or proceed to summary
@@ -149,5 +153,6 @@ All output goes under `.trackers/{BASE_NAME}/`:
 ### Reference Files
 
 For detailed step-by-step execution instructions:
+
 - **`references/workflow-steps.md`** — Complete Steps 1–6 process flow with exact prompts, file paths, user interactions, and TASKS.md operations
 - **`references/summary-report.md`** — The markdown template used when writing the final summary file in Step 6

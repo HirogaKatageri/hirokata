@@ -10,7 +10,7 @@
     {
       "name": "develop",
       "source": "./plugins/software-development-workflow",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "description": "Requirements-to-implementation workflow with 8-phase clean architecture, automated planning, adaptive parallel execution, intelligent conventional commit generation, and comprehensive requirements documentation.",
       "author": {
         "name": "Gian Patrick Quintana",
