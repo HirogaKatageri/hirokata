@@ -1,6 +1,6 @@
 ---
 name: develop-project
-description: This skill should be used when the user asks to "develop a project", "implement requirements", "build from requirements", "start a project from requirements", "turn my requirements into code", "build my app from my spec", "implement my app from this document", "scaffold from requirements", "I have a requirements doc and want to start coding", "I have a spec and want to start building", "full requirements-to-implementation workflow", or "build project using phases". Transforms a requirements document into a fully implemented, phase-structured codebase using automated planning and parallel execution across 8 clean architecture phases.
+description: This skill should be used when the user asks to "develop a project", "implement requirements", "build from requirements", "start a project from requirements", "turn my requirements into code", "build my app from my spec", "implement my app from this document", "scaffold from requirements", "I have a requirements doc and want to start coding", "I have a spec and want to start building", "full requirements-to-implementation workflow", "build project using phases", "resume my project build", "continue my interrupted build", or "my build was interrupted". Transforms a requirements document into a fully implemented, phase-structured codebase using automated planning and parallel execution across 8 clean architecture phases.
 version: 0.4.0
 ---
 

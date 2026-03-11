@@ -4,6 +4,23 @@ Complete step-by-step instructions for all 6 steps of the develop-project skill.
 
 ---
 
+## Step 0: Progress Tracking Setup (Do First)
+
+**Before Step 1**, create all 6 workflow tasks using `TaskCreate` for real-time progress visibility:
+
+| # | Subject | activeForm |
+|---|---|---|
+| 1 | Parse arguments and resolve requirements file | Parsing arguments and resolving requirements file |
+| 2 | Generate master plan from requirements | Generating master plan from requirements |
+| 3 | Review master plan with user | Reviewing master plan with user |
+| 4 | Split master plan and build task list | Splitting master plan and building task list |
+| 5 | Execute all phases | Executing all phases |
+| 6 | Generate final summary report | Generating final summary report |
+
+At the **start of each step**: `TaskUpdate` → `in_progress`. At the **end**: `TaskUpdate` → `completed`.
+
+---
+
 ## Step 1: Parse Arguments and Resolve Requirements File Path
 
 **TaskUpdate Task 1 → in_progress**
@@ -376,9 +393,8 @@ After all 8 phases are complete, run a review loop (max 2 iterations):
    - Set `REVIEW_ITERATION = REVIEW_ITERATION + 1`
    - Go back to step 1 (re-run review)
 
-5. If `REVIEW_ITERATION == 2` (2nd iteration):
-   - Run the review one final time
-   - If issues remain, present them to the user and ask:
+5. If `REVIEW_ITERATION == 2` (2nd iteration, issues still found from step 1):
+   - Present the remaining issues to the user and ask:
      ```
      Review complete. {count} issue(s) remain after 2 passes.
      Would you like to fix the remaining issues, or proceed to the summary report?
