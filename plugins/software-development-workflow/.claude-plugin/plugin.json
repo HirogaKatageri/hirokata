@@ -1,6 +1,6 @@
 {
   "name": "develop",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "A requirements to implementation workflow for software development projects with a breakdown of implementation into phases.",
   "author": {
     "name": "Gian Patrick Quintana",
