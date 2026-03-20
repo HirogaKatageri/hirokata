@@ -8,9 +8,9 @@
   "license": "MIT",
   "plugins": [
     {
-      "name": "develop",
-      "source": "./plugins/software-development-workflow",
-      "version": "0.6.2",
+      "name": "software",
+      "source": "./plugins/software-project",
+      "version": "1.0.0",
       "description": "Requirements-to-implementation workflow with 8-phase clean architecture, automated planning, adaptive parallel execution, intelligent conventional commit generation, and comprehensive requirements documentation.",
       "author": {
         "name": "Gian Patrick Quintana",
@@ -20,16 +20,16 @@
       "keywords": ["development", "requirements", "automation", "clean-architecture", "planning", "conventional-commits", "requirements-engineering"]
     },
     {
-      "name": "tracker",
-      "source": "./plugins/tracker",
-      "version": "0.2.0",
-      "description": "A structured task tracking system with phases, tracks, and detailed progress reporting.",
+      "name": "project-management",
+      "source": "./plugins/project-management",
+      "version": "1.0.0",
+      "description": "Project management plugin for orchestrating requests, delegating work to agents, and managing project workspace structure.",
       "author": {
         "name": "Gian Patrick Quintana",
         "email": "gian.quintana@hirokata.dev"
       },
       "license": "MIT",
-      "keywords": ["task-management", "project-tracking", "phases", "progress"]
+      "keywords": ["project-management", "orchestration", "requests", "workspace"]
     }
   ]
 }
