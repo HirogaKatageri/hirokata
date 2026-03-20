@@ -1,24 +1,22 @@
 # HiroKata Claude Code Plugin Marketplace
 
-A curated collection of Claude Code plugins for enhanced development workflows, featuring intelligent task tracking and automated requirements-to-implementation pipelines.
+A curated collection of Claude Code plugins for enhanced development workflows, featuring automated requirements-to-implementation pipelines.
 
-**📋 [View Changelog](CHANGELOG.md)** | **🔗 Version 0.5.0**
+**[View Changelog](CHANGELOG.md)** | **Version 1.0.0**
 
 ## What's New
 
-### Latest Updates (v0.5.0 - Mar 2026)
+### v1.0.0 - Mar 2026
 
-**8-Phase Clean Architecture** - The develop plugin implements a complete 8-phase workflow: Foundational → Models → Services → Data → Rules → State Management → UI → Tests, with each phase building on the previous.
+**First Stable Release** - The software plugin reaches v1.0.0 with quality improvements across agents and skills.
 
-**5-Agent Comprehensive Review** - Five specialized review agents run in parallel after all phases complete: product compliance, business logic and testability, edge cases, architecture alignment, and OWASP Top 10 security. Issues are fixed automatically (up to 2 iterations).
+**Plugin Restructure** - Renamed `software-development-workflow` to `software-project` and `tracker` to `project-management` for clarity.
 
-**Streamlined 6-Step Workflow with Single User Gate** - Only the master plan review requires your input. Everything else — plan splitting, phase execution, review, and fix loops — runs automatically end-to-end.
+**Agent Quality** - Fixed color collision between agents, trimmed unnecessary tools from product-owner, optimized reference files to reduce token overhead.
 
-**Three-State Resume** - Interrupted runs are detected and resumed intelligently: TASKS.md present resumes execution, master plan only skips to split-plan, neither starts fresh.
+**Skill Improvements** - All user-invocable skills now explicitly declare `user-invocable: true`. Conventional commit uses a generic Co-Authored-By placeholder.
 
-**Self-Contained Progress Tracking** - Progress is tracked via TASKS.md; the tracker plugin is no longer required.
-
-[View Full Changelog →](CHANGELOG.md)
+[View Full Changelog](CHANGELOG.md)
 
 ## Overview
 
@@ -26,46 +24,27 @@ This marketplace provides production-ready Claude Code plugins that extend Claud
 
 ## Available Plugins
 
-### 1. Tracker Plugin (v0.2.0)
-
-A comprehensive project and task management system with intelligent agents and structured tracking.
-
-**Features:**
-- Phase-based project organization (Planning, Implementation, Testing, etc.)
-- Feature-based tracks that span across phases
-- Intelligent tracker agent for conversational project management
-- Individual skills for direct control (/create-tracker, /add-task, /mark-status, etc.)
-- Progress reports with visual indicators
-- Task dependencies and complexity tracking
-
-**Use Cases:**
-- Managing multi-phase software projects
-- Coordinating parallel feature development
-- Sprint planning and progress tracking
-- Team task organization
-
-[View Documentation →](plugins/tracker/README.md)
-
-### 2. Develop Plugin (v0.5.0)
+### 1. Software Plugin (v1.0.0)
 
 Automated requirements-to-implementation workflow using an 8-phase clean architecture approach with intelligent commit generation, dedicated software architecture planning, and comprehensive code review system.
 
 **Features:**
 - Converts requirements documents into working code
-- 8-phase clean architecture (Foundational → Models → Services → Data → Rules → State Management → UI → Review)
+- 8-phase clean architecture (Foundational → Models → Services → Data → Rules → State Management → UI → Tests)
 - Fixed parallelism (up to 3 developer agents per phase)
-- Four specialized code review agents
+- Five specialized code review agents
   - Product reviewer for requirements compliance
   - Business logic reviewer for testability and test coverage
   - Edge case reviewer for boundary conditions and error handling
   - Architecture reviewer for clean architecture alignment
+  - Security reviewer for OWASP Top 10 vulnerability detection
 - Comprehensive review skill - Parallel multi-dimensional code review in 2-5 minutes
 - Post-implementation review loop with auto-fix (up to 2 iterations)
 - Software architect agent for comprehensive master plan creation
 - Conventional commit generator with intelligent change grouping
 - Three-state resume capability for interrupted workflows (TASKS.md, master plan only, or fresh start)
 - Progress tracked via TASKS.md file
-- Specialized agents: software architect, product owner, senior developer, and 4 code reviewers (including code-reviewer-security)
+- 8 specialized agents: software architect, product owner, senior developer, and 5 code reviewers
 
 **Use Cases:**
 - Transforming requirements into implementation plans
@@ -77,7 +56,7 @@ Automated requirements-to-implementation workflow using an 8-phase clean archite
 - Requirements compliance verification
 - Test coverage and edge case analysis
 
-[View Documentation →](plugins/software-development-workflow/README.md)
+[View Documentation](plugins/software-project/README.md)
 
 ## Installation
 
@@ -91,69 +70,26 @@ cd hirokata
 Then use with Claude Code:
 
 ```bash
-cc --plugin-dir ./plugins/tracker
-# or
-cc --plugin-dir ./plugins/software-development-workflow
+cc --plugin-dir ./plugins/software-project
 ```
 
 ### Option 2: Install Individual Plugins
 
-Copy specific plugins to your project:
+Copy a plugin to your project:
 
 ```bash
-# Install tracker plugin
-cp -r hirokata/plugins/tracker /path/to/your-project/.claude-plugin/tracker
-
-# Install develop plugin
-cp -r hirokata/plugins/software-development-workflow /path/to/your-project/.claude-plugin/develop
-```
-
-### Option 3: Use Multiple Plugins
-
-To use both plugins simultaneously:
-
-```bash
-# Create a .claude-plugin directory in your project
-mkdir -p /path/to/your-project/.claude-plugin
-
-# Copy both plugins
-cp -r hirokata/plugins/tracker /path/to/your-project/.claude-plugin/tracker
-cp -r hirokata/plugins/software-development-workflow /path/to/your-project/.claude-plugin/develop
+cp -r hirokata/plugins/software-project /path/to/your-project/.claude-plugin/software
 ```
 
 Claude Code will automatically load all plugins in `.claude-plugin/`.
 
 ## Quick Start
 
-### Using Tracker Plugin
-
-```bash
-# Create a new tracker
-/tracker:create-tracker my-project
-
-# Add tasks
-/tracker:add-task my-project --phase=1 --track=authentication
-
-# Update status
-/tracker:mark-status my-project
-
-# Review progress
-/tracker:review-tracker my-project
-```
-
-Or use the intelligent agent:
-
-```
-You: Help me set up tracking for my new web app with authentication and dashboard features
-
-tracker:tracker Agent: [Guides you through structured project setup with intelligent recommendations]
-```
-
 ### Using Develop Plugin
 
 ```bash
 # Start from requirements
-/develop:develop-project requirements.md
+/software:develop-project requirements.md
 
 # The plugin will:
 # 1. Create a comprehensive master plan (software-architect agent)
@@ -164,27 +100,9 @@ tracker:tracker Agent: [Guides you through structured project setup with intelli
 # 6. Generate final summary report
 ```
 
-### Using Both Together
-
-```bash
-# Use develop plugin for complete automated project workflow
-/develop:develop-project requirements/my-app.md
-
-# The develop plugin manages its own progress via TASKS.md.
-# It does not create or update a tracker automatically.
-
-# Use tracker plugin independently for manual task management
-# alongside your develop workflow:
-/tracker:create-tracker my-app
-/tracker:add-task my-app --phase=1 --track=authentication
-
-# Review tracker progress anytime
-/tracker:review-tracker my-app
-```
-
 ## Plugin Architecture
 
-Both plugins follow Claude Code plugin best practices:
+Plugins follow Claude Code plugin best practices:
 
 ```
 plugin-name/
@@ -244,8 +162,8 @@ hirokata-cc-marketplace/
 ├── .claude-plugin/
 │   └── marketplace.json     # Marketplace manifest
 ├── plugins/
-│   ├── tracker/                       # Task tracking plugin
-│   └── software-development-workflow/ # Development workflow plugin
+│   ├── software-project/              # Software development workflow plugin
+│   └── project-management/            # Project management plugin
 ├── LICENSE                  # MIT License
 └── README.md               # This file
 ```
@@ -301,8 +219,8 @@ Built for the Claude Code ecosystem by developers who believe in:
 
 ### Documentation
 - [Marketplace Changelog](CHANGELOG.md)
-- [Tracker Plugin Docs](plugins/tracker/README.md) | [Changelog](plugins/tracker/CHANGELOG.md)
-- [Develop Plugin Docs](plugins/software-development-workflow/README.md) | [Changelog](plugins/software-development-workflow/CHANGELOG.md)
+- [Software Plugin Docs](plugins/software-project/README.md) | [Changelog](plugins/software-project/CHANGELOG.md)
+- [Project Management Plugin Docs](plugins/project-management/README.md)
 
 ### Claude Code
 - [Claude Code Documentation](https://docs.anthropic.com/claude/docs)

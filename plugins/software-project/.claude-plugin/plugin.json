@@ -1,0 +1,10 @@
+{
+  "name": "software",
+  "version": "1.0.0",
+  "description": "A requirements to implementation workflow for software development projects with a breakdown of implementation into phases.",
+  "author": {
+    "name": "Gian Patrick Quintana",
+    "email": "gian.quintana@hirokata.dev"
+  },
+  "license": "MIT"
+}

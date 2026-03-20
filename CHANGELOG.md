@@ -16,6 +16,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin dependency management
 - Version compatibility checking
 
+## [1.0.0] - 2026-03-20
+
+### Changed
+- **Plugin restructure**: Renamed `software-development-workflow` → `software-project`, `tracker` → `project-management`
+- **Software Plugin v1.0.0** — First stable release
+  - Fixed agent color collision: `code-reviewer-security` changed from `red` to `orange`
+  - Trimmed `product-owner` agent tools from 16 to 8 (removed unused MCP, notebook, and task tools)
+  - Generic `Co-Authored-By: Claude` placeholder in conventional commit skill
+  - Optimized `agent-capabilities.md` reference — removed per-agent sections that duplicated agent prompts, kept cross-agent insights only
+  - Added explicit `user-invocable: true` to all 4 user-invocable skills
+- **Project Management Plugin v1.0.0** — New plugin replacing the tracker plugin with project orchestration capabilities
+
+### Removed
+- **Tracker Plugin** — Replaced by project-management plugin
+
 ## [0.6.1] - 2026-03-09
 
 ### Updated
@@ -172,8 +187,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin updates increment minor or patch versions accordingly
 
 ### Plugin Compatibility
-- All plugins are designed to work independently or together
-- Develop plugin integrates with Tracker plugin when both are installed
 - No breaking changes between current versions
 
 ### Migration Notes
@@ -185,5 +198,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **0.0.1 → 0.1.0**: No breaking changes, documentation improvements
 
 ## See Also
-- [Tracker Plugin Changelog](plugins/tracker/CHANGELOG.md)
 - [Develop Plugin Changelog](plugins/software-development-workflow/CHANGELOG.md)
