@@ -1,88 +1,53 @@
 ---
 name: comprehensive-review
-description: This skill should be used when the user asks to "review my changes", "run comprehensive review", "review against requirements", "check all my code", "run all reviewers", "comprehensive code review", or wants a complete analysis of recent changes including requirements compliance, test coverage, edge cases, and architecture alignment.
-version: 0.1.0
+description: Use this skill when the user wants to review code changes, verify implementation quality, or check readiness before a PR or deployment. Trigger on phrases like "review my changes", "run comprehensive review", "check all my code", "am I ready for PR", "before I create a PR", "before I merge", "code audit", "quality check", "verify my implementation", "is my feature complete", "run all reviewers", "check if my implementation is complete", or any multi-dimensional code analysis request. Also use proactively when the user says they've finished a phase, completed a feature, or are wrapping up work — even if they don't explicitly ask for a "review". Covers requirements compliance, test coverage, edge cases, architecture alignment, and security.
+version: 0.2.0
 ---
 
 # Comprehensive Review
 
-This skill orchestrates a complete multi-dimensional review of code changes against requirements, running five specialized review agents in parallel to provide comprehensive feedback on implementation quality.
+Orchestrates five specialized review agents in parallel to provide a complete, multi-dimensional analysis of recent code changes:
 
-## Purpose
-
-Provide a thorough analysis of recent code changes across five critical dimensions:
-1. **Requirements Compliance** - Verify all requirements are implemented
-2. **Test Coverage** - Ensure business logic is testable and tested
-3. **Edge Case Handling** - Identify unhandled edge cases and boundary conditions
-4. **Architectural Alignment** - Check compliance with clean architecture principles
-5. **Security** - Identify security vulnerabilities and risks
-
-## When to Use This Skill
-
-Use this skill when:
-- Completing a development phase and need full validation
-- Preparing for a pull request or code review
-- Finishing implementation of requirements and want to verify completeness
-- Need to ensure code quality across multiple dimensions before deployment
-- Want to catch issues early before they reach production
+1. **Requirements Compliance** — Verifies all requirements are implemented
+2. **Test Coverage** — Ensures business logic is testable and tested
+3. **Edge Case Handling** — Identifies unhandled edge cases and boundary conditions
+4. **Architectural Alignment** — Checks compliance with clean architecture principles
+5. **Security** — Identifies vulnerabilities and risks (OWASP Top 10)
 
 ## Review Workflow
 
 ### Step 1: Identify Review Scope
 
-First, determine what needs to be reviewed:
+1. **Find requirements documents** — look in `requirements/`, `docs/`, `planning/`, or phase plan files (`phase-1.md` through `phase-8.md`). If none found, ask the user.
+2. **Identify recent changes** — use `git log` and `git diff` to understand scope
+3. **Confirm scope** — if unclear which requirements or commits to include, ask
 
-1. **Check for requirements documents:**
-   - Look in `requirements/` directory
-   - Check for master plan files (typically in `docs/` or `planning/`)
-   - Find phase plan files (phase-1.md through phase-7.md)
-   - Ask user to specify if no requirements found
+### Step 2: Launch All Five Agents in Parallel
 
-2. **Identify recent changes:**
-   - Use `git log` to see recent commits
-   - Use `git diff` to understand scope of changes
-   - Determine which files and features were modified
+Launch all agents in a **single message** using multiple Task tool calls. Include specific file paths and context in each prompt so agents don't waste time on discovery.
 
-3. **Confirm scope with user:**
-   - If unclear which requirements to review against, ask user
-   - If unsure about which commits to include, ask for clarification
-   - Confirm if specific areas should be excluded from review
+**product-reviewer:**
+> "Review recent changes against [requirements-file]. Map each requirement to its implementation. Flag anything missing or partially implemented. The project uses an 8-phase clean architecture structure."
 
-### Step 2: Launch Review Agents in Parallel
+**code-reviewer-business-logic:**
+> "Review recent changes for business logic testability and unit test coverage. Focus on services, use cases, and domain logic. Flag untestable patterns (hard-coded dependencies, global state, non-determinism) and missing unit tests."
 
-Execute all five review agents concurrently for maximum efficiency:
+**code-reviewer-edge-case:**
+> "Review recent changes for unhandled edge cases: null/undefined access, empty collections, boundary values, error scenarios (network timeout, DB failure, API errors), date/time issues, and concurrency problems."
 
-```markdown
-Launch the following agents in parallel using multiple Task tool invocations in a single message:
+**code-reviewer-architecture:**
+> "Review recent changes for clean architecture compliance. Check dependency direction (inner layers must not depend on outer), layer separation (business logic out of UI), and correct phase placement using the 8-phase structure: Phase 1 Foundational → Phase 2 Models → Phase 3 Services → Phase 4 Data → Phase 5 Rules → Phase 6 State → Phase 7 UI → Phase 8 Tests."
 
-1. **product-reviewer** agent
-   - Prompt: "Review recent changes against [requirements file/master plan/phase plan]. Verify all requirements are implemented and identify any missing functionality."
-
-2. **code-reviewer-business-logic** agent
-   - Prompt: "Review recent changes for business logic testability and test coverage. Identify untestable code patterns and missing unit tests."
-
-3. **code-reviewer-edge-case** agent
-   - Prompt: "Review recent changes for unhandled edge cases, boundary conditions, and error scenarios. Identify potential edge case issues."
-
-4. **code-reviewer-architecture** agent
-   - Prompt: "Review recent changes for architectural alignment with clean architecture principles and the 8-phase structure. Identify architectural violations and provide recommendations."
-
-5. **code-reviewer-security** agent
-   - Prompt: "Review recent changes for security vulnerabilities including injection flaws, authentication issues, sensitive data exposure, access control weaknesses, and cryptographic misconfigurations. Identify all security risks and provide remediation guidance."
-```
-
-**Important:** Launch all five agents in a single message with multiple Task tool calls to maximize parallelization and reduce total review time.
+**code-reviewer-security:**
+> "Review recent changes for security vulnerabilities: injection flaws (SQL, command, template), authentication/authorization issues, sensitive data exposure, hardcoded secrets, weak cryptography (MD5/SHA1/DES), XSS, CSRF, and missing input validation. Reference OWASP Top 10."
 
 ### Step 3: Collect Agent Reports
 
-As each agent completes:
-1. Capture the full report from each agent
-2. Store reports for consolidation
-3. Note any critical issues flagged by agents
+Wait for all five agents. Capture full reports and note critical issues.
 
 ### Step 4: Present Consolidated Report
 
-Provide a comprehensive summary to the user:
+Use the following structure. Status icons reflect actual findings — do not default to ✅ if there are issues.
 
 ```markdown
 # Comprehensive Review Report
@@ -91,251 +56,77 @@ Provide a comprehensive summary to the user:
 
 **Review Scope:**
 - Requirements: [which documents]
-- Changes: [commit range or scope]
+- Changes: [commit range or files]
 - Files Reviewed: [count]
 
-**Overall Status:** [Pass/Pass with Warnings/Needs Attention/Critical Issues]
+**Overall Status:** [Pass / Pass with Warnings / Needs Attention / Critical Issues]
 
-**Critical Issues:** [count]
-**Warnings:** [count]
-**Recommendations:** [count]
+**Critical Issues:** [count] | **Warnings:** [count] | **Recommendations:** [count]
 
-## Review Dimensions Summary
+## Review Dimensions
 
-### ✅ Requirements Compliance
-- Implemented: [X]%
-- Missing: [count] requirements
-- Status: [Good/Needs Work]
-- [Link to detailed report below]
+| Dimension | Status | Summary |
+|---|---|---|
+| Requirements Compliance | [✅/⚠️/❌] | [X]% implemented, [N] missing |
+| Test Coverage | [✅/⚠️/❌] | [X]% coverage, [N] untestable |
+| Edge Case Handling | [✅/⚠️/❌] | [N] critical, [N] warning |
+| Architecture Alignment | [✅/⚠️/❌] | [N] violations, [N] warnings |
+| Security | [✅/⚠️/❌] | [N] critical, [N] high |
 
-### ✅ Test Coverage
-- Business Logic Changes: [count]
-- Tested: [X]%
-- Missing Tests: [count]
-- Status: [Good/Needs Work]
-- [Link to detailed report below]
-
-### ✅ Edge Case Handling
-- Critical Edge Cases: [count]
-- Warning Edge Cases: [count]
-- Status: [Good/Needs Work]
-- [Link to detailed report below]
-
-### ✅ Architecture Alignment
-- Critical Violations: [count]
-- Architectural Warnings: [count]
-- Status: [Good/Needs Work]
-- [Link to detailed report below]
-
-### ✅ Security
-- Critical Vulnerabilities: [count]
-- High Vulnerabilities: [count]
-- Medium Vulnerabilities: [count]
-- Status: [Secure/Needs Attention/At Risk/Critical Risk]
-- [Link to detailed report below]
+**Status icons:** ✅ Good | ⚠️ Needs Attention | ❌ Critical Issues
 
 ## Priority Actions
 
-List the most critical items across all reviews:
-
 ### Must Fix Immediately
-1. [Critical issue from any agent]
-2. [Critical issue from any agent]
+1. [Critical issue — source agent, file:line]
 
 ### Should Fix Soon
-1. [Important issue from any agent]
-2. [Important issue from any agent]
+1. [Important issue]
 
 ### Consider for Future
-1. [Recommendation from any agent]
-2. [Recommendation from any agent]
+1. [Recommendation]
 
 ---
 
 ## Detailed Reports
 
-### 1. Requirements Compliance Report
+### 1. Requirements Compliance
+[Full product-reviewer report]
 
-[Full product-reviewer agent report]
+### 2. Test Coverage
+[Full code-reviewer-business-logic report]
 
----
+### 3. Edge Case Analysis
+[Full code-reviewer-edge-case report]
 
-### 2. Test Coverage Report
+### 4. Architecture Review
+[Full code-reviewer-architecture report]
 
-[Full code-reviewer-business-logic agent report]
-
----
-
-### 3. Edge Case Analysis Report
-
-[Full code-reviewer-edge-case agent report]
-
----
-
-### 4. Architecture Review Report
-
-[Full code-reviewer-architecture agent report]
-
----
-
-### 5. Security Review Report
-
-[Full code-reviewer-security agent report]
+### 5. Security Review
+[Full code-reviewer-security report]
 
 ---
 
 ## Next Steps
-
-Recommended actions based on all reviews:
-1. [Prioritized action]
-2. [Prioritized action]
-3. [Prioritized action]
+[Prioritized action list based on combined findings]
 ```
 
-## Best Practices
-
-### Efficient Agent Usage
-
-- **Parallel execution:** Always launch all five agents in parallel
-- **Clear prompts:** Provide specific requirements file paths to agents
-- **Scope clarity:** Be explicit about what commits or changes to review
-
-### Report Presentation
-
-- **Executive summary first:** Give user high-level status immediately
-- **Prioritized issues:** Combine findings across all reviews into priority order
-- **Detailed reports below:** Include full agent reports for deep analysis
-- **Actionable next steps:** Provide clear recommendations
-
-### Handling Edge Cases
+## Handling Special Cases
 
 **No requirements found:**
-```markdown
-Could not locate requirements documents. Please specify:
-- Path to requirements file, or
-- Path to master plan/phase plans, or
-- Confirm if requirements review should be skipped
-```
+Ask the user to provide a requirements file path, master plan, or confirm whether to skip the requirements review.
 
-**No recent changes:**
-```markdown
-No recent changes detected. Please specify:
-- Commit range to review (e.g., main..feature-branch), or
-- Specific files to review, or
-- Whether to review all uncommitted changes
-```
+**No recent changes detected:**
+Ask the user for a commit range (e.g., `main..feature-branch`) or specific files to review.
 
-**One or more agents fail:**
-```markdown
-Unable to complete [agent-name] review: [reason]
-Continuing with remaining reviews...
+**An agent fails:**
+Note the failure, continue with the remaining agents, and present a partial report. Suggest running the failed review separately.
 
-[Present reports from successful agents]
+## Reference Files
 
-Note: [agent-name] review incomplete. May need to run separately.
-```
-
-**Security review not applicable:**
-```markdown
-No security-sensitive code detected in recent changes.
-Security review skipped. If this is incorrect, specify which files to review.
-```
-
-## Tips for Effective Reviews
-
-### Before Running Review
-
-1. **Commit your changes:** Ensures git diff captures all work
-2. **Identify requirements:** Know which requirements document to validate against
-3. **Check scope:** Confirm if reviewing specific branch or commit range
-
-### Interpreting Results
-
-1. **Focus on Critical items first:** Address high-priority issues before warnings
-2. **Cross-reference findings:** Same issue may appear in multiple reports
-3. **Balance thoroughness with pragmatism:** Not every recommendation needs immediate action
-
-### After Review
-
-1. **Create tasks:** Convert findings into actionable tasks
-2. **Prioritize fixes:** Address critical issues before proceeding
-3. **Update requirements:** If requirements changed, update documentation
-
-## Common Usage Patterns
-
-### Pattern 1: Phase Completion Review
-
-```
-User: "I've completed Phase 3, run comprehensive review against phase-3.md"
-
-Expected flow:
-1. Locate docs/phase-3.md
-2. Get recent changes since Phase 3 started
-3. Launch all 5 agents with phase-3.md as requirements
-4. Present consolidated report
-```
-
-### Pattern 2: Pre-PR Review
-
-```
-User: "Review my feature branch before I create a PR"
-
-Expected flow:
-1. Determine feature branch and base branch
-2. Get changes: git diff main..feature-branch
-3. Find relevant requirements in requirements/ or plans/
-4. Launch all 5 agents
-5. Present consolidated report with PR readiness assessment
-```
-
-### Pattern 3: Post-Implementation Validation
-
-```
-User: "Check if my authentication feature implementation is complete"
-
-Expected flow:
-1. Look for authentication requirements in requirements/
-2. Find authentication-related changes in recent commits
-3. Launch all 5 agents focused on authentication code
-4. Present findings specifically about authentication implementation
-```
-
-## Agent Descriptions
-
-For reference, the five agents provide:
-
-- **product-reviewer:** Compares implementation against requirements documents, identifies missing or incomplete features
-- **code-reviewer-business-logic:** Verifies business logic is testable and has proper unit test coverage
-- **code-reviewer-edge-case:** Identifies unhandled edge cases, boundary conditions, and error scenarios
-- **code-reviewer-architecture:** Reviews architectural alignment with clean architecture and 8-phase structure
-- **code-reviewer-security:** Identifies security vulnerabilities (OWASP Top 10), authentication flaws, injection risks, sensitive data exposure, and provides remediation guidance
-
-## Performance Notes
-
-- **Parallel execution:** All agents run simultaneously, total time ≈ slowest agent (not sum of all)
-- **Average review time:** 2-5 minutes depending on change scope
-- **Token efficiency:** Agents use Haiku model for cost-effective reviews
-
-## Additional Resources
-
-### Reference Files
-
-For understanding individual agent capabilities:
-- **`references/agent-capabilities.md`** - Detailed description of each agent's analysis
-- **`references/review-interpretation.md`** - How to interpret and act on findings
-
-### Example Reviews
-
-Working examples in `examples/`:
-- **`phase-completion-review.md`** - Example of phase completion review
-- **`pr-readiness-review.md`** - Example of pre-PR review
+- **`references/agent-capabilities.md`** — Read this when you need to understand what a specific agent analyzes or how to interpret its metrics (e.g., what "critical" vs "warning" means per dimension).
+- **`references/review-interpretation.md`** — Read this when consolidating findings: contains decision matrices for go/no-go decisions, cross-cutting patterns (issues appearing in multiple reports), and how to prioritize fixes across dimensions.
 
 ## Limitations
 
-This skill cannot:
-- Fix issues automatically (only identifies them)
-- Modify code or tests
-- Make architectural decisions (only provides recommendations)
-- Replace human code review (complements it)
-
-Use this skill as part of a comprehensive quality assurance process, not as a replacement for human judgment and testing.
+This skill identifies issues but cannot fix them, modify code, or replace human judgment. Use it as part of your quality process, not as a substitute for it.
