@@ -385,11 +385,12 @@ After all 8 phases are complete, run a review loop (max 2 iterations):
 3. If **no issues found** → log "Implementation review passed. No issues found." → exit loop.
 
 4. If **issues found** AND `REVIEW_ITERATION < 2`:
-   - Create a `TodoWrite` todo for **each issue** found, with the issue description and file reference
-   - For each todo (batch in groups of AGENT_COUNT):
+   - Append a `## Review Fixes [in_progress]` section to `tasks/{BASE_NAME}/TASKS.md` with each issue as a `[ ]` task
+   - For each task (batch in groups of AGENT_COUNT):
+     - Mark it `[~]` in TASKS.md
      - Spawn `software:senior-developer` agent(s) to fix the issue
      - Wait for completion
-     - Mark todo as done
+     - Mark it `[x]` in TASKS.md
    - Set `REVIEW_ITERATION = REVIEW_ITERATION + 1`
    - Go back to step 1 (re-run review)
 
@@ -399,7 +400,7 @@ After all 8 phases are complete, run a review loop (max 2 iterations):
      Review complete. {count} issue(s) remain after 2 passes.
      Would you like to fix the remaining issues, or proceed to the summary report?
      ```
-   - **"fix"** → create todos, spawn fix agents, then generate summary
+   - **"fix"** → append tasks to TASKS.md, spawn fix agents, then generate summary
    - **"proceed"** → exit loop and continue to Step 6
 
 **TaskUpdate Task 5 → completed**

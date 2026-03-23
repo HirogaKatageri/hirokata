@@ -5,6 +5,11 @@ All notable changes to the Develop Plugin will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-03-23
+
+### Fixed
+- **develop-project skill** - Replaced `TodoWrite` todos with TASKS.md task entries in the post-implementation review loop; review fix issues are now tracked as a `## Review Fixes` section in `TASKS.md` using the same `[ ]`/`[~]`/`[x]` markers as the rest of the workflow
+
 ## [0.6.0] - 2026-03-06
 
 ### Changed

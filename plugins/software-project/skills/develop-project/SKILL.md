@@ -114,7 +114,7 @@ After all 8 phases are complete, run a comprehensive review loop (max 2 iteratio
 
 1. Execute `Skill: software:comprehensive-review` against the requirements and all phase plans
 2. If no issues → done
-3. If issues found on iteration 1 → create `TodoWrite` todos, fix with developer agents, re-run review
+3. If issues found on iteration 1 → append issues as tasks to `TASKS.md`, fix with developer agents, re-run review
 4. If issues remain after iteration 2 → **ask user** whether to fix remaining issues or proceed to summary
 
 ## File Structure
