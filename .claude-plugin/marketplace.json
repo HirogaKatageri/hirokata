@@ -10,7 +10,7 @@
     {
       "name": "software",
       "source": "./plugins/software-project",
-      "version": "1.0.0",
+      "version": "1.0.2",
       "description": "Requirements-to-implementation workflow with 8-phase clean architecture, automated planning, adaptive parallel execution, intelligent conventional commit generation, and comprehensive requirements documentation.",
       "author": {
         "name": "Gian Patrick Quintana",

@@ -1,6 +1,6 @@
 ---
 name: Conventional Commit Generator
-description: This skill should be used when the user asks to "create a conventional commit", "generate conventional commits", "commit with conventional format", "group my changes for commits", "make a conventional commit message", or mentions "semantic commits", "commitizen", "commit conventions". Analyzes staged and unstaged changes, groups related modifications, and generates properly formatted conventional commit messages with interactive commit grouping options.
+description: This skill should be used when the user asks to "create a conventional commit", "generate conventional commits", "generate commit", "commit with conventional format", "group my changes for commits", "make a conventional commit message", or mentions "semantic commits", "commitizen", "commit conventions". Analyzes staged and unstaged changes, groups related modifications, and generates properly formatted conventional commit messages with interactive commit grouping options.
 version: 0.1.0
 user-invocable: true
 ---
