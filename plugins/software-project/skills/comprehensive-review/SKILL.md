@@ -1,7 +1,7 @@
 ---
 name: comprehensive-review
-description: Use this skill when the user wants to review code changes, verify implementation quality, or check readiness before a PR or deployment. Trigger on phrases like "review my changes", "run comprehensive review", "check all my code", "am I ready for PR", "before I create a PR", "before I merge", "code audit", "quality check", "verify my implementation", "is my feature complete", "run all reviewers", "check if my implementation is complete", or any multi-dimensional code analysis request. Also use proactively when the user says they've finished a phase, completed a feature, or are wrapping up work — even if they don't explicitly ask for a "review". Covers requirements compliance, test coverage, edge cases, architecture alignment, and security.
-version: 0.2.0
+description: Use this skill when the user wants to review code changes, verify implementation quality, or check readiness before a PR or deployment. Trigger on phrases like "review my changes", "run comprehensive review", "check all my code", "am I ready for PR", "before I create a PR", "before I merge", "code audit", "quality check", "verify my implementation", "is my feature complete", "run all reviewers", "check if my implementation is complete", "deep code review", "deep review", or any multi-dimensional code analysis request. Also use proactively when the user says they've finished a phase, completed a feature, or are wrapping up work — even if they don't explicitly ask for a "review". Covers requirements compliance, test coverage, edge cases, architecture alignment, and security.
+version: 0.2.1
 user-invocable: true
 ---
 
