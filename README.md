@@ -2,19 +2,17 @@
 
 A curated collection of Claude Code plugins for enhanced development workflows, featuring automated requirements-to-implementation pipelines.
 
-**[View Changelog](CHANGELOG.md)** | **Version 1.0.0**
+**[View Changelog](CHANGELOG.md)** | **Version 1.0.3**
 
 ## What's New
 
-### v1.0.0 - Mar 2026
+### v1.0.3 - Mar 2026
 
-**First Stable Release** - The software plugin reaches v1.0.0 with quality improvements across agents and skills.
+**Improved Discoverability** - Added "deep code review" and "deep review" as trigger phrases for the `comprehensive-review` skill.
 
-**Plugin Restructure** - Renamed `software-development-workflow` to `software-project` and `tracker` to `project-management` for clarity.
+**Trigger Expansion** - Added "generate commit" trigger phrase to the `conventional-commit` skill (v1.0.2).
 
-**Agent Quality** - Fixed color collision between agents, trimmed unnecessary tools from product-owner, optimized reference files to reduce token overhead.
-
-**Skill Improvements** - All user-invocable skills now explicitly declare `user-invocable: true`. Conventional commit uses a generic Co-Authored-By placeholder.
+**Workflow Fix** - `develop-project` post-implementation review loop now tracks fix issues via `TASKS.md` instead of `TodoWrite` (v1.0.1).
 
 [View Full Changelog](CHANGELOG.md)
 
@@ -24,7 +22,7 @@ This marketplace provides production-ready Claude Code plugins that extend Claud
 
 ## Available Plugins
 
-### 1. Software Plugin (v1.0.0)
+### 1. Software Plugin (v1.0.3)
 
 Automated requirements-to-implementation workflow using an 8-phase clean architecture approach with intelligent commit generation, dedicated software architecture planning, and comprehensive code review system.
 

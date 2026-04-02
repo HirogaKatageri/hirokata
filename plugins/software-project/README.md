@@ -1,4 +1,4 @@
-# Develop Plugin
+# Software Plugin
 
 A Claude Code plugin for automated requirements-to-implementation workflows using a phase-based clean architecture approach.
 
@@ -541,19 +541,19 @@ Complex or architectural tasks:
 1. Clone this repository:
    ```bash
    git clone <repository-url>
-   cd software-development-workflow
+   cd software-project
    ```
 
 2. Use the plugin with Claude Code:
    ```bash
-   cc --plugin-dir /path/to/software-development-workflow
+   cc --plugin-dir /path/to/software-project
    ```
 
 ### Project-Specific
 
 1. Copy plugin to your project:
    ```bash
-   cp -r software-development-workflow /path/to/your-project/.claude-plugin/develop
+   cp -r software-project /path/to/your-project/.claude-plugin/software
    ```
 
 2. The plugin will be automatically loaded by Claude Code
@@ -613,7 +613,7 @@ Always review the master plan before execution:
 ## File Structure
 
 ```
-software-development-workflow/
+software-project/
 ├── .claude-plugin/
 │   └── plugin.json                      # Plugin manifest
 ├── agents/
