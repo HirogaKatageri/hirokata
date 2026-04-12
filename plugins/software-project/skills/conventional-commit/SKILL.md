@@ -1,5 +1,5 @@
 ---
-name: Conventional Commit Generator
+name: conventional-commit
 description: This skill should be used when the user asks to "create a conventional commit", "generate conventional commits", "generate commit", "commit with conventional format", "group my changes for commits", "make a conventional commit message", or mentions "semantic commits", "commitizen", "commit conventions". Analyzes staged and unstaged changes, groups related modifications, and generates properly formatted conventional commit messages with interactive commit grouping options.
 version: 0.1.0
 user-invocable: true
@@ -12,15 +12,6 @@ Generate properly formatted conventional commits by analyzing changes, grouping 
 ## Purpose
 
 Automate the process of reviewing code changes, identifying logical groupings, and generating conventional commit messages. Ensure commits follow the Conventional Commits specification while providing control over commit granularity (separate small commits, combined medium commits, or a single large commit).
-
-## When to Use
-
-Use this skill when:
-- Creating commits that follow Conventional Commits specification
-- Need to group related changes logically before committing
-- Want to understand what changes are being committed
-- Need guidance on proper commit message formatting
-- Working on projects requiring semantic versioning or automated changelogs
 
 ## Conventional Commit Format
 
@@ -275,28 +266,6 @@ All changes committed successfully.
 - Suggest more granular grouping
 - Consider recommending combined commits over single large commit
 - Ensure commit messages adequately describe scope
-
-## Best Practices
-
-**DO:**
-- Review all changes before grouping
-- Group related changes logically
-- Use consistent commit types throughout the project
-- Write clear, imperative subject lines
-- Include body when context is needed
-- Reference issue numbers
-- Always add Co-Authored-By footer
-- Verify commits were created correctly
-
-**DON'T:**
-- Create commits without reviewing changes
-- Mix unrelated changes in one commit
-- Use vague subjects like "fix bug" or "update files"
-- Exceed 50 characters in subject lines
-- Use past tense ("added", "fixed")
-- Capitalize subject line after type/scope
-- End subject lines with periods
-- Skip verification step
 
 ## Additional Resources
 

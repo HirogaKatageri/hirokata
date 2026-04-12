@@ -548,3 +548,25 @@ Is this a new feature?
             ├─ Deps → build:
             └─ Other → chore: or ci: or style:
 ```
+
+## Best Practices
+
+**Do:**
+- Review all changes before grouping
+- Group related changes logically
+- Use consistent commit types throughout the project
+- Write clear, imperative subject lines
+- Include body when context is needed
+- Reference issue numbers
+- Always add Co-Authored-By footer
+- Verify commits were created correctly
+
+**Avoid:**
+- Creating commits without reviewing changes
+- Mixing unrelated changes in one commit
+- Using vague subjects like "fix bug" or "update files"
+- Exceeding 50 characters in subject lines
+- Using past tense ("added", "fixed")
+- Capitalizing subject line after type/scope
+- Ending subject lines with periods
+- Skipping the verification step

@@ -2,17 +2,15 @@
 
 A curated collection of Claude Code plugins for enhanced development workflows, featuring automated requirements-to-implementation pipelines.
 
-**[View Changelog](CHANGELOG.md)** | **Version 1.0.3**
+**[View Changelog](CHANGELOG.md)** | **Version 2.0.0**
 
 ## What's New
 
-### v1.0.3 - Mar 2026
+### v2.0.0 - Apr 2026
 
-**Improved Discoverability** - Added "deep code review" and "deep review" as trigger phrases for the `comprehensive-review` skill.
+**New Plugin: Guild** - Continuous agent orchestration system. Say "check in" to start a work session. The guild manages a persistent board of requirements and tasks, dispatching specialized agents automatically in the chain: product-owner → architect → developers → test-writer → 4 parallel reviewers.
 
-**Trigger Expansion** - Added "generate commit" trigger phrase to the `conventional-commit` skill (v1.0.2).
-
-**Workflow Fix** - `develop-project` post-implementation review loop now tracks fix issues via `TASKS.md` instead of `TodoWrite` (v1.0.1).
+**Software Plugin v1.0.4** - Refactored `conventional-commit` skill for cleaner structure (Best Practices moved to reference file).
 
 [View Full Changelog](CHANGELOG.md)
 
@@ -22,7 +20,7 @@ This marketplace provides production-ready Claude Code plugins that extend Claud
 
 ## Available Plugins
 
-### 1. Software Plugin (v1.0.3)
+### 1. Software Plugin (v1.0.4)
 
 Automated requirements-to-implementation workflow using an 8-phase clean architecture approach with intelligent commit generation, dedicated software architecture planning, and comprehensive code review system.
 
@@ -55,6 +53,40 @@ Automated requirements-to-implementation workflow using an 8-phase clean archite
 - Test coverage and edge case analysis
 
 [View Documentation](plugins/software-project/README.md)
+
+### 2. Guild Plugin (v1.0.0)
+
+Continuous agent orchestration through a persistent board-driven work cycle. The guild tracks requirements, tasks, and progress across sessions — no per-session setup required. Say "check in" to begin.
+
+**How it works:**
+
+A new requirement flows through an automatic chain of specialized agents:
+
+```
+product-owner → architect → developers (up to 3 parallel)
+    → test-writer → 4 reviewers in parallel
+    → [fix cycle if issues found]
+```
+
+**Skills:**
+
+| Skill | Trigger Phrases |
+|-------|----------------|
+| `guild:check-in` | "check in", "clock in", "standup", "guild check in", "let's get to work", "start working", "daily standup", "I'm here", "reporting in" |
+| `guild:guild-status` | "guild status", "board status", "show the board", "what's on the board", "project status", "guild board", "what's happening" |
+| `guild:new-requirement` | "add a requirement", "new requirement", "I need a feature", "add to the guild", "create requirement", "queue a feature", "I want to build" |
+
+**Agents:**
+
+9 specialized agents — product-owner, architect, developer, test-writer, and 4 code reviewers (security, architecture, business-logic, edge-case) plus a researcher for technology investigation.
+
+**Use Cases:**
+- Long-running multi-session feature development
+- Autonomous planning and implementation from high-level requirements
+- Projects requiring structured requirement → plan → code → test → review cycles
+- Teams wanting persistent work state across Claude Code sessions
+
+[View Documentation](plugins/guild/README.md)
 
 ## Installation
 
@@ -160,8 +192,9 @@ hirokata-cc-marketplace/
 ├── .claude-plugin/
 │   └── marketplace.json     # Marketplace manifest
 ├── plugins/
-│   ├── software-project/              # Software development workflow plugin
-│   └── project-management/            # Project management plugin
+│   ├── software-project/    # Software development workflow plugin
+│   ├── project-management/  # Project management plugin
+│   └── guild/               # Continuous agent orchestration plugin
 ├── LICENSE                  # MIT License
 └── README.md               # This file
 ```
@@ -218,6 +251,7 @@ Built for the Claude Code ecosystem by developers who believe in:
 ### Documentation
 - [Marketplace Changelog](CHANGELOG.md)
 - [Software Plugin Docs](plugins/software-project/README.md) | [Changelog](plugins/software-project/CHANGELOG.md)
+- [Guild Plugin Docs](plugins/guild/README.md)
 - [Project Management Plugin Docs](plugins/project-management/README.md)
 
 ### Claude Code

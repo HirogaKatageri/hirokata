@@ -1,5 +1,6 @@
 {
   "name": "hirokata",
+  "version": "2.0.0",
   "owner": {
     "name": "Gian Patrick Quintana",
     "email": "gian.quintana@hirokata.dev"
@@ -10,7 +11,7 @@
     {
       "name": "software",
       "source": "./plugins/software-project",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "description": "Requirements-to-implementation workflow with 8-phase clean architecture, automated planning, adaptive parallel execution, intelligent conventional commit generation, and comprehensive requirements documentation.",
       "author": {
         "name": "Gian Patrick Quintana",
@@ -30,6 +31,18 @@
       },
       "license": "MIT",
       "keywords": ["project-management", "orchestration", "requests", "workspace"]
+    },
+    {
+      "name": "guild",
+      "source": "./plugins/guild",
+      "version": "1.0.0",
+      "description": "Continuous agent orchestration system. Manages requirements, planning, development, and review through a persistent guild board and automated agent chains. Say 'check in' to start a work session.",
+      "author": {
+        "name": "Gian Patrick Quintana",
+        "email": "gian.quintana@hirokata.dev"
+      },
+      "license": "MIT",
+      "keywords": ["orchestration", "agents", "board", "continuous-workflow", "requirements", "review"]
     }
   ]
 }

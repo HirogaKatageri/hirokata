@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin dependency management
 - Version compatibility checking
 
+## [2.0.0] - 2026-04-12
+
+### Added
+- **Guild Plugin v1.0.0** - Continuous agent orchestration system with persistent board management, automatic agent chains (product-owner → architect → developers → test-writer → 4 parallel reviewers), and session-based work cycles triggered by "check in"
+
+### Updated
+- **Software Plugin v1.0.4** - Refactored `conventional-commit` skill: moved Best Practices into `commit-patterns.md` reference file, removed redundant When to Use section for cleaner skill definition
+
 ## [1.0.3] - 2026-03-29
 
 ### Updated
