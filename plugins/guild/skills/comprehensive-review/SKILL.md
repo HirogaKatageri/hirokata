@@ -1,7 +1,7 @@
 ---
 name: comprehensive-review
 description: Use this skill when the user wants to review code changes, verify implementation quality, or check readiness before a PR or deployment. Trigger on phrases like "review my changes", "run comprehensive review", "check all my code", "am I ready for PR", "before I create a PR", "before I merge", "code audit", "quality check", "verify my implementation", "is my feature complete", "run all reviewers", "check if my implementation is complete", "deep code review", "deep review", or any multi-dimensional code analysis request. Also use proactively when the user says they've finished a phase, completed a feature, or are wrapping up work — even if they don't explicitly ask for a "review". Covers requirements compliance, test coverage, edge cases, architecture alignment, and security.
-version: 0.2.1
+version: 0.3.0
 user-invocable: true
 ---
 
@@ -30,16 +30,16 @@ Launch all agents in a **single message** using multiple Task tool calls. Includ
 **product-reviewer:**
 > "Review recent changes against [requirements-file]. Map each requirement to its implementation. Flag anything missing or partially implemented. The project uses an 8-phase clean architecture structure."
 
-**code-reviewer-business-logic:**
+**reviewer-business-logic:**
 > "Review recent changes for business logic testability and unit test coverage. Focus on services, use cases, and domain logic. Flag untestable patterns (hard-coded dependencies, global state, non-determinism) and missing unit tests."
 
-**code-reviewer-edge-case:**
+**reviewer-edge-case:**
 > "Review recent changes for unhandled edge cases: null/undefined access, empty collections, boundary values, error scenarios (network timeout, DB failure, API errors), date/time issues, and concurrency problems."
 
-**code-reviewer-architecture:**
+**reviewer-architecture:**
 > "Review recent changes for clean architecture compliance. Check dependency direction (inner layers must not depend on outer), layer separation (business logic out of UI), and correct phase placement using the 8-phase structure: Phase 1 Foundational → Phase 2 Models → Phase 3 Services → Phase 4 Data → Phase 5 Rules → Phase 6 State → Phase 7 UI → Phase 8 Tests."
 
-**code-reviewer-security:**
+**reviewer-security:**
 > "Review recent changes for security vulnerabilities: injection flaws (SQL, command, template), authentication/authorization issues, sensitive data exposure, hardcoded secrets, weak cryptography (MD5/SHA1/DES), XSS, CSRF, and missing input validation. Reference OWASP Top 10."
 
 ### Step 3: Collect Agent Reports
@@ -95,16 +95,16 @@ Use the following structure. Status icons reflect actual findings — do not def
 [Full product-reviewer report]
 
 ### 2. Test Coverage
-[Full code-reviewer-business-logic report]
+[Full reviewer-business-logic report]
 
 ### 3. Edge Case Analysis
-[Full code-reviewer-edge-case report]
+[Full reviewer-edge-case report]
 
 ### 4. Architecture Review
-[Full code-reviewer-architecture report]
+[Full reviewer-architecture report]
 
 ### 5. Security Review
-[Full code-reviewer-security report]
+[Full reviewer-security report]
 
 ---
 

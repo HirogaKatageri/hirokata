@@ -7,10 +7,10 @@ Quick reference for understanding what each review agent analyzes and how to int
 | Agent | Focus | Key Metric | Severity Levels |
 |---|---|---|---|
 | product-reviewer | Requirements compliance | Implementation % | Not Implemented / Partial / Fully Implemented |
-| code-reviewer-business-logic | Testability & test coverage | Test coverage % | Untestable / Missing Tests / Partial Coverage |
-| code-reviewer-edge-case | Unhandled edge cases | Critical count | Critical / Warning / Info |
-| code-reviewer-architecture | Clean architecture alignment | Dependency compliance % | Critical Violations / Warnings / Recommendations |
-| code-reviewer-security | OWASP Top 10 vulnerabilities | Vulnerability count by severity | Critical / High / Medium / Low / Info |
+| reviewer-business-logic | Testability & test coverage | Test coverage % | Untestable / Missing Tests / Partial Coverage |
+| reviewer-edge-case | Unhandled edge cases | Critical count | Critical / Warning / Info |
+| reviewer-architecture | Clean architecture alignment | Dependency compliance % | Critical Violations / Warnings / Recommendations |
+| reviewer-security | OWASP Top 10 vulnerabilities | Vulnerability count by severity | Critical / High / Medium / Low / Info |
 
 ## Cross-Agent Insights
 
