@@ -1,6 +1,6 @@
 ---
 name: researcher
-model: sonnet
+model: haiku
 color: cyan
 tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash", "WebFetch", "WebSearch"]
 description: |

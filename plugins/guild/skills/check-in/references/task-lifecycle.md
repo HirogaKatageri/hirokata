@@ -54,6 +54,7 @@ _Agent declares follow-ups here upon completion._
 | `status` | string | yes | Current status (see Status Values below) |
 | `requirement` | string | yes | Linked requirement ID (e.g., `REQ-001`) |
 | `plan` | string | no | Linked plan ID (e.g., `PLAN-001`), `null` if none |
+| `plan-slice` | string | no | Path to a per-task plan slice (e.g., `.guild/plans/PLAN-001/slice-auth-middleware.md`). When present, the developer reads this instead of the full plan. |
 | `depends-on` | array | no | Task IDs that must complete first (e.g., `[TASK-002, TASK-003]`) |
 | `priority` | string | yes | `high`, `medium`, or `low` |
 | `created` | string | yes | Creation date (YYYY-MM-DD) |
@@ -102,7 +103,10 @@ Optional modifiers:
 ```
 - {title} | agent: {agent-name} | priority: {priority} | depends-on: all-developer
 - {title} | agent: {agent-name} | priority: {priority} | depends-on: TASK-005
+- {title} | agent: developer | priority: {priority} | plan-slice: .guild/plans/PLAN-NNN/slice-{slug}.md
 ```
+
+The `plan-slice` modifier is emitted by the architect for each developer task. The orchestrator persists it into the new task's `plan-slice` frontmatter field. Multiple modifiers can be combined on one line.
 
 ### Examples
 
@@ -117,10 +121,10 @@ Optional modifiers:
 ```markdown
 ## Follow-up Tasks
 
-- Implement user model and migration | agent: developer | priority: high
-- Implement signup endpoint | agent: developer | priority: high
-- Implement login endpoint | agent: developer | priority: medium
-- Implement session management | agent: developer | priority: medium
+- Implement user model and migration | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-001/slice-user-model.md
+- Implement signup endpoint | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-001/slice-signup.md
+- Implement login endpoint | agent: developer | priority: medium | plan-slice: .guild/plans/PLAN-001/slice-login.md
+- Implement session management | agent: developer | priority: medium | plan-slice: .guild/plans/PLAN-001/slice-session.md
 - Review authentication implementation | agent: reviewer | priority: high | depends-on: all-developer
 ```
 
@@ -137,9 +141,9 @@ Optional modifiers:
 
 1. Read the completed task's "Follow-up Tasks" section
 2. For each line:
-   a. Parse title, agent, priority, and optional depends-on
+   a. Parse title, agent, priority, and optional modifiers (`depends-on`, `plan-slice`)
    b. Assign the next available TASK ID from BOARD.md counters
-   c. Create the task file in `.guild/tasks/`
+   c. Create the task file in `.guild/tasks/` — if `plan-slice` was present, write it into the frontmatter
    d. Add the task to BOARD.md Backlog section
    e. If `depends-on: all-developer` — resolve to all developer task IDs just created
 3. Increment `next-task` counter in BOARD.md frontmatter
@@ -176,7 +180,12 @@ created: 2026-04-07
 
 ## Plan File Format
 
-Location: `.guild/plans/PLAN-NNN.md`
+The architect emits one overview file plus one slice per developer task.
+
+**Overview** at `.guild/plans/PLAN-NNN.md` — for reviewers and orientation.
+**Slices** at `.guild/plans/PLAN-NNN/slice-{slug}.md` — one per developer task. Each slice is self-contained: a developer reads only its slice (not the overview, not sibling slices) to do its work. The slice's "Interface Contract" section documents what the task exposes to or consumes from sibling tasks.
+
+Overview format:
 
 ```markdown
 ---

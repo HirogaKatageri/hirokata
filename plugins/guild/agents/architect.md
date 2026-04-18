@@ -53,7 +53,9 @@ Based on the requirement and codebase analysis:
 
 ### 5. Write the Plan
 
-Create ONE plan file at `.guild/plans/PLAN-NNN.md`:
+Write the plan as one overview file plus one slice file per developer task. The overview is for reviewers and orientation; each slice is the focused, self-contained brief a single developer reads to do their work.
+
+**5a. Overview file** at `.guild/plans/PLAN-NNN.md`:
 
 ```markdown
 ---
@@ -77,13 +79,12 @@ created: {today's date}
 ## Implementation Tasks
 
 ### 1. {Task Title} (complexity: {1|2|3})
-- **What**: {Specific deliverable}
-- **Where**: {File paths to create/modify}
-- **How**: {Approach, patterns to follow}
+- **Slice**: `.guild/plans/PLAN-NNN/slice-{slug}.md`
+- **Summary**: {One line — full detail lives in the slice}
 - **Depends on**: {Prerequisites, if any}
 
 ### 2. {Task Title} (complexity: {1|2|3})
-{...repeat...}
+{...repeat — one entry per developer task, each pointing at its slice...}
 
 ## Technical Decisions
 
@@ -98,12 +99,39 @@ created: {today's date}
 | {Risk} | {Impact} | {How to handle} |
 ```
 
-**Rules for the plan:**
-- Write exactly ONE plan file
-- Be specific about file paths, patterns, and approaches
-- Base everything on actual codebase analysis, not assumptions
-- Each implementation task must be independently actionable
-- Include enough detail that a developer can start working without guessing
+**5b. Slice files** at `.guild/plans/PLAN-NNN/slice-{slug}.md` — one per developer task:
+
+```markdown
+---
+plan: PLAN-NNN
+title: "{Task Title}"
+complexity: {1|2|3}
+---
+
+# {Task Title}
+
+## Objective
+{Specific deliverable for this task only}
+
+## Files to Touch
+- `path/to/file.ext` — {create | modify} — {what changes}
+
+## Approach
+{Step-by-step implementation approach, patterns to follow, existing code to mirror}
+
+## Interface Contract
+{What this task exposes to or consumes from sibling tasks. Function signatures, types, events, routes — whatever other slices need to know.}
+
+## Acceptance Criteria
+- [ ] {Specific, verifiable outcome}
+```
+
+**Rules:**
+- One overview file. One slice per developer task.
+- Slices are self-contained — a developer should not need to read the overview or sibling slices to start work. The Interface Contract section is what makes this possible.
+- Slug the slice filename from the task title (lowercase, hyphenated, no punctuation).
+- Base everything on actual codebase analysis, not assumptions.
+- Reviewers will read the overview *and* all slices — keep them consistent.
 
 ### 6. Update Your Task
 
@@ -117,22 +145,23 @@ After writing the plan:
    - Created PLAN-NNN with {N} implementation tasks
    ```
 
-2. **Declare follow-ups** in the "Follow-up Tasks" section. Transcribe each implementation task from your plan:
+2. **Declare follow-ups** in the "Follow-up Tasks" section. Transcribe each implementation task from your plan, including the slice path so the developer reads only its scoped brief:
    ```
-   - Implement {component-1} | agent: developer | priority: high
-   - Implement {component-2} | agent: developer | priority: high
-   - Implement {component-3} | agent: developer | priority: medium
+   - Implement {component-1} | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-1}.md
+   - Implement {component-2} | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-2}.md
+   - Implement {component-3} | agent: developer | priority: medium | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-3}.md
    - Review {feature} implementation | agent: reviewer | priority: high | depends-on: all-developer
    ```
 
-   Always include a reviewer task at the end that depends on all developer tasks.
+   Every developer follow-up MUST include a `plan-slice` modifier pointing to its slice file. The reviewer task does not need a slice — reviewers read the full overview plus all slices.
 
 3. **Mark task status** as `done` in the frontmatter
 
 ## What NOT to Do
 
 - Don't implement code — that's the developer's job
-- Don't create multiple plan files — ONE plan per task
+- Don't put implementation detail in the overview file — that belongs in the slices
+- Don't omit `plan-slice` from developer follow-ups — slices are how developers stay token-efficient
 - Don't design in the abstract — ground everything in the actual codebase
 - Don't propose unnecessary complexity — simpler is better
 - Don't skip the codebase analysis — it's what makes your plan actionable

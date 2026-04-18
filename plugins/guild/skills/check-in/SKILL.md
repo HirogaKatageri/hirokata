@@ -180,7 +180,7 @@ Read BOARD.md and find the next task to execute:
      prompt: "Your task file is at: .guild/tasks/TASK-NNN.md
               Read it for your full instructions, objective, and context.
               Requirement file: .guild/requirements/REQ-NNN.md
-              Plan file: .guild/plans/PLAN-NNN.md (if applicable)
+              Plan file: .guild/plans/PLAN-NNN.md (if applicable — developer tasks should prefer the plan-slice in their task frontmatter and only read the full plan if needed)
               Today's date: {today's date}
 
               When done:
@@ -232,13 +232,14 @@ Read the "Follow-up Tasks" section of the completed task file.
 
 For each follow-up line:
 
-1. **Parse the line**: Extract title, agent, priority, and optional depends-on
+1. **Parse the line**: Extract title, agent, priority, and any optional modifiers
    - Format: `- {title} | agent: {agent} | priority: {priority}`
    - Optional: `| depends-on: {TASK-NNN or all-developer}`
+   - Optional: `| plan-slice: {path}` (architect emits this for each developer task)
 
 2. **Assign an ID**: Read `next-task` from BOARD.md frontmatter, use it, increment it
 
-3. **Create the task file** at `.guild/tasks/TASK-NNN.md`:
+3. **Create the task file** at `.guild/tasks/TASK-NNN.md` (omit `plan-slice` field if the modifier wasn't present):
    ```markdown
    ---
    id: TASK-NNN
@@ -247,6 +248,7 @@ For each follow-up line:
    status: pending
    requirement: {same REQ as parent task}
    plan: {same PLAN as parent task, or null}
+   plan-slice: {path from modifier, omit field if not provided}
    depends-on: [{resolved dependencies}]
    priority: {priority}
    created: {today's date}
