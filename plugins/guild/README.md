@@ -88,6 +88,8 @@ Adds a new requirement stub to the board and creates a product-owner task to gat
 - `title` — short title for the requirement (optional, asked if not provided)
 - `description` — brief description of what is needed (optional, asked if not provided)
 
+**Clear-board prompt:** If the board already has requirements, tasks, or plans, the skill asks whether to wipe them before adding the new requirement. Answering "yes" resets the board and counters; "no" preserves existing work.
+
 ## Agents
 
 | Agent | Model | Role |
@@ -96,6 +98,7 @@ Adds a new requirement stub to the board and creates a product-owner task to gat
 | `guild:architect` | Sonnet | Reads REQ, explores codebase, writes implementation PLAN, declares dev tasks |
 | `guild:developer` | Sonnet | Implements code per plan and requirement |
 | `guild:test-writer` | Sonnet | Writes and runs unit tests after all dev tasks complete |
+| `guild:product-reviewer` | Sonnet | Verifies implementation satisfies plan requirements |
 | `guild:reviewer-security` | Sonnet | Security vulnerabilities, OWASP Top 10 |
 | `guild:reviewer-architecture` | Sonnet | Plan alignment, patterns, separation of concerns |
 | `guild:reviewer-business-logic` | Sonnet | Acceptance criteria, business rules, testability |
@@ -152,6 +155,7 @@ guild/
 │   ├── architect.md
 │   ├── developer.md
 │   ├── product-owner.md
+│   ├── product-reviewer.md
 │   ├── researcher.md
 │   ├── reviewer-architecture.md
 │   ├── reviewer-business-logic.md

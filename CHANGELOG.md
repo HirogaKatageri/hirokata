@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin dependency management
 - Version compatibility checking
 
+## [2.0.1] - 2026-04-20
+
+### Updated
+- **Guild Plugin v1.0.3** - `new-requirement` skill now prompts to clear the board (requirements, tasks, plans) before adding a new requirement when existing work is present
+- **Guild Plugin v1.0.2** - Architect emits per-task plan slices so developers read a scoped brief instead of the full plan; researcher agent downgraded to Haiku for cost efficiency
+- **Guild Plugin v1.0.1** - Consolidated duplicated agents across plugins into the guild plugin
+
 ## [2.0.0] - 2026-04-12
 
 ### Added
