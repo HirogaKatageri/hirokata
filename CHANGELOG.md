@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin dependency management
 - Version compatibility checking
 
+## [2.0.2] - 2026-04-20
+
+### Updated
+- **Guild Plugin v1.0.4** - Added `guild:clear-board` skill to wipe all tasks, requirements, and plans with confirmation; `new-requirement` now delegates to it instead of duplicating the clear logic
+
 ## [2.0.1] - 2026-04-20
 
 ### Updated

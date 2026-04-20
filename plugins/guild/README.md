@@ -88,7 +88,19 @@ Adds a new requirement stub to the board and creates a product-owner task to gat
 - `title` — short title for the requirement (optional, asked if not provided)
 - `description` — brief description of what is needed (optional, asked if not provided)
 
-**Clear-board prompt:** If the board already has requirements, tasks, or plans, the skill asks whether to wipe them before adding the new requirement. Answering "yes" resets the board and counters; "no" preserves existing work.
+**Clear-board prompt:** If the board already has requirements, tasks, or plans, the skill asks whether to wipe them before adding the new requirement. Answering "yes" delegates to `guild:clear-board`; "no" preserves existing work.
+
+### `guild:clear-board`
+
+Wipes all tasks, requirements, and plans from the board and resets it to a clean slate. Always asks for confirmation before deleting.
+
+**Trigger Phrases:**
+- "clear the board"
+- "reset the guild"
+- "start fresh"
+- "wipe the board"
+- "clear all tasks"
+- "reset the board"
 
 ## Agents
 
@@ -143,6 +155,9 @@ guild status
 
 # Add a new requirement directly
 new requirement
+
+# Clear the board and start over
+clear the board
 ```
 
 ## File Structure
@@ -169,6 +184,8 @@ guild/
     │       ├── agent-chains.md         # Agent chain patterns
     │       ├── board-format.md         # BOARD.md structure and update rules
     │       └── task-lifecycle.md       # Task file format and status transitions
+    ├── clear-board/
+    │   └── SKILL.md
     ├── guild-status/
     │   └── SKILL.md
     └── new-requirement/

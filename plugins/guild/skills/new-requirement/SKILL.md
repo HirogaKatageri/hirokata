@@ -51,10 +51,7 @@ The guild board currently has {N} requirements, {N} tasks, and {N} plans.
 Clear the board before adding this new requirement? (yes / no)
 ```
 
-**If "yes"**:
-1. Delete all files in `.guild/requirements/`, `.guild/tasks/`, and `.guild/plans/` (keep the directories)
-2. Reset BOARD.md: empty all tables (In Progress, Backlog, Done, Requirements) and reset frontmatter counters (`next-task: 1`, `next-req: 1`, `next-plan: 1`)
-3. Confirm: `Board cleared. Proceeding with new requirement.`
+**If "yes"**: Invoke the `guild:clear-board` skill (it will handle confirmation and deletion), then proceed.
 
 **If "no"**: Proceed without changes.
 
