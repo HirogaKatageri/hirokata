@@ -2,13 +2,13 @@
 
 A curated collection of Claude Code plugins for enhanced development workflows, featuring automated requirements-to-implementation pipelines.
 
-**[View Changelog](CHANGELOG.md)** | **Version 2.0.0**
+**[View Changelog](CHANGELOG.md)** | **Version 2.1.0**
 
 ## What's New
 
-### v2.0.0 - Apr 2026
+### v2.1.0 - Apr 2026
 
-**New Plugin: Guild** - Continuous agent orchestration system. Say "check in" to start a work session. The guild manages a persistent board of requirements and tasks, dispatching specialized agents automatically in the chain: product-owner → architect → developers → test-writer → 4 parallel reviewers.
+**Guild Plugin v1.1.0** - Added `guild:commit` and `guild:release` skills; architect now has a research gate that auto-dispatches the researcher when it can't plan responsibly; added evergreen `.guild/docs/` knowledge base maintained by the researcher and read by the architect; check-in keeps `CHANGELOG.md`'s `[Unreleased]` section current as requirements complete.
 
 **Software Plugin v1.0.4** - Refactored `conventional-commit` skill for cleaner structure (Best Practices moved to reference file).
 
@@ -54,7 +54,7 @@ Automated requirements-to-implementation workflow using an 8-phase clean archite
 
 [View Documentation](plugins/software-project/README.md)
 
-### 2. Guild Plugin (v1.0.0)
+### 2. Guild Plugin (v1.1.0)
 
 Continuous agent orchestration through a persistent board-driven work cycle. The guild tracks requirements, tasks, and progress across sessions — no per-session setup required. Say "check in" to begin.
 
@@ -75,6 +75,9 @@ product-owner → architect → developers (up to 3 parallel)
 | `guild:check-in` | "check in", "clock in", "standup", "guild check in", "let's get to work", "start working", "daily standup", "I'm here", "reporting in" |
 | `guild:guild-status` | "guild status", "board status", "show the board", "what's on the board", "project status", "guild board", "what's happening" |
 | `guild:new-requirement` | "add a requirement", "new requirement", "I need a feature", "add to the guild", "create requirement", "queue a feature", "I want to build" |
+| `guild:clear-board` | "clear the board", "reset the guild", "start fresh", "wipe the board", "clear all tasks", "reset the board" |
+| `guild:commit` | "commit the guild work", "guild commit", "commit recent tasks", "commit done tasks", "make a commit from the board" |
+| `guild:release` | "cut a release", "release the guild", "ship it", "tag a version", "guild release" |
 
 **Agents:**
 

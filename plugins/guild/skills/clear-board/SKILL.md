@@ -64,12 +64,18 @@ Stop here.
 
 1. Delete all files in `.guild/requirements/` (keep the directory)
 2. Delete all files in `.guild/tasks/` (keep the directory)
-3. Delete all files in `.guild/plans/` (keep the directory)
+3. Delete all files in `.guild/plans/` (keep the directory, including any slice subdirectories)
 
-Use Bash to delete the files:
+**NEVER touch `.guild/docs/`** — the knowledge base is evergreen and survives board resets. Researcher findings accumulate across requirements and should not be lost when clearing the board.
+
+**NEVER touch `.guild/archive/`** — prior releases stay archived.
+
+Use Bash to delete only the cleared directories' contents:
 ```bash
-rm -f .guild/requirements/* .guild/tasks/* .guild/plans/*
+rm -rf .guild/requirements/* .guild/tasks/* .guild/plans/*
 ```
+
+The `-r` flag removes plan slice subdirectories (e.g. `.guild/plans/PLAN-001/`). `.guild/docs/` and `.guild/archive/` are not in the glob, so they remain untouched.
 
 ### 5. Reset BOARD.md
 
@@ -117,5 +123,7 @@ Run /guild:new-requirement to add work, or /guild:check-in to start a session.
 
 - **Always confirm before deleting** — this action is irreversible
 - **Keep directories** — only delete files, not the `.guild/requirements/`, `.guild/tasks/`, `.guild/plans/` folders themselves
+- **Never clear `.guild/docs/`** — the knowledge base is evergreen and preserved across resets
+- **Never clear `.guild/archive/`** — prior releases stay archived
 - **Reset all counters to 1** — prevent ID confusion on the fresh board
 - **Update last-checkin** — so the board reflects when it was last touched

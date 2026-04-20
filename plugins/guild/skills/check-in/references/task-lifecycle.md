@@ -178,6 +178,41 @@ created: 2026-04-07
 
 **Status values:** `draft` → `in-progress` → `done`
 
+## Knowledge Base: `.guild/docs/`
+
+The guild maintains a persistent knowledge base at `.guild/docs/` — researcher findings live here, one file per topic, named `{topic-slug}.md`.
+
+**Characteristics:**
+
+- **Evergreen** — never archived on release, never cleared by `clear-board`
+- **One topic per file** — the researcher updates existing docs in place when topics overlap rather than creating duplicates
+- **Findable** — the architect globs `.guild/docs/` during codebase analysis; prior research informs new plans without re-dispatching the researcher
+
+**Doc format:**
+
+```markdown
+---
+title: "{Human-readable title}"
+topic: {topic-slug}
+created: {original creation date}
+last-updated: {latest update date}
+related-reqs: [REQ-NNN, REQ-MMM]
+sources:
+  - {url}
+---
+
+# {Title}
+
+## Summary
+## Key Findings
+## Recommendations
+## Compatibility Notes
+## Risks and Gotchas
+## References
+```
+
+Researcher task work logs contain only a short pointer (`See: .guild/docs/{slug}.md`) — the full findings live in the doc.
+
 ## Plan File Format
 
 The architect emits one overview file plus one slice per developer task.

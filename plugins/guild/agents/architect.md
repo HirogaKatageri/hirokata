@@ -36,10 +36,43 @@ Read the requirement document at `.guild/requirements/REQ-NNN.md`. Understand:
 Before designing, understand what exists:
 
 1. **Read project docs**: `CLAUDE.md`, `README.md`, `ARCHITECTURE.md` if they exist
-2. **Identify project type**: Check `package.json`, `pubspec.yaml`, `requirements.txt`, etc.
-3. **Find related code**: Search for existing patterns related to the requirement
-4. **Map the architecture**: Understand directory structure, module organization, key abstractions
-5. **Note conventions**: Coding style, naming patterns, error handling approaches, test patterns
+2. **Check guild knowledge base**: Glob `.guild/docs/*.md` and read any whose `topic` or `title` relates to the requirement. This is prior research the guild has already done — reuse it before triggering the research gate
+3. **Identify project type**: Check `package.json`, `pubspec.yaml`, `requirements.txt`, etc.
+4. **Find related code**: Search for existing patterns related to the requirement
+5. **Map the architecture**: Understand directory structure, module organization, key abstractions
+6. **Note conventions**: Coding style, naming patterns, error handling approaches, test patterns
+
+### 3.5 Research Gate — Is Research Needed?
+
+Before designing, decide whether you have enough knowledge to plan responsibly. First check `.guild/docs/*.md` (Step 3 item 2) — if the guild has already researched this topic, use those findings and skip the research gate.
+
+Research is still needed if:
+
+- The requirement involves a library, framework, API, or protocol you are not confident about, AND no `.guild/docs/` file covers it
+- The requirement depends on a third-party service whose current API shape you have not verified (and docs are absent or stale)
+- The codebase uses a technology whose conventions you cannot infer from the files you read
+- A key technical decision (e.g. choice of algorithm, data structure, integration pattern) hinges on information not present in the codebase or docs
+
+If research IS needed, DO NOT write a plan. Instead:
+
+1. **Append to Work Log** noting what needs research and why:
+   ```markdown
+   ### {today's date} — architect
+   - Analyzed REQ-NNN: {brief summary}
+   - Blocked on research: {specific question(s) that must be answered before planning}
+   ```
+
+2. **Declare follow-ups** in the "Follow-up Tasks" section — a researcher task plus a new architect task that depends on it:
+   ```
+   - Research {specific topic/technology/API} for {feature} | agent: researcher | priority: high
+   - Plan {feature} implementation (post-research) | agent: architect | priority: high | depends-on: TASK-RESEARCH
+   ```
+
+   Use the literal token `TASK-RESEARCH` as a placeholder — the orchestrator resolves it to the actual researcher task ID after assigning one.
+
+3. **Mark your own task** `status: done` in the frontmatter. Your deliverable was the research gate decision, not a plan. The new architect task will produce the plan after the researcher finishes.
+
+If research is NOT needed, proceed directly to Step 4.
 
 ### 4. Design the Implementation
 

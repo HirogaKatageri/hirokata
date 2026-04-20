@@ -27,8 +27,10 @@ Check if `.guild/BOARD.md` exists.
 
 1. Create the directory structure:
    ```bash
-   mkdir -p .guild/requirements .guild/tasks .guild/plans
+   mkdir -p .guild/requirements .guild/tasks .guild/plans .guild/docs
    ```
+
+   `.guild/docs/` is the guild's persistent knowledge base — researcher findings live here and survive across releases and board resets.
 
 2. Create the initial BOARD.md:
    ```markdown
@@ -75,11 +77,12 @@ Check if `.guild/BOARD.md` exists.
 
 1. Read `.guild/BOARD.md`
 2. Update `last-checkin` in frontmatter to today's date
-3. Check for stale `in-progress` tasks:
+3. Ensure `.guild/docs/` exists (`mkdir -p .guild/docs`) — older guilds predate the docs knowledge base; create it on first return check-in
+4. Check for stale `in-progress` tasks:
    - Read each in-progress task file
    - If the Work Log has content → the task was partially completed → keep as `in-progress`
    - If the Work Log is empty → the task was never started → reset to `pending` and move to Backlog
-4. Proceed to **Step 2**
+5. Proceed to **Step 2**
 
 ## Step 2: Status Report
 
@@ -272,9 +275,16 @@ For each follow-up line:
 
 4. **Resolve `depends-on: all-developer`**: Replace with the actual TASK IDs of all developer tasks created in this batch
 
+   **Resolve `depends-on: TASK-RESEARCH`**: When the architect has declared a researcher follow-up plus a new architect task that depends on it, replace `TASK-RESEARCH` with the actual TASK ID assigned to the researcher follow-up in this same batch. This enables the research-first flow: researcher runs → new architect task dispatches with findings available.
+
 5. **Add to BOARD.md**: Append a row to the Backlog table
 
 6. **Update requirement progress**: Recalculate the Progress column in the Requirements table (count done tasks / total tasks for that REQ)
+
+7. **Requirement completion check**: If a requirement's progress just reached N/N AND its latest review task is `done` with no pending fix tasks:
+   - Update the requirement file's frontmatter `status` to `done`
+   - Update the Status column in BOARD.md Requirements table to `done`
+   - Append a bullet to `CHANGELOG.md` under the `## [Unreleased]` section (see "CHANGELOG Maintenance" below)
 
 ### 4.5 Check for Auto-Test and Auto-Review
 
@@ -318,6 +328,36 @@ If auto-continue is active, skip the prompt and loop directly to step 4.1 — bu
 ```
 TASK-NNN done: {title} → {N} follow-ups created
 ```
+
+### 4.7 CHANGELOG Maintenance
+
+When a requirement transitions to `done` (step 4.4 item 7), append a bullet to the repo-root `CHANGELOG.md` under the `## [Unreleased]` section.
+
+**If `CHANGELOG.md` does not exist at the repo root**, create it with this skeleton before appending:
+
+```markdown
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+```
+
+**If `CHANGELOG.md` exists but has no `## [Unreleased]` section**, insert one immediately after the preamble (before the first `## [version]` heading, if any).
+
+**Append the bullet** under `## [Unreleased]`:
+
+```
+- REQ-NNN: {requirement title}
+```
+
+Skip the append if a bullet starting with `- REQ-NNN:` already exists under `## [Unreleased]` (idempotent — avoid duplicates on re-runs).
+
+The `guild:release` skill later renames `## [Unreleased]` to a versioned heading and creates a fresh empty `[Unreleased]` section.
 
 ## Step 5: Session Wrap-up
 

@@ -131,13 +131,27 @@ When a requirement needs technology research before planning.
 product-owner → researcher → architect → developer ×N → reviewer
 ```
 
-**Product owner declares:**
+This flow can be entered two ways:
+
+**2a. Product owner declares research upfront** (when they already know research is needed):
 ```
 - Research {technology/approach} for {feature} | agent: researcher | priority: high
 - Plan {feature} implementation | agent: architect | priority: high | depends-on: TASK-NNN
 ```
 
-The architect task is blocked until the researcher completes.
+**2b. Architect triggers research gate** (when the architect discovers during codebase analysis that they cannot plan responsibly without more information):
+
+The architect runs Step 3.5 of its workflow — if research is needed, it skips plan-writing entirely and declares:
+```
+- Research {specific topic} for {feature} | agent: researcher | priority: high
+- Plan {feature} implementation (post-research) | agent: architect | priority: high | depends-on: TASK-RESEARCH
+```
+
+The orchestrator resolves the literal `TASK-RESEARCH` placeholder to the actual researcher task ID assigned in that batch. The architect marks itself `done` (the research gate decision WAS its deliverable). The new architect task runs after the researcher completes, with findings available in the researcher's work log.
+
+In both cases, the architect task that produces the plan is blocked until the researcher completes.
+
+**Research knowledge persists:** the researcher writes findings to `.guild/docs/{topic-slug}.md`, not the task work log. These docs are evergreen — they survive release archiving and board clears. Before researching, the researcher checks existing docs and reuses them; before designing, the architect checks existing docs and may skip the research gate entirely if coverage is sufficient.
 
 ## Chain 3: Bug Fix Flow
 

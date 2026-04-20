@@ -102,6 +102,34 @@ Wipes all tasks, requirements, and plans from the board and resets it to a clean
 - "clear all tasks"
 - "reset the board"
 
+### `guild:commit`
+
+Generates a conventional commit message from developer and test-writer tasks completed since the last commit. Groups changes by requirement, previews the message, and creates the commit on confirmation. Does not push.
+
+**Trigger Phrases:**
+- "commit the guild work"
+- "guild commit"
+- "commit recent tasks"
+- "commit done tasks"
+- "make a commit from the board"
+
+### `guild:release`
+
+Finalizes completed requirements into a versioned release: stamps `CHANGELOG.md` Unreleased with the new version, archives completed requirement artifacts to `.guild/archive/{version}/`, and creates an annotated git tag. Does not push.
+
+**Trigger Phrases:**
+- "cut a release"
+- "release the guild"
+- "ship it"
+- "tag a version"
+- "guild release"
+
+**Arguments:**
+- `--dry-run` — preview the release plan without making changes
+- `--only REQ-NNN,REQ-MMM` — release only specific requirements
+
+The check-in skill automatically appends a bullet to `CHANGELOG.md`'s `[Unreleased]` section whenever a requirement is marked done, so the changelog is always current between releases.
+
 ## Agents
 
 | Agent | Model | Role |
@@ -128,9 +156,15 @@ The guild maintains a `.guild/` directory in your project:
 │   └── REQ-NNN.md              # One file per requirement
 ├── tasks/
 │   └── TASK-NNN.md             # One file per task (includes work log and follow-ups)
-└── plans/
-    └── PLAN-NNN.md             # One file per implementation plan
+├── plans/
+│   └── PLAN-NNN.md             # One file per implementation plan
+├── docs/                       # Evergreen knowledge base (researcher findings)
+│   └── {topic-slug}.md         # One file per topic; updated in place on overlap
+└── archive/                    # Created by guild:release
+    └── {version}/              # Archived requirements, plans, tasks per release
 ```
+
+**`.guild/docs/`** is the guild's persistent knowledge base. The researcher writes findings here (not to task work logs), and the architect reads these docs during codebase analysis — so prior research informs new plans without re-dispatching the researcher. Docs are evergreen: they survive `guild:clear-board` and `guild:release`.
 
 **BOARD.md** tracks:
 - **In Progress** — tasks currently being worked
@@ -186,9 +220,13 @@ guild/
     │       └── task-lifecycle.md       # Task file format and status transitions
     ├── clear-board/
     │   └── SKILL.md
+    ├── commit/
+    │   └── SKILL.md
     ├── guild-status/
     │   └── SKILL.md
-    └── new-requirement/
+    ├── new-requirement/
+    │   └── SKILL.md
+    └── release/
         └── SKILL.md
 ```
 

@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin dependency management
 - Version compatibility checking
 
+## [2.1.0] - 2026-04-20
+
+### Updated
+- **Guild Plugin v1.1.0** - Added `guild:commit` skill (conventional commits from recent developer tasks, no push) and `guild:release` skill (stamps `CHANGELOG.md` Unreleased, archives completed REQs to `.guild/archive/{version}/`, creates annotated git tag); architect gained a research gate that auto-dispatches a researcher + follow-up architect task when it cannot plan responsibly without more information; added `.guild/docs/` evergreen knowledge base where the researcher writes topic-keyed findings (updated in place on overlap) and the architect reads during codebase analysis — docs survive both `clear-board` and `release`; check-in now maintains the `[Unreleased]` section of repo-root `CHANGELOG.md` as requirements complete
+
 ## [2.0.2] - 2026-04-20
 
 ### Updated
