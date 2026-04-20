@@ -42,6 +42,24 @@ No guild found. Run /guild:check-in to initialize first.
 ```
 Stop here.
 
+### 1.5. Offer to Clear the Board
+
+If the board has any existing requirements, tasks, or plans (check BOARD.md tables and the `.guild/requirements/`, `.guild/tasks/`, `.guild/plans/` directories), ask the user:
+
+```
+The guild board currently has {N} requirements, {N} tasks, and {N} plans.
+Clear the board before adding this new requirement? (yes / no)
+```
+
+**If "yes"**:
+1. Delete all files in `.guild/requirements/`, `.guild/tasks/`, and `.guild/plans/` (keep the directories)
+2. Reset BOARD.md: empty all tables (In Progress, Backlog, Done, Requirements) and reset frontmatter counters (`next-task: 1`, `next-req: 1`, `next-plan: 1`)
+3. Confirm: `Board cleared. Proceeding with new requirement.`
+
+**If "no"**: Proceed without changes.
+
+If the board is empty, skip this step.
+
 ### 2. Gather Details
 
 If `title` is not provided, ask the user:
