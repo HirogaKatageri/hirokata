@@ -1,6 +1,6 @@
 ---
 name: architect
-model: sonnet
+model: opus
 color: red
 tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
 description: |
