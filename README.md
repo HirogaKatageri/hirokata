@@ -2,13 +2,13 @@
 
 A curated collection of Claude Code plugins for enhanced development workflows, featuring automated requirements-to-implementation pipelines.
 
-**[View Changelog](CHANGELOG.md)** | **Version 2.1.0**
+**[View Changelog](CHANGELOG.md)** | **Version 2.1.2**
 
 ## What's New
 
 ### v2.1.0 - Apr 2026
 
-**Guild Plugin v1.1.0** - Added `guild:commit` and `guild:release` skills; architect now has a research gate that auto-dispatches the researcher when it can't plan responsibly; added evergreen `.guild/docs/` knowledge base maintained by the researcher and read by the architect; check-in keeps `CHANGELOG.md`'s `[Unreleased]` section current as requirements complete.
+**Guild Plugin v1.1.0** - Added `guild:release` skill; architect now has a research gate that auto-dispatches the researcher when it can't plan responsibly; added evergreen `.guild/docs/` knowledge base maintained by the researcher and read by the architect; check-in keeps `CHANGELOG.md`'s `[Unreleased]` section current as requirements complete. Commit workflow now uses `software:conventional-commit`.
 
 **Software Plugin v1.0.4** - Refactored `conventional-commit` skill for cleaner structure (Best Practices moved to reference file).
 
@@ -76,7 +76,6 @@ product-owner → architect → developers (up to 3 parallel)
 | `guild:guild-status` | "guild status", "board status", "show the board", "what's on the board", "project status", "guild board", "what's happening" |
 | `guild:new-requirement` | "add a requirement", "new requirement", "I need a feature", "add to the guild", "create requirement", "queue a feature", "I want to build" |
 | `guild:clear-board` | "clear the board", "reset the guild", "start fresh", "wipe the board", "clear all tasks", "reset the board" |
-| `guild:commit` | "commit the guild work", "guild commit", "commit recent tasks", "commit done tasks", "make a commit from the board" |
 | `guild:release` | "cut a release", "release the guild", "ship it", "tag a version", "guild release" |
 
 **Agents:**

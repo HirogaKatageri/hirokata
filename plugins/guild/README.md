@@ -102,17 +102,6 @@ Wipes all tasks, requirements, and plans from the board and resets it to a clean
 - "clear all tasks"
 - "reset the board"
 
-### `guild:commit`
-
-Generates a conventional commit message from developer and test-writer tasks completed since the last commit. Groups changes by requirement, previews the message, and creates the commit on confirmation. Does not push.
-
-**Trigger Phrases:**
-- "commit the guild work"
-- "guild commit"
-- "commit recent tasks"
-- "commit done tasks"
-- "make a commit from the board"
-
 ### `guild:release`
 
 Finalizes completed requirements into a versioned release: stamps `CHANGELOG.md` Unreleased with the new version, archives completed requirement artifacts to `.guild/archive/{version}/`, and creates an annotated git tag. Does not push.
