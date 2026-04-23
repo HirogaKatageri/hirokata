@@ -164,10 +164,13 @@ This is the core of the guild. Execute this loop:
 Read BOARD.md and find the next task to execute:
 
 1. **First priority**: Any `in-progress` tasks (resume interrupted work)
-2. **Second priority**: Highest-priority `pending` task in Backlog with no unmet dependencies
+2. **Second priority**: Any pending `product-owner` tasks — all product-owner tasks must be exhausted before dispatching any `architect` task
+   - This ensures all requirements are fully written before planning begins
+   - Check `depends-on` field; skip tasks with unmet dependencies
+3. **Third priority**: Highest-priority `pending` task in Backlog with no unmet dependencies
    - Check `depends-on` field in each task file
    - Skip tasks whose dependencies aren't all `done`
-3. **If nothing to do**: Report "All caught up!" and proceed to **Step 5**
+4. **If nothing to do**: Report "All caught up!" and proceed to **Step 5**
 
 ### 4.2 Dispatch Task
 

@@ -1,6 +1,6 @@
 {
   "name": "guild",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "description": "Continuous agent orchestration system. Manages requirements, planning, development, and review through a persistent guild board and automated agent chains. Say 'check in' to start a work session.",
   "author": {
     "name": "Gian Patrick Quintana",

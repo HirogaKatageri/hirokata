@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Updated
+- **Guild Plugin v1.1.3** - Check-in orchestrator now exhausts all pending `product-owner` tasks before dispatching any `architect` task, ensuring all requirements are fully written before planning begins
+
 ### Planned
 - Test Plugin: Automated test generation and execution
 - Review Plugin: Code review assistance and suggestions
