@@ -1,64 +1,67 @@
 # HiroKata Claude Code Plugin Marketplace
 
-A curated collection of Claude Code plugins for enhanced development workflows, featuring automated requirements-to-implementation pipelines.
+A curated collection of Claude Code plugins for enhanced development workflows. **Version 2.2.0** — [View Changelog](CHANGELOG.md)
 
-**[View Changelog](CHANGELOG.md)** | **Version 2.2.0**
+---
 
-## What's New
+## Installation
 
-### v2.2.0 - Apr 2026
+Claude Code loads plugins from any directory containing a `.claude-plugin/plugin.json` manifest. Clone this repository first, then choose how to load the plugins.
 
-**Guild Plugin v1.3.0** - Added `guild:developer-svelte`, a Svelte 5 / SvelteKit specialist agent pre-loaded with four reference skills; architect now routes Svelte-related tasks to it automatically. Check-in exhausts all product-owner tasks before dispatching architect tasks. `guild:commit` skill replaced by `software:conventional-commit`.
+```bash
+git clone https://github.com/hirogakatageri/hirokata-cc-marketplace.git
+```
 
-[View Full Changelog](CHANGELOG.md)
+### 1.a. Install Using the Claude Code Marketplace
 
-## Overview
+Use `--plugin-dir` to load the entire marketplace in one command. Claude Code will discover every plugin inside the directory automatically.
 
-This marketplace provides production-ready Claude Code plugins that extend Claude's capabilities with specialized agents, skills, and workflows designed for software development teams.
+```bash
+claude --plugin-dir /path/to/hirokata-cc-marketplace/plugins/guild
+```
 
-## Available Plugins
+To load multiple plugins in the same session:
 
-### 1. Software Plugin (v1.0.4)
+```bash
+claude \
+  --plugin-dir /path/to/hirokata-cc-marketplace/plugins/guild \
+  --plugin-dir /path/to/hirokata-cc-marketplace/plugins/software-project
+```
 
-Automated requirements-to-implementation workflow using an 8-phase clean architecture approach with intelligent commit generation, dedicated software architecture planning, and comprehensive code review system.
+### 1.b. Cloning the Repository and Copying a Plugin
 
-**Features:**
-- Converts requirements documents into working code
-- 8-phase clean architecture (Foundational → Models → Services → Data → Rules → State Management → UI → Tests)
-- Fixed parallelism (up to 3 developer agents per phase)
-- Five specialized code review agents
-  - Product reviewer for requirements compliance
-  - Business logic reviewer for testability and test coverage
-  - Edge case reviewer for boundary conditions and error handling
-  - Architecture reviewer for clean architecture alignment
-  - Security reviewer for OWASP Top 10 vulnerability detection
-- Comprehensive review skill - Parallel multi-dimensional code review in 2-5 minutes
-- Post-implementation review loop with auto-fix (up to 2 iterations)
-- Software architect agent for comprehensive master plan creation
-- Conventional commit generator with intelligent change grouping
-- Three-state resume capability for interrupted workflows (TASKS.md, master plan only, or fresh start)
-- Progress tracked via TASKS.md file
-- 8 specialized agents: software architect, product owner, senior developer, and 5 code reviewers
+Copy a plugin into your project's `.claude-plugin/` directory. Claude Code automatically discovers and loads every plugin found there whenever you open a session — no flags required.
 
-**Use Cases:**
-- Transforming requirements into implementation plans
-- Automated code generation following clean architecture
-- Large-scale feature development
-- Structured refactoring projects
-- Creating semantic, well-organized commit history
-- Pre-PR comprehensive code quality reviews
-- Requirements compliance verification
-- Test coverage and edge case analysis
+```bash
+# Guild plugin
+cp -r hirokata-cc-marketplace/plugins/guild /path/to/your-project/.claude-plugin/guild
 
-[View Documentation](plugins/software-project/README.md)
+# Software plugin
+cp -r hirokata-cc-marketplace/plugins/software-project /path/to/your-project/.claude-plugin/software
+```
 
-### 2. Guild Plugin (v1.3.0)
+Your project will look like this after copying:
 
-Continuous agent orchestration through a persistent board-driven work cycle. The guild tracks requirements, tasks, and progress across sessions — no per-session setup required. Say "check in" to begin.
+```
+your-project/
+└── .claude-plugin/
+    ├── guild/       # Loaded automatically on every session
+    └── software/    # Loaded automatically on every session
+```
 
-**How it works:**
+> **Tip:** Commit `.claude-plugin/` to your repo so every team member gets the same plugins without any setup.
 
-A new requirement flows through an automatic chain of specialized agents:
+**Verify the plugins loaded** by trying a trigger phrase after starting Claude Code:
+
+```
+guild status
+```
+
+---
+
+## How to Use the Guild Plugin
+
+The Guild plugin (v1.3.0) provides continuous agent orchestration through a persistent board-driven work cycle. The guild tracks requirements, tasks, and progress across sessions — no per-session setup required.
 
 ```
 product-owner → architect → developers / developer-svelte (up to 3 parallel)
@@ -66,160 +69,178 @@ product-owner → architect → developers / developer-svelte (up to 3 parallel)
     → [fix cycle if issues found]
 ```
 
+### Setting Up
+
+The guild requires no manual initialization. On your first check-in it automatically creates a `.guild/` directory in your project:
+
+```
+.guild/
+├── BOARD.md          # Central board: in-progress, backlog, done, requirements
+├── requirements/     # REQ-NNN.md — one file per requirement
+├── tasks/            # TASK-NNN.md — one file per task
+├── plans/            # PLAN-NNN.md — one file per implementation plan
+└── docs/             # Persistent knowledge base (survives board resets and releases)
+```
+
+Open a Claude Code session in your project and say:
+
+```
+check in
+```
+
+The guild will greet you, create the board, and ask what you want to work on.
+
+### Creating Requirements
+
+Requirements are the starting point for all guild work. There are two ways to add them.
+
+**During check-in** — describe the feature in plain language when the guild asks what you want to work on:
+
+```
+I want to add user authentication with email and password login
+```
+
+**Directly at any time** using the `guild:new-requirement` skill:
+
+```
+new requirement
+```
+
+or with inline context:
+
+```
+I need a feature: dark mode toggle for the settings page
+```
+
+The guild spawns a `product-owner` agent to interview you, gather full details, and write a structured requirement document (`REQ-NNN.md`). All planning and implementation flows from that document — you do not need to write it manually.
+
+> Multiple requirements can be queued. The guild exhausts all product-owner tasks (requirement gathering) before dispatching any architect tasks, ensuring every requirement is fully specified before planning begins.
+
+### Checking In and Auto-Continue
+
+**Checking in** resumes the guild exactly where it left off. Run it at the start of each session:
+
+```
+check in
+```
+
+The guild reports status — in-progress tasks, recent completions, backlog, and requirement progress — then asks what to do next:
+
+```
+Guild Check-in
+==============
+
+In Progress:
+  TASK-003: Implement auth service (developer) — since 2026-04-07
+
+Backlog (2 tasks):
+  TASK-005: Implement login endpoint (developer) — high priority
+  TASK-006: Plan payment feature (architect) — medium priority
+
+Requirements:
+  REQ-001: User Authentication — in-progress (3/6 done)
+
+What would you like to do?
+  1. Continue working through the backlog
+  2. Add a new requirement
+  3. Review completed work in detail
+  4. Adjust priorities or tasks
+```
+
+After each task completes, the guild asks whether to continue. Respond with **"continue all"** to activate auto-continue mode:
+
+```
+Continue to next task? (yes / no / details / continue all)
+> continue all
+```
+
+In auto-continue mode the guild skips the prompt between tasks and runs the full backlog autonomously, printing one-line status updates as each task finishes:
+
+```
+TASK-003 done: Implement auth service → 2 follow-ups created
+TASK-005 done: Implement login endpoint → 1 follow-up created
+```
+
+Auto-continue stops when the backlog is empty or a task is blocked and needs your input.
+
+### Skills Reference
+
+| Skill | What it does | Trigger Phrases |
+|-------|-------------|----------------|
+| `guild:check-in` | Start or resume a work session, report status, drive the work cycle | "check in", "clock in", "let's get to work", "I'm here" |
+| `guild:new-requirement` | Add a new requirement and queue a product-owner task to gather details | "new requirement", "I need a feature", "I want to build" |
+| `guild:guild-status` | Read-only board view — no work is dispatched | "guild status", "show the board", "what's on the board" |
+| `guild:comprehensive-review` | Run all 4 reviewers in parallel against recent changes | "review my changes", "run comprehensive review", "check all my code" |
+| `guild:clear-board` | Wipe all tasks, requirements, and plans (asks for confirmation) | "clear the board", "reset the guild", "start fresh" |
+| `guild:release` | Stamp CHANGELOG, archive completed requirements, create git tag | "cut a release", "ship it", "tag a version" |
+
+### Agents
+
+| Agent | Role |
+|-------|------|
+| `guild:product-owner` | Interviews user, gathers requirements, writes REQ document |
+| `guild:architect` | Reads REQ, explores codebase, writes PLAN, declares dev tasks |
+| `guild:developer` | Implements code per plan and requirement |
+| `guild:developer-svelte` | Svelte 5 / SvelteKit specialist — used when tasks touch `.svelte`, `+page.*`, `+layout.*`, `+server.*` files |
+| `guild:test-writer` | Writes and runs unit tests after all dev tasks complete |
+| `guild:product-reviewer` | Verifies implementation satisfies plan requirements |
+| `guild:reviewer-security` | Security vulnerabilities, OWASP Top 10 |
+| `guild:reviewer-architecture` | Plan alignment, patterns, separation of concerns |
+| `guild:reviewer-business-logic` | Acceptance criteria, business rules, testability |
+| `guild:reviewer-edge-case` | Boundary conditions, null handling, error scenarios |
+| `guild:researcher` | Technology research, API investigation, documentation lookup |
+
+[View Full Guild Documentation](plugins/guild/README.md)
+
+---
+
+## Other Plugins & Useful Skills
+
+### Software Plugin (v1.0.5)
+
+A collection of standalone skills for software development workflows.
+
+**`software:conventional-commit`** — Generates properly formatted conventional commits by analyzing changes, grouping related modifications, and creating semantic commit messages.
+
+Trigger phrases: "create a conventional commit", "generate conventional commits", "commit with conventional format", "group my changes for commits"
+
+**`software:split-plan`** — Analyzes a master plan file and splits it into 8 phase-specific implementation plans organized by feature tracks (Foundational → Models → Services → Data → Rules → State Management → UI → Tests).
+
+**`software:categorize-task`** — Reference guide for classifying development tasks into the 8-phase clean architecture structure.
+
+[View Software Plugin Documentation](plugins/software-project/README.md)
+
+---
+
+### Project Management Plugin (v1.0.0)
+
+A file-based request queue that lets you drop work items into a folder and have the orchestrator pick them up and delegate them automatically.
+
+**How it works:**
+
+1. Initialize the project structure with `initialize project`
+2. Create request files with `create a request`
+3. Process all pending requests with `process requests` or start hourly auto-processing
+
 **Skills:**
 
-| Skill | Trigger Phrases |
-|-------|----------------|
-| `guild:check-in` | "check in", "clock in", "standup", "guild check in", "let's get to work", "start working", "daily standup", "I'm here", "reporting in" |
-| `guild:guild-status` | "guild status", "board status", "show the board", "what's on the board", "project status", "guild board", "what's happening" |
-| `guild:new-requirement` | "add a requirement", "new requirement", "I need a feature", "add to the guild", "create requirement", "queue a feature", "I want to build" |
-| `guild:clear-board` | "clear the board", "reset the guild", "start fresh", "wipe the board", "clear all tasks", "reset the board" |
-| `guild:release` | "cut a release", "release the guild", "ship it", "tag a version", "guild release" |
+| Skill | What it does | Trigger Phrases |
+|-------|-------------|----------------|
+| `project-management:initialize-project` | Creates `requirements/`, `tasks/`, `requests/todo/`, `requests/done/` directories | "initialize project", "set up project", "init project" |
+| `project-management:create-request` | Writes a structured request file to `requests/todo/` | "create a request", "queue a request", "new request" |
+| `project-management:start-request-monitoring` | Schedules the orchestrator to run every hour against `requests/todo/` | "start request monitoring", "monitor requests", "watch requests" |
+| `project-management:stop-request-monitoring` | Cancels the scheduled monitoring job | "stop request monitoring", "stop watching requests" |
+| `project-management:list-request-monitoring` | Lists active monitoring jobs | "list request monitoring", "show monitoring jobs" |
 
-**Agents:**
+**Agent:**
 
-11 specialized agents — product-owner, architect, developer, developer-svelte (Svelte 5 / SvelteKit specialist), test-writer, 4 code reviewers (security, architecture, business-logic, edge-case), product-reviewer, and a researcher for technology investigation.
+`project-management:project-orchestrator` — Scans `requests/todo/` for pending request files, delegates each to the appropriate agent or skill, then moves completed files to `requests/done/`.
 
-**Use Cases:**
-- Long-running multi-session feature development
-- Autonomous planning and implementation from high-level requirements
-- Projects requiring structured requirement → plan → code → test → review cycles
-- Teams wanting persistent work state across Claude Code sessions
-
-[View Documentation](plugins/guild/README.md)
-
-## Installation
-
-### Option 1: Clone the Entire Marketplace
-
-```bash
-git clone https://github.com/hirogakatageri/hirokata-cc-marketplace.git
-cd hirokata
-```
-
-Then use with Claude Code:
-
-```bash
-cc --plugin-dir ./plugins/software-project
-```
-
-### Option 2: Install Individual Plugins
-
-Copy a plugin to your project:
-
-```bash
-cp -r hirokata/plugins/software-project /path/to/your-project/.claude-plugin/software
-```
-
-Claude Code will automatically load all plugins in `.claude-plugin/`.
-
-## Quick Start
-
-### Using Develop Plugin
-
-```bash
-# Start from requirements
-/software:develop-project requirements.md
-
-# The plugin will:
-# 1. Create a comprehensive master plan (software-architect agent)
-# 2. Wait for your review and approval
-# 3. Split plan into 8 phases and build TASKS.md
-# 4. Execute all 8 phases sequentially (up to 3 agents per phase)
-# 5. Run comprehensive review and fix issues (up to 2 iterations)
-# 6. Generate final summary report
-```
-
-## Plugin Architecture
-
-Plugins follow Claude Code plugin best practices:
-
-```
-plugin-name/
-├── .claude-plugin/
-│   └── plugin.json          # Plugin manifest
-├── agents/                  # Intelligent agents
-│   └── agent-name/
-│       └── AGENT.md
-├── skills/                  # Invokable skills
-│   └── skill-name/
-│       └── SKILL.md
-├── commands/                # Command definitions
-│   └── command-name.md
-└── README.md               # Plugin documentation
-```
-
-## Requirements
-
-- **Claude Code**: Latest version
-- **Git**: For version control integration
-- **Node.js/npm** (optional): For some development workflows
-
-## Contributing
-
-We welcome contributions to existing plugins or new plugin additions.
-
-### Adding a New Plugin
-
-1. Fork this repository
-2. Create your plugin in `plugins/your-plugin-name/`
-3. Follow the plugin architecture structure
-4. Add comprehensive README.md
-5. Update marketplace.json in `.claude-plugin/`
-6. Submit a pull request
-
-### Plugin Guidelines
-
-- Follow Claude Code plugin best practices
-- Include comprehensive documentation
-- Provide clear examples and use cases
-- Test with Claude Code before submitting
-- Use semantic versioning
-
-### Improving Existing Plugins
-
-1. Fork this repository
-2. Create a feature branch
-3. Make your improvements
-4. Update relevant documentation
-5. Test thoroughly
-6. Submit a pull request
-
-## Marketplace Structure
-
-```
-hirokata-cc-marketplace/
-├── .claude-plugin/
-│   └── marketplace.json     # Marketplace manifest
-├── plugins/
-│   ├── software-project/    # Software development workflow plugin
-│   ├── project-management/  # Project management plugin
-│   └── guild/               # Continuous agent orchestration plugin
-├── LICENSE                  # MIT License
-└── README.md               # This file
-```
-
-## Roadmap
-
-See [CHANGELOG.md](CHANGELOG.md) for detailed version history and upcoming features.
-
-### Planned Plugins
-
-- **Test Plugin**: Automated test generation and execution
-- **Deploy Plugin**: Deployment automation workflows
-- **Docs Plugin**: Documentation generation from code
-
-### Planned Enhancements
-
-- Web-based marketplace browser
-- Plugin dependency management
-- Version compatibility checking
-- Community plugin submissions
-- Enhanced plugin discovery and search
+---
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT License — see [LICENSE](LICENSE) for details.
 
 Copyright (c) 2026 Gian Patrick Quintana
 
@@ -228,32 +249,3 @@ Copyright (c) 2026 Gian Patrick Quintana
 **Gian Patrick Quintana**
 - Email: gian.quintana@hirokata.dev
 - GitHub: [@hirogakatageri](https://github.com/hirogakatageri)
-
-## Support
-
-For issues, questions, or feature requests:
-
-1. Check the individual plugin documentation
-2. Search existing issues
-3. Open a new issue with details about your use case
-4. Include relevant error messages or logs
-
-## Acknowledgments
-
-Built for the Claude Code ecosystem by developers who believe in:
-- Automated workflows
-- Intelligent agents
-- Clean architecture
-- Developer productivity
-
-## Resources
-
-### Documentation
-- [Marketplace Changelog](CHANGELOG.md)
-- [Software Plugin Docs](plugins/software-project/README.md) | [Changelog](plugins/software-project/CHANGELOG.md)
-- [Guild Plugin Docs](plugins/guild/README.md)
-- [Project Management Plugin Docs](plugins/project-management/README.md)
-
-### Claude Code
-- [Claude Code Documentation](https://docs.anthropic.com/claude/docs)
-- [Plugin Development Guide](https://docs.anthropic.com/claude/docs/claude-code-plugins)
