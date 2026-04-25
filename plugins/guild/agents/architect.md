@@ -186,6 +186,13 @@ After writing the plan:
    - Review {feature} implementation | agent: reviewer | priority: high | depends-on: all-developer
    ```
 
+   **Choosing the developer agent.** For each implementation task, route to the right specialist:
+
+   - `agent: developer-svelte` — when the task's primary work is in a Svelte / SvelteKit project. Signals: the project has `svelte` or `@sveltejs/kit` in `package.json`, the slice's "Files to Touch" lists `.svelte`, `.svelte.ts`, `.svelte.js`, `+page.*`, `+layout.*`, `+server.*`, `+error.svelte`, `hooks.server.*`, `hooks.client.*`, `app.html`, `svelte.config.js`, or files under `src/routes/`, `src/lib/`, or `src/params/`.
+   - `agent: developer` — for everything else (backend services in non-Svelte stacks, infrastructure, scripts, non-Svelte frontends, generic library code).
+
+   In a mixed-stack repo, route per slice rather than per plan — a slice that builds a Rust API uses `developer`; a sibling slice that wires up the Svelte UI uses `developer-svelte`.
+
    Every developer follow-up MUST include a `plan-slice` modifier pointing to its slice file. The reviewer task does not need a slice — reviewers read the full overview plus all slices.
 
 3. **Mark task status** as `done` in the frontmatter

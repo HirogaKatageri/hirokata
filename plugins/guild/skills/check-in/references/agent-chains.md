@@ -84,10 +84,12 @@ Each writes independently to the task's Work Log and declares fix tasks if neede
 **Follow-up declaration:**
 ```
 - Implement {component-1} | agent: developer | priority: high
-- Implement {component-2} | agent: developer | priority: high
+- Implement {component-2} | agent: developer-svelte | priority: high
 - Implement {component-3} | agent: developer | priority: medium
 - Review {feature} implementation | agent: reviewer | priority: high | depends-on: all-developer
 ```
+
+The architect picks the developer agent per slice. `developer-svelte` (sonnet, pre-loaded with Svelte 5 / SvelteKit knowledge via the `guild:svelte-*` skills) handles work touching Svelte components, SvelteKit routes, server hooks, and `svelte.config.js`. `developer` handles everything else. Both are dispatched the same way and both honor the `plan-slice` modifier.
 
 ### Step 3: Developer
 

@@ -198,10 +198,10 @@ Read BOARD.md and find the next task to execute:
    ```
 
 **Parallel dispatch for developer tasks:**
-When there are 3 or more pending developer tasks for the same plan:
-- Spawn up to 3 developer agents simultaneously (use multiple Agent tool calls in one message)
+"Developer tasks" here means any task whose `agent` is `developer` or `developer-svelte` (specialist developer agents count the same as the generalist for batching purposes). When there are 3 or more pending developer tasks for the same plan:
+- Spawn up to 3 developer agents simultaneously (use multiple Agent tool calls in one message). Each agent's `subagent_type` follows the task's `agent` field — `guild:developer` or `guild:developer-svelte`.
 - Wait for all to complete before processing follow-ups
-- After all complete, check if ALL developer tasks for that plan are done
+- After all complete, check if ALL developer tasks for that plan are done (across both agent types)
   - If yes: auto-create a review task (even if developers didn't declare one)
 
 **Parallel dispatch for review tasks:**
@@ -293,7 +293,7 @@ For each follow-up line:
 
 After processing follow-ups, check the completion state of developer tasks for each plan:
 
-**Auto-test:** If all developer tasks for a plan are now `done` AND no test-writer task exists for that plan yet:
+**Auto-test:** If all developer tasks for a plan are now `done` (counting both `developer` and `developer-svelte` tasks) AND no test-writer task exists for that plan yet:
 - Auto-create a test-writer task:
   ```
   - Write unit tests for {feature} | agent: test-writer | priority: high
