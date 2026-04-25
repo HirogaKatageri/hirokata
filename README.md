@@ -2,15 +2,13 @@
 
 A curated collection of Claude Code plugins for enhanced development workflows, featuring automated requirements-to-implementation pipelines.
 
-**[View Changelog](CHANGELOG.md)** | **Version 2.1.2**
+**[View Changelog](CHANGELOG.md)** | **Version 2.2.0**
 
 ## What's New
 
-### v2.1.0 - Apr 2026
+### v2.2.0 - Apr 2026
 
-**Guild Plugin v1.1.0** - Added `guild:release` skill; architect now has a research gate that auto-dispatches the researcher when it can't plan responsibly; added evergreen `.guild/docs/` knowledge base maintained by the researcher and read by the architect; check-in keeps `CHANGELOG.md`'s `[Unreleased]` section current as requirements complete. Commit workflow now uses `software:conventional-commit`.
-
-**Software Plugin v1.0.4** - Refactored `conventional-commit` skill for cleaner structure (Best Practices moved to reference file).
+**Guild Plugin v1.3.0** - Added `guild:developer-svelte`, a Svelte 5 / SvelteKit specialist agent pre-loaded with four reference skills; architect now routes Svelte-related tasks to it automatically. Check-in exhausts all product-owner tasks before dispatching architect tasks. `guild:commit` skill replaced by `software:conventional-commit`.
 
 [View Full Changelog](CHANGELOG.md)
 
@@ -54,7 +52,7 @@ Automated requirements-to-implementation workflow using an 8-phase clean archite
 
 [View Documentation](plugins/software-project/README.md)
 
-### 2. Guild Plugin (v1.1.0)
+### 2. Guild Plugin (v1.3.0)
 
 Continuous agent orchestration through a persistent board-driven work cycle. The guild tracks requirements, tasks, and progress across sessions — no per-session setup required. Say "check in" to begin.
 
@@ -63,7 +61,7 @@ Continuous agent orchestration through a persistent board-driven work cycle. The
 A new requirement flows through an automatic chain of specialized agents:
 
 ```
-product-owner → architect → developers (up to 3 parallel)
+product-owner → architect → developers / developer-svelte (up to 3 parallel)
     → test-writer → 4 reviewers in parallel
     → [fix cycle if issues found]
 ```
@@ -80,7 +78,7 @@ product-owner → architect → developers (up to 3 parallel)
 
 **Agents:**
 
-9 specialized agents — product-owner, architect, developer, test-writer, and 4 code reviewers (security, architecture, business-logic, edge-case) plus a researcher for technology investigation.
+11 specialized agents — product-owner, architect, developer, developer-svelte (Svelte 5 / SvelteKit specialist), test-writer, 4 code reviewers (security, architecture, business-logic, edge-case), product-reviewer, and a researcher for technology investigation.
 
 **Use Cases:**
 - Long-running multi-session feature development

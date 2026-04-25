@@ -7,9 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Updated
-- **Guild Plugin v1.1.3** - Check-in orchestrator now exhausts all pending `product-owner` tasks before dispatching any `architect` task, ensuring all requirements are fully written before planning begins
-
 ### Planned
 - Test Plugin: Automated test generation and execution
 - Review Plugin: Code review assistance and suggestions
@@ -18,6 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web-based marketplace browser
 - Plugin dependency management
 - Version compatibility checking
+
+## [2.2.0] - 2026-04-25
+
+### Updated
+- **Guild Plugin v1.3.0**
+  - Added `guild:developer-svelte` — a Sonnet-backed specialist agent pre-loaded with Svelte 5 / SvelteKit knowledge via four reference skills (`svelte-core`, `svelte-build-deploy`, `svelte-advanced`, `svelte-best-practices`); architect routes tasks touching `.svelte`, `+page.*`, `+layout.*`, `+server.*`, hooks, or `svelte.config.js` to this agent and falls back to the standard developer otherwise
+  - Check-in now exhausts all pending `product-owner` tasks before dispatching any `architect` task, ensuring all requirements are fully written before planning begins
+  - Replaced `guild:commit` skill with `software:conventional-commit`
 
 ## [2.1.0] - 2026-04-20
 

@@ -124,8 +124,9 @@ The check-in skill automatically appends a bullet to `CHANGELOG.md`'s `[Unreleas
 | Agent | Model | Role |
 |-------|-------|------|
 | `guild:product-owner` | Sonnet | Interviews user, gathers full requirements, writes REQ document |
-| `guild:architect` | Sonnet | Reads REQ, explores codebase, writes implementation PLAN, declares dev tasks |
+| `guild:architect` | Sonnet | Reads REQ, explores codebase, writes implementation PLAN, declares dev tasks; routes Svelte tasks to `developer-svelte` |
 | `guild:developer` | Sonnet | Implements code per plan and requirement |
+| `guild:developer-svelte` | Sonnet | Svelte 5 / SvelteKit specialist — pre-loaded with four reference skills; used when tasks touch `.svelte`, `+page.*`, `+layout.*`, `+server.*`, hooks, or `svelte.config.js` |
 | `guild:test-writer` | Sonnet | Writes and runs unit tests after all dev tasks complete |
 | `guild:product-reviewer` | Sonnet | Verifies implementation satisfies plan requirements |
 | `guild:reviewer-security` | Sonnet | Security vulnerabilities, OWASP Top 10 |
@@ -192,6 +193,7 @@ guild/
 ├── agents/
 │   ├── architect.md
 │   ├── developer.md
+│   ├── developer-svelte.md             # Svelte 5 / SvelteKit specialist
 │   ├── product-owner.md
 │   ├── product-reviewer.md
 │   ├── researcher.md
@@ -209,14 +211,20 @@ guild/
     │       └── task-lifecycle.md       # Task file format and status transitions
     ├── clear-board/
     │   └── SKILL.md
-    ├── commit/
-    │   └── SKILL.md
     ├── guild-status/
     │   └── SKILL.md
     ├── new-requirement/
     │   └── SKILL.md
-    └── release/
-        └── SKILL.md
+    ├── release/
+    │   └── SKILL.md
+    ├── svelte-core/
+    │   └── SKILL.md                    # Svelte 5 core concepts reference
+    ├── svelte-build-deploy/
+    │   └── SKILL.md                    # SvelteKit build and deployment reference
+    ├── svelte-advanced/
+    │   └── SKILL.md                    # Svelte 5 advanced patterns reference
+    └── svelte-best-practices/
+        └── SKILL.md                    # Svelte development best practices reference
 ```
 
 ## License
