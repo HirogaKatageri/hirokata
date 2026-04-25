@@ -6,31 +6,65 @@ A curated collection of Claude Code plugins for enhanced development workflows. 
 
 ## Installation
 
-Claude Code loads plugins from any directory containing a `.claude-plugin/plugin.json` manifest. Clone this repository first, then choose how to load the plugins.
+There are two ways to install plugins from this marketplace: using Claude Code's built-in marketplace system (recommended), or cloning the repository and copying plugins manually.
+
+### 1.a. Install Using the Claude Code Marketplace
+
+This is the official method. Claude Code's marketplace system handles discovery, installation, and future updates automatically.
+
+**Step 1 — Add the marketplace**
+
+Run this inside a Claude Code session or from the CLI:
+
+```bash
+# Inside Claude Code
+/plugin marketplace add hirogakatageri/hirokata-cc-marketplace
+
+# Or from the terminal
+claude plugin marketplace add hirogakatageri/hirokata-cc-marketplace
+```
+
+**Step 2 — Install plugins**
+
+Once the marketplace is added, install individual plugins by name. The marketplace identifier is `hirokata`.
+
+```bash
+# Install the Guild plugin
+/plugin install guild@hirokata
+
+# Install the Software plugin
+/plugin install software@hirokata
+
+# Install the Project Management plugin
+/plugin install project-management@hirokata
+```
+
+**Step 3 — Keep plugins up to date**
+
+Pull the latest versions at any time:
+
+```bash
+/plugin marketplace update hirokata
+```
+
+> **For teams:** Add the marketplace at project scope so it is shared automatically via `.claude/settings.json`:
+> ```bash
+> claude plugin marketplace add hirogakatageri/hirokata-cc-marketplace --scope project
+> ```
+
+### 1.b. Cloning the Repository and Copying a Plugin
+
+For offline environments or when you want to vendor plugins directly into your project, clone the repo and copy plugin directories manually.
+
+**Step 1 — Clone the marketplace**
 
 ```bash
 git clone https://github.com/hirogakatageri/hirokata-cc-marketplace.git
 ```
 
-### 1.a. Install Using the Claude Code Marketplace
+**Step 2 — Copy plugins into your project**
 
-Use `--plugin-dir` to load the entire marketplace in one command. Claude Code will discover every plugin inside the directory automatically.
-
-```bash
-claude --plugin-dir /path/to/hirokata-cc-marketplace/plugins/guild
-```
-
-To load multiple plugins in the same session:
-
-```bash
-claude \
-  --plugin-dir /path/to/hirokata-cc-marketplace/plugins/guild \
-  --plugin-dir /path/to/hirokata-cc-marketplace/plugins/software-project
-```
-
-### 1.b. Cloning the Repository and Copying a Plugin
-
-Copy a plugin into your project's `.claude-plugin/` directory. Claude Code automatically discovers and loads every plugin found there whenever you open a session — no flags required.
+Claude Code automatically discovers and loads every plugin in your project's `.claude-plugin/` directory.
 
 ```bash
 # Guild plugin
@@ -40,7 +74,7 @@ cp -r hirokata-cc-marketplace/plugins/guild /path/to/your-project/.claude-plugin
 cp -r hirokata-cc-marketplace/plugins/software-project /path/to/your-project/.claude-plugin/software
 ```
 
-Your project will look like this after copying:
+Your project will look like this:
 
 ```
 your-project/
