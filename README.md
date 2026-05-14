@@ -1,6 +1,6 @@
 # HiroKata Claude Code Plugin Marketplace
 
-A curated collection of Claude Code plugins for enhanced development workflows. **Version 2.2.0** — [View Changelog](CHANGELOG.md)
+A curated collection of Claude Code plugins for enhanced development workflows. **Version 2.3.0** — [View Changelog](CHANGELOG.md)
 
 ---
 
@@ -95,7 +95,7 @@ guild status
 
 ## How to Use the Guild Plugin
 
-The Guild plugin (v1.3.0) provides continuous agent orchestration through a persistent board-driven work cycle. The guild tracks requirements, tasks, and progress across sessions — no per-session setup required.
+The Guild plugin (v1.4.0) provides continuous agent orchestration through a persistent board-driven work cycle. The guild tracks requirements, tasks, and progress across sessions — no per-session setup required.
 
 ```
 product-owner → architect → developers / developer-svelte (up to 3 parallel)
@@ -206,6 +206,7 @@ Auto-continue stops when the backlog is empty or a task is blocked and needs you
 | `guild:guild-status` | Read-only board view — no work is dispatched | "guild status", "show the board", "what's on the board" |
 | `guild:comprehensive-review` | Run all 4 reviewers in parallel against recent changes | "review my changes", "run comprehensive review", "check all my code" |
 | `guild:clear-board` | Wipe all tasks, requirements, and plans (asks for confirmation) | "clear the board", "reset the guild", "start fresh" |
+| `guild:create-workflow` | Interactively design and generate automation workflows (GitHub Actions, scripts, Makefiles) | "create a workflow", "generate a workflow", "add a GitHub Actions workflow", "set up automation" |
 | `guild:release` | Stamp CHANGELOG, archive completed requirements, create git tag | "cut a release", "ship it", "tag a version" |
 
 ### Agents

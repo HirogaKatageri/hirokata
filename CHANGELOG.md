@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin dependency management
 - Version compatibility checking
 
+## [2.3.0] - 2026-05-14
+
+### Updated
+- **Guild Plugin v1.4.0**
+  - Added `guild:create-workflow` — an interactive skill for generating automation workflows (GitHub Actions pipelines, Python scripts, Node.js scripts, shell scripts, Makefiles); silently scans the project stack for context-aware suggestions, previews the generated file before writing, and provides post-creation next steps
+
 ## [2.2.0] - 2026-04-25
 
 ### Updated
