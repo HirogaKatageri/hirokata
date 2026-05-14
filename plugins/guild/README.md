@@ -102,6 +102,26 @@ Wipes all tasks, requirements, and plans from the board and resets it to a clean
 - "clear all tasks"
 - "reset the board"
 
+### `guild:discuss`
+
+Analyzes the current conversation context, surfaces subjects, and facilitates a focused discussion. Two modes:
+
+- **Open mode** (`/discuss` or "discuss") — scans the full conversation, groups topics into a numbered map (3–8 subjects), lets you pick one or say "all", then drives a back-and-forth discussion loop until you're satisfied.
+- **Targeted mode** (`discuss [topic]`) — scopes to a specific topic, presents a summary with key points and open questions, then enters the loop immediately.
+
+Wraps up with a closing summary of what was covered and any decisions reached.
+
+**Trigger Phrases:**
+- "discuss"
+- "let's discuss"
+- "discuss [topic]"
+- "talk about"
+- "let's talk about"
+- "summarize the context"
+- "what are we working on"
+- "break down the topics"
+- "recap the conversation"
+
 ### `guild:release`
 
 Finalizes completed requirements into a versioned release: stamps `CHANGELOG.md` Unreleased with the new version, archives completed requirement artifacts to `.guild/archive/{version}/`, and creates an annotated git tag. Does not push.
@@ -210,6 +230,12 @@ guild/
     │       ├── board-format.md         # BOARD.md structure and update rules
     │       └── task-lifecycle.md       # Task file format and status transitions
     ├── clear-board/
+    │   └── SKILL.md
+    ├── comprehensive-review/
+    │   └── SKILL.md
+    ├── create-workflow/
+    │   └── SKILL.md
+    ├── discuss/
     │   └── SKILL.md
     ├── guild-status/
     │   └── SKILL.md

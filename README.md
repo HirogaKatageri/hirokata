@@ -95,7 +95,7 @@ guild status
 
 ## How to Use the Guild Plugin
 
-The Guild plugin (v1.4.0) provides continuous agent orchestration through a persistent board-driven work cycle. The guild tracks requirements, tasks, and progress across sessions — no per-session setup required.
+The Guild plugin (v1.5.0) provides continuous agent orchestration through a persistent board-driven work cycle. The guild tracks requirements, tasks, and progress across sessions — no per-session setup required.
 
 ```
 product-owner → architect → developers / developer-svelte (up to 3 parallel)
@@ -207,6 +207,7 @@ Auto-continue stops when the backlog is empty or a task is blocked and needs you
 | `guild:comprehensive-review` | Run all 4 reviewers in parallel against recent changes | "review my changes", "run comprehensive review", "check all my code" |
 | `guild:clear-board` | Wipe all tasks, requirements, and plans (asks for confirmation) | "clear the board", "reset the guild", "start fresh" |
 | `guild:create-workflow` | Interactively design and generate automation workflows (GitHub Actions, scripts, Makefiles) | "create a workflow", "generate a workflow", "add a GitHub Actions workflow", "set up automation" |
+| `guild:discuss` | Summarize conversation context and facilitate focused topic discussions | "discuss", "let's discuss", "discuss [topic]", "summarize the context", "what are we working on" |
 | `guild:release` | Stamp CHANGELOG, archive completed requirements, create git tag | "cut a release", "ship it", "tag a version" |
 
 ### Agents

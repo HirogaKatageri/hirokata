@@ -16,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin dependency management
 - Version compatibility checking
 
+## [2.4.0] - 2026-05-14
+
+### Updated
+- **Guild Plugin v1.5.0**
+  - Added `guild:discuss` — a context summarizer and discussion facilitator; in open mode it scans the conversation, groups subjects into a numbered topic map, and drives a focused discussion loop; in targeted mode (`discuss [topic]`) it scopes analysis to a single topic, presents a summary with key points and open questions, then enters the loop; wraps up with a closing summary and decisions reached
+
 ## [2.3.0] - 2026-05-14
 
 ### Updated
