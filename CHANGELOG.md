@@ -16,6 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin dependency management
 - Version compatibility checking
 
+## [2.5.0] - 2026-05-19
+
+### Added
+- **Session Tracker Plugin v1.1.0**
+  - Added `session-tracker:end-session` — triggers on session-ending phrases; spawns the Haiku logger agent which queries committed and uncommitted git changes for the past 28 hours, synthesizes a summary, and appends it to `.logs/YYYY-MM-DD-log.md`
+  - Added `session-tracker:daily-summary` — spawns the Haiku summarizer agent which finds all `.logs/YYYY-MM-DD-log.md` files across subdirectories, groups sessions by project, and writes a cross-project report to `.logs/YYYY-MM-DD-daily-summary.md`
+  - Internal `query-changes` and `save-log` skills guide the logger agent's git querying and file write behavior
+
 ## [2.4.0] - 2026-05-14
 
 ### Updated

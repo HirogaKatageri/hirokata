@@ -274,6 +274,33 @@ A file-based request queue that lets you drop work items into a folder and have 
 
 ---
 
+### Session Tracker Plugin (v1.1.0)
+
+Automatically logs and summarizes Claude Code work sessions using Claude Haiku sub-agents. Say "end session" to record what you worked on, or "daily summary" to get a cross-project report.
+
+**How it works:**
+
+- On "end session", the `logger` agent (Haiku) queries committed and uncommitted git changes for the past 28 hours, synthesizes a summary, and appends it to `.logs/YYYY-MM-DD-log.md` in the project root
+- On "daily summary", the `summarizer` agent (Haiku) finds every `.logs/YYYY-MM-DD-log.md` across all subdirectories, groups sessions by project, and writes a unified report to `.logs/YYYY-MM-DD-daily-summary.md`
+
+**Skills:**
+
+| Skill | What it does | Trigger Phrases |
+|-------|-------------|----------------|
+| `session-tracker:end-session` | Logs git activity for the current session to `.logs/YYYY-MM-DD-log.md` | "end session", "wrap up", "I'm done for today", "calling it a day" |
+| `session-tracker:daily-summary` | Generates a cross-project daily report to `.logs/YYYY-MM-DD-daily-summary.md` | "daily summary", "summarize today", "what did I do today" |
+
+**Agents:**
+
+| Agent | Role |
+|-------|------|
+| `session-tracker:logger` | Queries git changes (28h window), synthesizes session summary, appends to daily log |
+| `session-tracker:summarizer` | Finds all project log files for today, groups by project, writes daily summary |
+
+[View Session Tracker Documentation](plugins/session-tracker/README.md)
+
+---
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
