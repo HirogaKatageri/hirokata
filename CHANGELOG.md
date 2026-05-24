@@ -16,6 +16,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin dependency management
 - Version compatibility checking
 
+## [2.6.1] - 2026-05-24
+
+### Updated
+- **Guild Plugin v1.6.1**
+  - `guild:svelte-env-vars-check` — stricter server-side enforcement: server files importing from `$env/*/public` are now a hard violation (previously advisory); migration step 5.3 added to strip `PUBLIC_` prefix and rewrite imports to `$env/*/private`
+
+## [2.6.0] - 2026-05-22
+
+### Added
+- **Guild Plugin v1.6.0**
+  - Added `guild:svelte-env-vars-check` — audits SvelteKit environment variable usage for PUBLIC/PRIVATE pattern compliance and `process.env` violations; reports violations grouped into three categories (client-side using private, server-side not using private, `process.env` usage), optionally migrates to correct patterns with static/dynamic timing choice, and outputs an env var inventory table
+
 ## [2.5.0] - 2026-05-19
 
 ### Added

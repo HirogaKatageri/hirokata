@@ -86,7 +86,11 @@ Cross-reference results against the client-side file list from Phase 1. Any matc
 grep -rn "\$env/static/public\|\$env/dynamic/public\|process\.env\." src/ --include="*.ts" --include="*.js"
 ```
 
-Cross-reference results against the server-side file list from Phase 1. Any match in a server-side file that uses `process.env` (instead of a private import) is a violation. Server files legitimately importing from `$env/*/public` are flagged as advisory (they may be accessing public vars intentionally, but should be reviewed).
+Cross-reference results against the server-side file list from Phase 1. Both of the following are hard violations:
+- A server file using `process.env` instead of a private import
+- A server file importing from `$env/static/public` or `$env/dynamic/public`
+
+Server-side code must exclusively use `$env/static/private` or `$env/dynamic/private` for all env vars. If a var needs to be accessible on the server, it should not carry a `PUBLIC_` prefix — rename it and move it to the private module.
 
 ### 2.4 Collect all env var names
 
@@ -117,10 +121,13 @@ Files that import from $env/static/private or $env/dynamic/private:
 
 Violation 2 — Server-side not using PRIVATE pattern
 ----------------------------------------------------
-Server files using process.env instead of $env/static/private or $env/dynamic/private:
+Server files using process.env or importing from $env/*/public instead of $env/static/private or $env/dynamic/private:
 
   src/routes/api/+server.ts:8
     const key = process.env.API_KEY
+
+  src/routes/data/+server.ts:3
+    import { PUBLIC_API_URL } from '$env/static/public'
 
   [list each violation]
 
@@ -252,7 +259,23 @@ Steps:
    - Replace all `process.env.VAR` occurrences with `VAR`
 2. If the file already imports from the same module, add `VAR` to the existing import destructure.
 
-### 5.3 Handle PRIVATE imports in client-side files
+### 5.3 Migrate `$env/*/public` imports in server-side files
+
+**Action:** Replace public imports with private imports and strip the `PUBLIC_` prefix from the var name.
+
+Steps:
+1. For each `import { PUBLIC_VAR } from '$env/*/public'` in a server file:
+   - Rename the imported binding: `PUBLIC_VAR` → `VAR` (strip `PUBLIC_` prefix)
+   - Resolve the module based on the timing choice (e.g., `$env/static/private` or `$env/dynamic/private`)
+   - Replace the import with:
+     ```ts
+     import { VAR } from '$env/<timing>/private';
+     ```
+   - Replace all usages of `PUBLIC_VAR` in that file with `VAR`
+2. Note: The user must also add `VAR=<value>` (without `PUBLIC_` prefix) to their `.env` file — flag this.
+3. If the same var is still needed in client-side files under its `PUBLIC_` name, those client imports remain valid and are untouched.
+
+### 5.4 Handle PRIVATE imports in client-side files
 
 These require architectural changes that cannot be automated safely.
 
@@ -272,7 +295,7 @@ For each client file with a private import:
   Flagged for manual review.
 ```
 
-### 5.4 Handle `process.env.VAR` in universal files (`+page.ts`, `+layout.ts`)
+### 5.5 Handle `process.env.VAR` in universal files (`+page.ts`, `+layout.ts`)
 
 Universal loaders run on both server and client. Flag these for manual review:
 ```
@@ -283,7 +306,7 @@ Universal loaders run on both server and client. Flag these for manual review:
   - If VAR should be private: move this logic to +page.server.ts
 ```
 
-### 5.5 After each file migration
+### 5.6 After each file migration
 
 State what was changed:
 ```
