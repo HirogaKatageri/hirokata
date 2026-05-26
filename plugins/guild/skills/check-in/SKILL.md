@@ -201,8 +201,6 @@ Read BOARD.md and find the next task to execute:
 "Developer tasks" here means any task whose `agent` is `developer` or `developer-svelte` (specialist developer agents count the same as the generalist for batching purposes). When there are 3 or more pending developer tasks for the same plan:
 - Spawn up to 3 developer agents simultaneously (use multiple Agent tool calls in one message). Each agent's `subagent_type` follows the task's `agent` field — `guild:developer` or `guild:developer-svelte`.
 - Wait for all to complete before processing follow-ups
-- After all complete, check if ALL developer tasks for that plan are done (across both agent types)
-  - If yes: auto-create a review task (even if developers didn't declare one)
 
 **Parallel dispatch for review tasks:**
 When a task has `agent: reviewer`, do NOT spawn a single reviewer. Instead, spawn all 4 specialized reviewers in parallel:
@@ -300,14 +298,14 @@ After processing follow-ups, check the completion state of developer tasks for e
   ```
   Link it to the same REQ and PLAN. Add to BOARD.md Backlog.
 
-**Auto-review:** If the test-writer task for a plan is `done` AND no review task exists for that plan yet:
-- Auto-create a review task with `agent: reviewer`:
+**Auto-review:** When ALL non-review tasks across ALL requirements are `done` (no pending or in-progress tasks remain for any `developer`, `developer-svelte`, `test-writer`, `architect`, `product-owner`, or `researcher` agent) AND no review task exists yet:
+- Auto-create a single review task with `agent: reviewer`:
   ```
-  - Review {feature} implementation | agent: reviewer | priority: high
+  - Review all completed requirements | agent: reviewer | priority: high
   ```
-  Link it to the same REQ and PLAN. Add to BOARD.md Backlog.
+  Do not link to a specific REQ or PLAN — this review spans all requirements. Add to BOARD.md Backlog.
 
-The chain is: **developers complete → test-writer → 4 reviewers in parallel**.
+The chain is: **all development tasks across all requirements complete → test-writers complete → final review (4 reviewers in parallel)**.
 
 Note: The `agent: reviewer` designation is a trigger — when step 4.2 encounters it, it spawns 4 specialized reviewers in parallel (see Parallel dispatch for review tasks above).
 
@@ -390,7 +388,7 @@ When the work cycle ends (user stops, or backlog empty):
 3. **Always read task files after agent completion** — don't assume what happened
 4. **Respect dependencies** — never dispatch a task with unmet `depends-on`
 5. **Cap Done section at 20 entries** — trim oldest when adding new completions
-6. **Auto-create review tasks** — after all dev tasks for a plan complete
+6. **Auto-create review task** — after all development and test tasks across all requirements complete
 7. **Review = 4 parallel reviewers** — security, architecture, business-logic, edge-case
 8. **Max 2 review rounds** — if any reviewer writes ESCALATE, ask the user
 8. **Stale task recovery** — on check-in, detect and handle interrupted tasks
