@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- REQ-001: verify-and-fix Skill
-
 ### Planned
 - Test Plugin: Automated test generation and execution
 - Review Plugin: Code review assistance and suggestions
@@ -17,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Web-based marketplace browser
 - Plugin dependency management
 - Version compatibility checking
+
+## [2.7.0] - 2026-06-04
+
+### Added
+- **Guild Plugin v1.7.0**
+  - Added `guild:verify-and-fix` — diagnoses and fixes reported errors through a structured five-phase workflow: detect/create the project's error-verification guide, collect the error artifact, investigate configured log and code sources, propose ranked solutions, then apply a test-driven fix
 
 ## [2.6.1] - 2026-05-24
 
