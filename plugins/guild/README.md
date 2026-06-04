@@ -139,6 +139,31 @@ Finalizes completed requirements into a versioned release: stamps `CHANGELOG.md`
 
 The check-in skill automatically appends a bullet to `CHANGELOG.md`'s `[Unreleased]` section whenever a requirement is marked done, so the changelog is always current between releases.
 
+### `guild:verify-and-fix`
+
+Diagnoses and fixes reported errors through a structured end-to-end workflow: gather context via your error-verification guide, investigate configured log and code sources, propose ranked solutions, then apply a test-driven fix.
+
+**Trigger Phrases:**
+- "check this error"
+- "check this bug"
+- "here's an error"
+- "here's a bug"
+- "I have an error"
+- "I have a bug"
+- "found a bug"
+- "got an error"
+- "debug this"
+- "this is broken"
+- "fix this error"
+- "verify and fix"
+
+**What it does:**
+1. Phase 0 — Guide Gate: detects or creates an error-verification guide in `CLAUDE.md` by interviewing the user about their monitoring services, issue tracker, stack, and environments
+2. Phase 1 — Error Input: collects the error artifact (inline text, stack trace, file path, or link) from the triggering message
+3. Phase 2 — Investigation: reads `references/investigation.md`, queries configured log and code sources in priority order, and gathers evidence
+4. Phase 3 — Solution Proposal: produces a findings report, then presents a ranked solution set for the user to choose from
+5. Phase 4 — TDD Fix: reads `references/tdd-fix.md`, writes a failing test for the selected solution, applies the fix, runs the test, and delivers a final summary
+
 ## Agents
 
 | Agent | Model | Role |
@@ -249,8 +274,13 @@ guild/
     │   └── SKILL.md                    # SvelteKit build and deployment reference
     ├── svelte-advanced/
     │   └── SKILL.md                    # Svelte 5 advanced patterns reference
-    └── svelte-best-practices/
-        └── SKILL.md                    # Svelte development best practices reference
+    ├── svelte-best-practices/
+    │   └── SKILL.md                    # Svelte development best practices reference
+    └── verify-and-fix/
+        ├── SKILL.md                    # End-to-end error diagnosis and fix workflow
+        └── references/
+            ├── investigation.md        # Investigation steps, source-query order, findings and solution format
+            └── tdd-fix.md              # TDD fix flow, test requirements, and final summary format
 ```
 
 ## License

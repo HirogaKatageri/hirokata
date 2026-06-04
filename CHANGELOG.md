@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- REQ-001: verify-and-fix Skill
+
 ### Planned
 - Test Plugin: Automated test generation and execution
 - Review Plugin: Code review assistance and suggestions

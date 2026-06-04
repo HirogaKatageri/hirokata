@@ -209,6 +209,7 @@ Auto-continue stops when the backlog is empty or a task is blocked and needs you
 | `guild:create-workflow` | Interactively design and generate automation workflows (GitHub Actions, scripts, Makefiles) | "create a workflow", "generate a workflow", "add a GitHub Actions workflow", "set up automation" |
 | `guild:discuss` | Summarize conversation context and facilitate focused topic discussions | "discuss", "let's discuss", "discuss [topic]", "summarize the context", "what are we working on" |
 | `guild:release` | Stamp CHANGELOG, archive completed requirements, create git tag | "cut a release", "ship it", "tag a version" |
+| `guild:verify-and-fix` | Diagnose an error end-to-end and apply a test-driven fix | "check this error", "I have a bug", "debug this", "this is broken" |
 
 ### Agents
 
