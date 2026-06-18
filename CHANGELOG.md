@@ -16,6 +16,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Plugin dependency management
 - Version compatibility checking
 
+## [2.8.0] - 2026-06-18
+
+### Added
+- **Research Plugin v1.0.0** — PhD-level multi-perspective research inspired by Stanford's STORM method
+  - `research:storm-research` — orchestrates the full four-phase pipeline: parallel five-persona fan-out, contradiction mapping, synthesis into a cited briefing, and an adversarial peer review with an optional revision loop; each phase delegated to a dedicated sub-agent to keep the main context lean
+  - `research:multi-perspective-scan` — STORM Phase 1 standalone; fans out the five persona agents in parallel for a fast multi-angle read
+  - `research:contradiction-map` — STORM Phase 2 standalone; maps disagreements (with verdicts), the reliable core of agreement, and blind spots across a workspace, documents, or pasted viewpoints
+  - `research:research-peer-review` — STORM Phase 4 standalone; audits any research artifact for hallucinations, bias, completeness, fair contradiction handling, and actionability, then assigns a reliability grade
+  - Five persona agents (`practitioner`, `skeptic`, `economist`, `historian`, `academic`), each with an owned worldview and owned bias, gathering cited web evidence; plus `contradiction-mapper`, `synthesizer` (Opus), and `peer-reviewer` (Opus) analytical agents
+  - Runs write to a reusable, gitignored `.storm/{topic-slug}/` workspace
+
 ## [2.7.0] - 2026-06-04
 
 ### Added

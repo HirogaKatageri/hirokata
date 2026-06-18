@@ -1,0 +1,10 @@
+{
+  "name": "research",
+  "version": "1.0.0",
+  "description": "PhD-level multi-perspective research, inspired by Stanford's STORM method. The 'storm research' skill orchestrates five expert persona agents, maps their contradictions, synthesizes a cited briefing, and red-teams the result. Say 'storm research <topic>' to start.",
+  "author": {
+    "name": "Gian Patrick Quintana",
+    "email": "gian.quintana@hirokata.dev"
+  },
+  "license": "MIT"
+}
