@@ -142,5 +142,15 @@ rigorous starting point, not a final authority.
 
 ---
 
-*Method credit: Stanford OVAL Lab's STORM ([github.com/stanford-oval/storm](https://github.com/stanford-oval/storm)).
-This plugin is an independent reimagining of the STORM thinking as Claude Code skills and agents.*
+## Credits
+
+- **The "STORM in Claude" four-prompt method** — adapted from the X thread *"STORM in Claude: 4
+  Prompts for PhD-Level Research in 5 Minutes"* by **Nav Toor** ([@heynavtoor](https://x.com/heynavtoor)),
+  June 17, 2026 — [original post](https://x.com/heynavtoor/status/2067194761446920264). This plugin
+  refines that method into parallel sub-agents and reusable skills.
+- **The underlying STORM research method** — Stanford OVAL Lab, *Synthesis of Topic Outlines through
+  Retrieval and Multi-perspective Question Asking* (NAACL 2024) —
+  [github.com/stanford-oval/storm](https://github.com/stanford-oval/storm).
+
+This plugin is an independent reimagining of the above as Claude Code skills and agents, not
+affiliated with or endorsed by either source.

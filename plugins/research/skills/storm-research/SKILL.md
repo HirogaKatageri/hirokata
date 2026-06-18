@@ -143,6 +143,11 @@ single perspective.
   pastes that flood one context window. Delegating each phase to a dedicated agent keeps the main
   context clean, runs the five perspectives in true parallel, and lets each persona stay in
   character without bleeding into the others.
+- **Credits.** The four-prompt method is adapted from Nav Toor's ([@heynavtoor](https://x.com/heynavtoor))
+  X thread *"STORM in Claude: 4 Prompts for PhD-Level Research in 5 Minutes"*
+  ([post](https://x.com/heynavtoor/status/2067194761446920264)), which builds on Stanford OVAL Lab's
+  STORM ([github.com/stanford-oval/storm](https://github.com/stanford-oval/storm)). See the plugin
+  README for full attribution.
 - **Model choice matters.** Perspective quality scales with reasoning ability — the personas run
   on Sonnet, the synthesizer and peer-reviewer on Opus. Adjust in the agent frontmatter if needed.
 - **The workspace is reusable.** Re-running on the same slug overwrites prior artifacts. Copy a run
