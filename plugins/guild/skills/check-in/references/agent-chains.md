@@ -26,7 +26,7 @@ The most common chain. A new requirement flows through all roles.
 | Step | Agent | Input | Output | Follow-up |
 |------|-------|-------|--------|-----------|
 | 1 | product-owner | User conversation | REQ document | architect task |
-| 2 | architect | REQ document + codebase | PLAN document | developer tasks + reviewer task |
+| 2 | architect | REQ document + codebase | PLAN document | developer tasks (orchestrator auto-creates test + review) |
 | 3 | developer (×N) | PLAN + REQ + codebase | Code changes | (none — orchestrator creates test task) |
 | 4 | test-writer | Code changes + REQ + PLAN | Unit tests | fix tasks if bugs found |
 | 5 | 4 reviewers (parallel) | Code + tests + REQ + PLAN | Review report | fix tasks OR approval |
@@ -86,8 +86,12 @@ Each writes independently to the task's Work Log and declares fix tasks if neede
 - Implement {component-1} | agent: developer | priority: high
 - Implement {component-2} | agent: developer-svelte | priority: high
 - Implement {component-3} | agent: developer | priority: medium
-- Review {feature} implementation | agent: reviewer | priority: high | depends-on: all-developer
 ```
+
+The architect declares only developer tasks. It does **not** declare a test-writer
+or review task — the orchestrator auto-creates the test-writer after all developer
+tasks for the plan complete, and the review after the test-writer completes
+(check-in step 4.5). This guarantees reviewers never run before tests exist.
 
 The architect picks the developer agent per slice. `developer-svelte` (sonnet, pre-loaded with Svelte 5 / SvelteKit knowledge via the `guild:svelte-*` skills) handles work touching Svelte components, SvelteKit routes, server hooks, and `svelte.config.js`. `developer` handles everything else. Both are dispatched the same way and both honor the `plan-slice` modifier.
 
@@ -100,7 +104,7 @@ The architect picks the developer agent per slice. `developer-svelte` (sonnet, p
 - Implement the code following codebase patterns
 - Append progress to Work Log
 
-**Follow-up declaration:** None. The developer does NOT declare follow-ups. Instead, the orchestrator automatically creates a review task after ALL developer tasks for the same plan complete. This is handled in the check-in skill's work cycle logic.
+**Follow-up declaration:** None. The developer does NOT declare follow-ups. Instead, the orchestrator automatically creates a **test-writer** task after ALL developer tasks for the same plan complete, and then a **review** task after that test-writer completes (check-in step 4.5). This is handled in the check-in skill's work cycle logic and guarantees reviewers run after tests exist.
 
 ### Step 4: Reviewers (4 in parallel)
 
@@ -122,7 +126,9 @@ Each reviewer:
 - Independently declares fix tasks if critical/major issues found
 
 **After all 4 return:**
-- ANY fix tasks declared → orchestrator creates developer fix tasks + re-review task
+- ANY fix tasks declared → orchestrator creates developer fix tasks. When those
+  complete, round-aware auto-test creates a round-2 test-writer, then auto-review
+  creates the round-2 review (capped at 2 rounds; see Chain 4).
 - ALL 4 wrote PASS → requirement can be marked done
 
 ## Chain 2: Research-First Flow
@@ -177,12 +183,24 @@ After the developer completes, the orchestrator creates a review task automatica
 When any reviewer finds issues, a fix loop starts. Maximum 2 rounds.
 
 ```
-4 reviewers → developer ×N (fixes) → test-writer (update tests) → 4 reviewers (round 2) → done or escalate
+4 reviewers → developer ×N (fixes) → test-writer (round 2) → 4 reviewers (round 2) → done or escalate
 ```
 
+The loop is driven entirely by the orchestrator's **round-aware** auto-test and
+auto-review (check-in step 4.5), keyed on monotonic TASK IDs — not by reviewers
+declaring re-review tasks:
+- Reviewers declare only `Fix: … | agent: developer` tasks.
+- When those developer fixes complete, auto-test fires again (newer developer work
+  than the last test run) → a round-2 test-writer.
+- When that test-writer completes, auto-review fires again (newer tests than the
+  last review) → a round-2 review. Titled `Re-review …`.
+
 **Round 2 reviewer behavior:**
-- If still issues after round 2: write "ESCALATE" in Work Log
-- The orchestrator detects "ESCALATE" from any reviewer and asks the user whether to continue fixing or accept as-is
+- If still issues after round 2: write `ESCALATE` in the Work Log (reviewers do
+  NOT declare a third round of fixes — the loop is capped at 2).
+- After any review completes, the orchestrator scans reviewer Work Logs for
+  `ESCALATE`, and also stops if a round-2 review still declares fixes, then asks the
+  user whether to continue fixing or accept as-is.
 
 ## Chain 5: QA Discipline (peer, not a chain step)
 

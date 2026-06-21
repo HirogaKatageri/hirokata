@@ -111,10 +111,14 @@ After writing the requirement document:
    - Created REQ-NNN with {N} user stories
    - Key decisions: {brief notes}
    ```
-3. **Declare follow-up** in the "Follow-up Tasks" section:
+3. **Ensure the architect follow-up exists** in the "Follow-up Tasks" section:
    ```
    - Plan {feature} implementation | agent: architect | priority: high
    ```
+   The `new-requirement` skill usually pre-populates this line. **First check
+   whether a `Plan … | agent: architect` line already exists — if it does, leave it
+   and do NOT add another.** Only add the line if the section has none. Declaring a
+   duplicate would create two architect tasks for the same feature.
 4. **Mark task status** as `done` in the frontmatter
 
 ## Communication Style

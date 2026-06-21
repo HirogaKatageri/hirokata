@@ -296,27 +296,57 @@ For each follow-up line:
    - Update the Status column in BOARD.md Requirements table to `done`
    - Append a bullet to `CHANGELOG.md` under the `## [Unreleased]` section (see "CHANGELOG Maintenance" below)
 
-### 4.5 Check for Auto-Test and Auto-Review
+### 4.5 Check for Auto-Test, Auto-Review, and the Fix Loop
 
-After processing follow-ups, check the completion state of developer tasks for each plan:
+After processing follow-ups, run these checks. They are **round-aware** so the
+review fix loop can run a second round. Compare recency using TASK IDs, which
+increase monotonically — "newer work exists" means a higher task ID. This avoids
+relying on dates.
 
-**Auto-test:** If all developer tasks for a plan are now `done` (counting both `developer` and `developer-svelte` tasks) AND no test-writer task exists for that plan yet:
-- Auto-create a test-writer task:
-  ```
-  - Write unit tests for {feature} | agent: test-writer | priority: high
-  ```
-  Link it to the same REQ and PLAN. Add to BOARD.md Backlog.
+**Auto-test (per plan).** Let `D` = the highest `done` `developer`/`developer-svelte`
+task ID for the plan, and `T` = the highest test-writer task ID for the plan (0 if
+none). Create a test-writer task when ALL of:
+- every `developer`/`developer-svelte` task for the plan is `done`, AND
+- no `pending`/`in-progress` test-writer task exists for the plan, AND
+- `D > T` — there is developer work newer than the last test run. This is true on
+  round 1, and true again after a fix-loop round of developer fixes, so a second
+  test-writer IS created (fixes BUG-02).
+```
+  - Write/update unit tests for {feature} | agent: test-writer | priority: high
+```
+Link to the same REQ and PLAN. Add to Backlog.
 
-**Auto-review:** When ALL non-review tasks across ALL requirements are `done` (no pending or in-progress tasks remain for any `developer`, `developer-svelte`, `test-writer`, `architect`, `product-owner`, or `researcher` agent) AND no review task exists yet:
-- Auto-create a single review task with `agent: reviewer`:
-  ```
+**Auto-review (global).** Let `T` = the highest `done` test-writer task ID across
+all requirements, `Rmax` = the highest review task ID so far (0 if none), and `V` =
+the count of review tasks created so far. Create a review task when ALL of:
+- every non-review task across ALL requirements is `done` (no pending/in-progress
+  `developer`, `developer-svelte`, `test-writer`, `architect`, `product-owner`, or
+  `researcher` task remains), AND
+- no `pending`/`in-progress` review task exists, AND
+- `T > Rmax` — the tests have been (re)written since the last review. After a
+  fix-loop round, the round-2 test-writer's ID exceeds the round-1 review ID, so a
+  round-2 review IS created (fixes BUG-01).
+
+```
   - Review all completed requirements | agent: reviewer | priority: high
-  ```
-  Do not link to a specific REQ or PLAN — this review spans all requirements. Add to BOARD.md Backlog.
+```
+Round 2+: title it `Re-review all completed requirements`. Add to Backlog.
 
-The chain is: **all development tasks across all requirements complete → test-writers complete → final review (4 reviewers in parallel)**.
+The architect no longer declares a review task — auto-review is the single review
+trigger. The full chain is: **developers → test-writer → reviewers → [issues]
+developer fixes → test-writer (round 2) → reviewers (round 2) → done or escalate**.
 
-Note: The `agent: reviewer` designation is a trigger — when step 4.2 encounters it, it spawns 4 specialized reviewers in parallel (see Parallel dispatch for review tasks above).
+**Round cap & ESCALATE (fixes BUG-03).** The fix loop is capped at **2 review
+rounds**:
+- If a completed review declared fix tasks AND `V >= 2` (a round-2 review already
+  ran), do NOT create a round-3 review. Stop and ask the user: "Round 2 review
+  still has open issues — keep fixing, or accept as-is?"
+- After ANY review task completes (step 4.3), read each reviewer's section of the
+  Work Log and scan for the token `ESCALATE`. If present, stop the loop and ask the
+  user the same question. (Round-2 reviewers write `ESCALATE` when issues persist.)
+
+Note: `agent: reviewer` is a trigger — step 4.2 spawns the 4 specialized reviewers
+in parallel (see "Parallel dispatch for review tasks" above).
 
 ### 4.6 Continue or Pause
 
@@ -400,4 +430,4 @@ When the work cycle ends (user stops, or backlog empty):
 6. **Auto-create review task** — after all development and test tasks across all requirements complete
 7. **Review = 4 parallel reviewers** — security, architecture, business-logic, edge-case
 8. **Max 2 review rounds** — if any reviewer writes ESCALATE, ask the user
-8. **Stale task recovery** — on check-in, detect and handle interrupted tasks
+9. **Stale task recovery** — on check-in, detect and handle interrupted tasks

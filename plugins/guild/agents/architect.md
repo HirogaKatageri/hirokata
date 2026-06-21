@@ -183,8 +183,12 @@ After writing the plan:
    - Implement {component-1} | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-1}.md
    - Implement {component-2} | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-2}.md
    - Implement {component-3} | agent: developer | priority: medium | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-3}.md
-   - Review {feature} implementation | agent: reviewer | priority: high | depends-on: all-developer
    ```
+
+   **Do NOT declare a test-writer or review task.** The orchestrator auto-creates
+   the test-writer after all developer tasks for the plan complete, and the review
+   after the test-writer completes — this guarantees reviewers never run before the
+   tests exist. Declaring a review here would bypass that ordering.
 
    **Choosing the developer agent.** For each implementation task, route to the right specialist:
 
@@ -193,7 +197,7 @@ After writing the plan:
 
    In a mixed-stack repo, route per slice rather than per plan — a slice that builds a Rust API uses `developer`; a sibling slice that wires up the Svelte UI uses `developer-svelte`.
 
-   Every developer follow-up MUST include a `plan-slice` modifier pointing to its slice file. The reviewer task does not need a slice — reviewers read the full overview plus all slices.
+   Every developer follow-up MUST include a `plan-slice` modifier pointing to its slice file. The auto-created reviewers read the full overview plus all slices, so they need no slice modifier.
 
 3. **Mark task status** as `done` in the frontmatter
 

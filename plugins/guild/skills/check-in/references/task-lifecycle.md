@@ -50,7 +50,7 @@ _Agent declares follow-ups here upon completion._
 |-------|------|----------|-------------|
 | `id` | string | yes | Task ID (e.g., `TASK-001`) |
 | `title` | string | yes | Short descriptive title |
-| `agent` | string | yes | Assigned agent: `product-owner`, `architect`, `developer`, `reviewer`, `researcher` |
+| `agent` | string | yes | Assigned agent: `product-owner`, `architect`, `developer`, `developer-svelte`, `test-writer`, `researcher`, `reviewer`, `qa-strategist`, `qa-tester`. The orchestrator spawns `guild:{agent}`. `reviewer` is a **trigger alias**, not a real agent — when dispatched it spawns the 4 specialized reviewers (`reviewer-security`, `reviewer-architecture`, `reviewer-business-logic`, `reviewer-edge-case`) in parallel. |
 | `status` | string | yes | Current status (see Status Values below) |
 | `requirement` | string | yes | Linked requirement ID (e.g., `REQ-001`) |
 | `plan` | string | no | Linked plan ID (e.g., `PLAN-001`), `null` if none |

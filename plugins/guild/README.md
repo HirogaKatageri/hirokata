@@ -200,16 +200,16 @@ cadence** via `/schedule` or `/loop` (opt-in per project).
 | Agent | Model | Role |
 |-------|-------|------|
 | `guild:product-owner` | Sonnet | Interviews user, gathers full requirements, writes REQ document |
-| `guild:architect` | Sonnet | Reads REQ, explores codebase, writes implementation PLAN, declares dev tasks; routes Svelte tasks to `developer-svelte` |
+| `guild:architect` | Opus | Reads REQ, explores codebase, writes implementation PLAN, declares dev tasks; routes Svelte tasks to `developer-svelte` |
 | `guild:developer` | Sonnet | Implements code per plan and requirement |
 | `guild:developer-svelte` | Sonnet | Svelte 5 / SvelteKit specialist — pre-loaded with four reference skills; used when tasks touch `.svelte`, `+page.*`, `+layout.*`, `+server.*`, hooks, or `svelte.config.js` |
 | `guild:test-writer` | Sonnet | Writes and runs unit tests after all dev tasks complete |
-| `guild:product-reviewer` | Sonnet | Verifies implementation satisfies plan requirements |
-| `guild:reviewer-security` | Sonnet | Security vulnerabilities, OWASP Top 10 |
-| `guild:reviewer-architecture` | Sonnet | Plan alignment, patterns, separation of concerns |
-| `guild:reviewer-business-logic` | Sonnet | Acceptance criteria, business rules, testability |
-| `guild:reviewer-edge-case` | Sonnet | Boundary conditions, null handling, error scenarios |
-| `guild:researcher` | Sonnet | Technology research, API investigation, documentation lookup |
+| `guild:product-reviewer` | Haiku | Verifies implementation satisfies plan requirements |
+| `guild:reviewer-security` | Haiku | Security vulnerabilities, OWASP Top 10 |
+| `guild:reviewer-architecture` | Haiku | Plan alignment, patterns, separation of concerns |
+| `guild:reviewer-business-logic` | Haiku | Acceptance criteria, business rules, testability |
+| `guild:reviewer-edge-case` | Haiku | Boundary conditions, null handling, error scenarios |
+| `guild:researcher` | Haiku | Technology research, API investigation, documentation lookup |
 | `guild:qa-strategist` | Sonnet | QA planning — risk map, coverage matrix, adversarial what-if missions (independent QA discipline) |
 | `guild:qa-tester` | Sonnet | Empirically runs the product, authors e2e/Playwright regression specs, files bugs (independent QA discipline) |
 

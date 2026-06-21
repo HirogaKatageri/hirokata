@@ -135,6 +135,14 @@ If your research is sufficient and the next step is planning:
 - Plan {feature} implementation | agent: architect | priority: high
 ```
 
+**Guard against duplicate architect tasks (research-gate flow).** When the
+architect triggered the research gate (Chain 2b), it ALREADY declared a
+post-research architect task that `depends-on` your task. In that case a planning
+task is already queued — do NOT declare another `Plan … | agent: architect` line.
+Check your task's Context/Work Log: if it references a pre-declared post-research
+architect task (or the task was created by the architect's research gate), leave
+"Follow-up Tasks" empty.
+
 If no follow-up is needed (research was informational):
 Leave "Follow-up Tasks" empty.
 
