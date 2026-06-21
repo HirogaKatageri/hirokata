@@ -108,8 +108,12 @@ the `guild:qa-artifacts` skill). A mission carries:
 - the expected behavior + oracle source per scenario (or "open — ask user")
 - which scenarios are high-risk enough to deserve a committed regression spec
 
-Aim missions to be independently runnable so the orchestrator can parallelize
-them across tester instances.
+Aim missions to be independently runnable so the orchestrator can dispatch them
+across separate tester instances. Note: the orchestrator runs qa-testers **one
+at a time (sequentially), never in parallel** — each tester drives its own dev
+server + Playwright and concurrent runs would collide on the same port. Keeping
+missions independent still matters (clean scope, own files), but do not assume
+they execute concurrently.
 
 ### 6. Declare Tester Missions as Follow-ups
 

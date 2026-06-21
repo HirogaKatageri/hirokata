@@ -223,10 +223,15 @@ requirement. QA is never auto-spawned after a developer task.
 
 ```
 qa-strategist (charter + risk map + coverage matrix)
-  └→ qa-tester ×N (run the product, explore, author Playwright specs)
+  └→ qa-tester ×N, run SEQUENTIALLY (run the product, explore, author Playwright specs)
       ├→ bugs → developer fix tasks (Chain 3 bug-fix flow) → re-verify qa-tester
       └→ confirmed-good high-risk paths → committed e2e specs + regression manifest
 ```
+
+**qa-testers run one at a time, never in parallel.** Each tester launches the
+running product (dev/preview server + Playwright); concurrent testers would
+collide on the same port. The ×N above is the *total* number of tester missions,
+dispatched sequentially — not a parallel batch like developers.
 
 | Step | Agent | Input | Output | Follow-up |
 |------|-------|-------|--------|-----------|
@@ -270,3 +275,8 @@ Rules for parallel execution:
 - Only the orchestrator updates BOARD.md (after all agents return)
 - Each developer writes only to their own task file
 - Developers write code to different files (the plan ensures non-overlapping scope)
+
+**Exception — `qa-tester` tasks are never parallelized.** They dispatch strictly
+one at a time, even when 3 or more are pending for the same QA pass. Each tester
+drives its own dev server + Playwright, so concurrent testers would fight over
+the same port. Spawn one qa-tester, wait for it to finish, then spawn the next.

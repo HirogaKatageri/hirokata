@@ -158,8 +158,9 @@ cycle (Step 4 of that skill) — the QA tasks dispatch like any other agent.
 QA reuses all existing orchestration — no special-casing needed:
 
 1. `qa-strategist` runs → declares `qa-tester` missions as follow-ups.
-2. The orchestrator dispatches `qa-tester` tasks (parallelized like developers
-   when ≥3 for the same QA pass).
+2. The orchestrator dispatches `qa-tester` tasks **sequentially — one at a time,
+   never in parallel** (each tester drives its own dev server + Playwright, so
+   concurrent testers would collide on the same port).
 3. Each `qa-tester` runs the app, authors specs, and declares `developer` fix
    tasks for bugs (+ a re-verify `qa-tester` task).
 4. Fix tasks flow through the normal bug-fix chain (developer → review). On fix,
