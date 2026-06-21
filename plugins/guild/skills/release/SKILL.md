@@ -152,6 +152,11 @@ Leave any `in-progress` / `pending` tasks in place on the board.
 
 **Never archive `.guild/docs/`** — the knowledge base is evergreen. Researcher findings persist across releases so future architects and researchers can reuse them. Docs are not versioned alongside releases.
 
+**Never archive `.guild/qa/`** — the QA discipline's charter, ledger, regression
+manifest, sessions, and missions are evergreen and span releases. The standing
+"Product QA & E2E Regression" umbrella requirement stays `in-progress` and is
+never included in a release.
+
 ### 8. Snapshot Board State
 
 Write `.guild/archive/{version}/BOARD-snapshot.md` containing the BOARD.md frontmatter values at release time:

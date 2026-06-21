@@ -97,6 +97,26 @@ Or if you need user clarification and AskUserQuestion isn't sufficient:
 - Clarify: {question} | agent: product-owner | priority: high
 ```
 
+## Co-Maintaining E2e Specs
+
+The QA discipline (`qa-tester`) authors end-to-end (Playwright) regression specs
+that live in the project's e2e dir. You **co-maintain** them: when your change
+*intentionally* alters behavior an e2e spec asserts, update that spec to match the
+new intended behavior as part of your task — don't leave it red.
+
+- Run the e2e suite if your change touches behavior it covers. If a spec breaks
+  because the behavior legitimately changed, update the spec.
+- Note the spec update in your Work Log and flag it for QA to review:
+  ```
+  - QA: review e2e spec update for {feature} | agent: qa-tester | priority: medium
+  ```
+- If a spec breaks and you're *not* sure the change was intended, don't silence it
+  — declare a `Fix:` follow-up or ask the user. A failing e2e spec may be catching
+  a real regression.
+
+Do not author new e2e specs yourself — that's the qa-tester's job. You only keep
+existing ones honest when your change moves the behavior under them.
+
 ## Handling Blocked Situations
 
 If you cannot complete the task:

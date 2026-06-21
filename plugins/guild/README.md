@@ -164,6 +164,37 @@ Diagnoses and fixes reported errors through a structured end-to-end workflow: ga
 4. Phase 3 — Solution Proposal: produces a findings report, then presents a ranked solution set for the user to choose from
 5. Phase 4 — TDD Fix: reads `references/tdd-fix.md`, writes a failing test for the selected solution, applies the fix, runs the test, and delivers a final summary
 
+### `guild:qa`
+
+Seeds the guild's **independent QA discipline** — a quality function that runs
+beside the feature chain rather than inside it. The `qa-strategist` maps product
+risk and plans coverage; `qa-tester` agents run the actual app, author end-to-end
+(Playwright) regression specs, and file bugs back to the board as developer fix
+tasks. Use it to build comprehensive e2e regression suites and to probe the
+running product with adversarial "what-if" inputs.
+
+**Trigger Phrases:**
+- "QA the product"
+- "QA the checkout flow"
+- "run a QA pass"
+- "build comprehensive e2e tests"
+- "write regression tests"
+- "test the running app"
+- "what-if testing"
+
+**What it does:**
+1. Ensures a `.guild/qa/` workspace and a standing "Product QA & E2E Regression" umbrella requirement
+2. Seeds a `qa-strategist` task for the requested scope (whole product or a named flow), in `full` or `cadence` mode
+3. The strategist resolves the oracle (internal specs → external board via MCP → code + running app → user), builds a risk map and coverage matrix, and declares `qa-tester` missions
+4. `qa-tester` agents run the app, apply the what-if catalog, author e2e specs (hybrid oracle: lock good behavior, flag suspect behavior as bugs, ask the user when ambiguous), and file developer fix tasks
+5. Bugs flow through the normal bug-fix chain; on fix, a re-verify qa-tester confirms and the spec joins the regression manifest
+
+QA artifacts (`charter`, `missions`, `sessions`, `ledger`, `regression` manifest)
+live under `.guild/qa/` and are **evergreen** — they survive releases and board
+resets. Committed e2e specs live in the project's real e2e dir and run in CI;
+`developer`/`developer-svelte` co-maintain them. Can be armed on a **standing
+cadence** via `/schedule` or `/loop` (opt-in per project).
+
 ## Agents
 
 | Agent | Model | Role |
@@ -179,6 +210,8 @@ Diagnoses and fixes reported errors through a structured end-to-end workflow: ga
 | `guild:reviewer-business-logic` | Sonnet | Acceptance criteria, business rules, testability |
 | `guild:reviewer-edge-case` | Sonnet | Boundary conditions, null handling, error scenarios |
 | `guild:researcher` | Sonnet | Technology research, API investigation, documentation lookup |
+| `guild:qa-strategist` | Sonnet | QA planning — risk map, coverage matrix, adversarial what-if missions (independent QA discipline) |
+| `guild:qa-tester` | Sonnet | Empirically runs the product, authors e2e/Playwright regression specs, files bugs (independent QA discipline) |
 
 ## Board Structure
 
@@ -241,6 +274,8 @@ guild/
 │   ├── developer-svelte.md             # Svelte 5 / SvelteKit specialist
 │   ├── product-owner.md
 │   ├── product-reviewer.md
+│   ├── qa-strategist.md                 # QA discipline — risk map & coverage planning
+│   ├── qa-tester.md                     # QA discipline — runs app, authors e2e specs
 │   ├── researcher.md
 │   ├── reviewer-architecture.md
 │   ├── reviewer-business-logic.md
@@ -266,6 +301,12 @@ guild/
     │   └── SKILL.md
     ├── new-requirement/
     │   └── SKILL.md
+    ├── qa/
+    │   └── SKILL.md                    # Independent QA discipline entry point
+    ├── qa-mindset/
+    │   └── SKILL.md                    # QA pillars, what-if catalog, hybrid oracle (agent reference)
+    ├── qa-artifacts/
+    │   └── SKILL.md                    # .guild/qa/ artifact formats (agent reference)
     ├── release/
     │   └── SKILL.md
     ├── svelte-core/

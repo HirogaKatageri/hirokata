@@ -70,12 +70,16 @@ Stop here.
 
 **NEVER touch `.guild/archive/`** — prior releases stay archived.
 
+**NEVER touch `.guild/qa/`** — the QA discipline's charter, bug ledger, regression
+manifest, sessions, and missions are evergreen and accumulate across passes and
+releases, like `.guild/docs/`.
+
 Use Bash to delete only the cleared directories' contents:
 ```bash
 rm -rf .guild/requirements/* .guild/tasks/* .guild/plans/*
 ```
 
-The `-r` flag removes plan slice subdirectories (e.g. `.guild/plans/PLAN-001/`). `.guild/docs/` and `.guild/archive/` are not in the glob, so they remain untouched.
+The `-r` flag removes plan slice subdirectories (e.g. `.guild/plans/PLAN-001/`). `.guild/docs/`, `.guild/qa/`, and `.guild/archive/` are not in the glob, so they remain untouched.
 
 ### 5. Reset BOARD.md
 
@@ -124,6 +128,7 @@ Run /guild:new-requirement to add work, or /guild:check-in to start a session.
 - **Always confirm before deleting** — this action is irreversible
 - **Keep directories** — only delete files, not the `.guild/requirements/`, `.guild/tasks/`, `.guild/plans/` folders themselves
 - **Never clear `.guild/docs/`** — the knowledge base is evergreen and preserved across resets
+- **Never clear `.guild/qa/`** — the QA discipline's artifacts are evergreen and preserved across resets
 - **Never clear `.guild/archive/`** — prior releases stay archived
 - **Reset all counters to 1** — prevent ID confusion on the fresh board
 - **Update last-checkin** — so the board reflects when it was last touched

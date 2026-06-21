@@ -202,6 +202,15 @@ Read BOARD.md and find the next task to execute:
 - Spawn up to 3 developer agents simultaneously (use multiple Agent tool calls in one message). Each agent's `subagent_type` follows the task's `agent` field — `guild:developer` or `guild:developer-svelte`.
 - Wait for all to complete before processing follow-ups
 
+**Parallel dispatch for QA tester tasks:**
+QA is an independent discipline (seeded by the `guild:qa` skill), but its tasks
+dispatch through this same loop. `qa-strategist` and `qa-tester` tasks spawn
+generically as `guild:qa-strategist` / `guild:qa-tester` from the `agent` field.
+When there are 3 or more pending `qa-tester` tasks for the same QA pass (same
+requirement), parallelize them up to 3 at a time, exactly like developer tasks —
+each tester works a separate mission and writes to its own files. QA tasks do NOT
+trigger auto-test (the qa-tester owns its own e2e specs) — see step 4.5.
+
 **Parallel dispatch for review tasks:**
 When a task has `agent: reviewer`, do NOT spawn a single reviewer. Instead, spawn all 4 specialized reviewers in parallel:
 

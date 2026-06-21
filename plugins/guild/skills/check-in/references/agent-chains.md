@@ -184,6 +184,52 @@ When any reviewer finds issues, a fix loop starts. Maximum 2 rounds.
 - If still issues after round 2: write "ESCALATE" in Work Log
 - The orchestrator detects "ESCALATE" from any reviewer and asks the user whether to continue fixing or accept as-is
 
+## Chain 5: QA Discipline (peer, not a chain step)
+
+QA is **independent** of the feature chain. Where the feature chain *terminates*
+at a review gate, QA is a standing discipline that runs against the whole product
+and *produces* board work — it sits beside the chain like the product-owner does,
+not inside it.
+
+```
+        ┌──────── feature chain (REQ → plan → dev → review → done) ────────┐
+        │                                                                  ▼
+   QA discipline ──finds bugs──▶ board (fix tasks) ──▶ dev chain fixes ──▶ QA re-verifies
+        ▲                                                                  │
+        └──────────────────── on-demand / standing cadence ───────────────┘
+```
+
+**Entry:** the `guild:qa` skill (on-demand or scheduled cadence) seeds a
+`qa-strategist` task anchored to a standing "Product QA & E2E Regression" umbrella
+requirement. QA is never auto-spawned after a developer task.
+
+```
+qa-strategist (charter + risk map + coverage matrix)
+  └→ qa-tester ×N (run the product, explore, author Playwright specs)
+      ├→ bugs → developer fix tasks (Chain 3 bug-fix flow) → re-verify qa-tester
+      └→ confirmed-good high-risk paths → committed e2e specs + regression manifest
+```
+
+| Step | Agent | Input | Output | Follow-up |
+|------|-------|-------|--------|-----------|
+| 1 | qa-strategist | scope + oracle sources + running app | charter, risk map, missions | qa-tester task per mission |
+| 2 | qa-tester (×N) | mission + running app | e2e specs (in repo) + bug ledger | developer fix tasks + re-verify qa-tester |
+
+**Ownership boundary:** `test-writer` owns **unit** tests (inside the feature
+chain); `qa-tester` owns **e2e/integration** tests (the QA discipline). E2e specs
+live in the project's real e2e dir and run in CI; `developer`/`developer-svelte`
+**co-maintain** them when a feature change alters asserted behavior, and QA
+reviews the update.
+
+**Oracle:** the hybrid rule — lock current behavior as the regression baseline
+when it agrees with a spec/ticket/user or is clearly sane; flag suspect behavior
+as a bug instead of asserting it; ask the user when ambiguous. See the
+`guild:qa-mindset` skill.
+
+**Persistence:** QA artifacts live under `.guild/qa/` (charter, missions,
+sessions, ledger, regression manifest) and are evergreen — they survive releases
+and `clear-board`, like `.guild/docs/`.
+
 ## Orchestrator Responsibilities in the Chain
 
 The orchestrator (check-in skill) handles these chain logistics:
