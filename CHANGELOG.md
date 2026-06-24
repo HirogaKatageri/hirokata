@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The architect now emits the test-writer + reviewer **chain tail** as real tickets up front (product-owner emits it in the bug-fix flow); the orchestrator only creates tickets for the fix-loop tail. Fix loop is capped at 2 review rounds by counting reviewer tickets per requirement.
   - Renamed reference `board-format.md` → `state-format.md`. Updated `check-in`, `new-requirement`, `clear-board`, `guild-status`, and `release` skills plus the architect, product-owner, developer, and developer-svelte agents accordingly.
   - **Migration:** no automatic path — clearing the board (`/guild:clear-board`) is the upgrade. Returning check-ins on a pre-2.0 guild are offered an in-place convert or clear.
-  - Marketplace bumped to v3.0.0 to mirror the guild major; the new Research Plugin ships in the same release.
+  - Marketplace bumped to v3.1.0 — the v3 major mirrors this Guild breaking change; the v3.1 minor adds the new Research Plugin.
 
 ### Planned
 - Test Plugin: Automated test generation and execution
