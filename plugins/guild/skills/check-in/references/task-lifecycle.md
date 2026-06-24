@@ -3,6 +3,7 @@
 ## Task File Location
 
 All task files live in `.guild/tasks/` with the naming pattern `TASK-NNN.md` (zero-padded 3-digit ID).
+Each task file **owns its own status** — there is no board, no second copy.
 
 ## Task File Format
 
@@ -11,11 +12,9 @@ All task files live in `.guild/tasks/` with the naming pattern `TASK-NNN.md` (ze
 id: TASK-001
 title: "Short descriptive title"
 agent: product-owner
-status: pending
+status: todo
 requirement: REQ-001
 plan: null
-depends-on: []
-priority: high
 created: 2026-04-07
 ---
 
@@ -33,7 +32,6 @@ Clear description of what this task needs to accomplish.
 
 - [ ] Criterion 1
 - [ ] Criterion 2
-- [ ] Criterion 3
 
 ## Work Log
 
@@ -50,30 +48,38 @@ _Agent declares follow-ups here upon completion._
 |-------|------|----------|-------------|
 | `id` | string | yes | Task ID (e.g., `TASK-001`) |
 | `title` | string | yes | Short descriptive title |
-| `agent` | string | yes | Assigned agent: `product-owner`, `architect`, `developer`, `developer-svelte`, `test-writer`, `researcher`, `reviewer`, `qa-strategist`, `qa-tester`. The orchestrator spawns `guild:{agent}`. `reviewer` is a **trigger alias**, not a real agent — when dispatched it spawns the 4 specialized reviewers (`reviewer-security`, `reviewer-architecture`, `reviewer-business-logic`, `reviewer-edge-case`) in parallel. |
-| `status` | string | yes | Current status (see Status Values below) |
+| `agent` | string | yes | Assigned agent (see enum below). The orchestrator spawns `guild:{agent}`. |
+| `status` | string | yes | `todo`, `in-progress`, `done`, or `failed` |
 | `requirement` | string | yes | Linked requirement ID (e.g., `REQ-001`) |
 | `plan` | string | no | Linked plan ID (e.g., `PLAN-001`), `null` if none |
 | `plan-slice` | string | no | Path to a per-task plan slice (e.g., `.guild/plans/PLAN-001/slice-auth-middleware.md`). When present, the developer reads this instead of the full plan. |
-| `depends-on` | array | no | Task IDs that must complete first (e.g., `[TASK-002, TASK-003]`) |
-| `priority` | string | yes | `high`, `medium`, or `low` |
 | `created` | string | yes | Creation date (YYYY-MM-DD) |
+
+**`agent` enum:** `product-owner`, `architect`, `developer`, `developer-svelte`, `test-writer`,
+`researcher`, `reviewer`, `qa-strategist`, `qa-tester`. `reviewer` is a **trigger alias**, not a
+real agent — when dispatched it spawns the 4 specialized reviewers (`reviewer-security`,
+`reviewer-architecture`, `reviewer-business-logic`, `reviewer-edge-case`) in parallel on the same
+ticket.
+
+> There is **no `depends-on` field**. Sequencing is creation order (ID order) plus the per-REQ
+> review gate — not a dependency graph. The research-first flow works because the researcher
+> ticket is created before (lower ID than) the post-research architect ticket.
 
 ## Status Values & Transitions
 
 ```
-pending → in-progress → done
-                      → failed
-pending → blocked → pending (when dependency resolves)
+todo → in-progress → done
+                   → failed
 ```
 
 | Status | Meaning |
 |--------|---------|
-| `pending` | Ready to be picked up (or waiting in backlog) |
+| `todo` | Ready to be picked up (waiting in the queue) |
 | `in-progress` | An agent is actively working on it |
 | `done` | Successfully completed |
-| `blocked` | Cannot proceed — unmet dependencies |
 | `failed` | Agent could not complete — needs user intervention |
+
+(There is no `blocked` status — without a dependency graph there is nothing to block on.)
 
 ## Work Log Convention
 
@@ -89,65 +95,83 @@ Agents append to the Work Log section as they work. Each entry includes the date
 - Marked task as done
 ```
 
-The Work Log provides continuity across context resets. When a task is resumed, the new agent reads the Work Log to understand what was already done.
+The Work Log provides continuity across context resets. When a task is resumed, the new agent
+reads the Work Log to understand what was already done. On check-in, a stale `in-progress` ticket
+with an **empty** Work Log is reset to `todo` (never started); one with content stays
+`in-progress` (resume).
 
 ## Follow-up Tasks Section
 
-When an agent completes its work, it declares follow-up tasks in this section. Each line follows the format:
+When an agent completes its work, it declares follow-up tasks in this section. Each line follows
+the format:
 
 ```
 - {title} | agent: {agent-name} | priority: {high|medium|low}
 ```
 
-Optional modifiers:
+Optional modifier:
 ```
-- {title} | agent: {agent-name} | priority: {priority} | depends-on: all-developer
-- {title} | agent: {agent-name} | priority: {priority} | depends-on: TASK-005
 - {title} | agent: developer | priority: {priority} | plan-slice: .guild/plans/PLAN-NNN/slice-{slug}.md
 ```
 
-The `plan-slice` modifier is emitted by the architect for each developer task. The orchestrator persists it into the new task's `plan-slice` frontmatter field. Multiple modifiers can be combined on one line.
+The `plan-slice` modifier is emitted by the architect for each developer task. The orchestrator
+persists it into the new task's `plan-slice` frontmatter field. `priority` is advisory metadata
+only — it does **not** affect ordering (the cursor runs in ID order). There are no `depends-on`
+modifiers and no magic tokens.
+
+### The chain tail (test → review)
+
+The tail is a `test-writer` ticket followed by a `reviewer` ticket. Who emits it:
+
+- **Initial chain — the architect emits the tail.** After its developer follow-ups, the architect
+  declares the `test-writer` and `reviewer` tickets explicitly, so the full pipeline is visible as
+  real tickets up front.
+- **Bug-fix flow (no architect) — the product-owner emits the tail** behind the fix ticket.
+- **Fix loop — the orchestrator appends the tail.** The 4 reviewers declare only `Fix: …` tickets;
+  after a review round that produced fixes, the orchestrator creates the fix tickets, then one
+  `test-writer` ticket and one `Re-review …` ticket behind them (deduped — reviewers never each
+  emit the tail).
 
 ### Examples
 
-**Product owner completing requirements gathering:**
+**Product owner completing requirements gathering (standard flow):**
 ```markdown
 ## Follow-up Tasks
 
 - Plan authentication implementation | agent: architect | priority: high
 ```
 
-**Architect completing a plan:**
+**Architect completing a plan (emits dev tickets + the tail):**
 ```markdown
 ## Follow-up Tasks
 
 - Implement user model and migration | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-001/slice-user-model.md
 - Implement signup endpoint | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-001/slice-signup.md
 - Implement login endpoint | agent: developer | priority: medium | plan-slice: .guild/plans/PLAN-001/slice-login.md
-- Implement session management | agent: developer | priority: medium | plan-slice: .guild/plans/PLAN-001/slice-session.md
-- Review authentication implementation | agent: reviewer | priority: high | depends-on: all-developer
+- Write unit tests for authentication | agent: test-writer | priority: high
+- Review authentication implementation | agent: reviewer | priority: high
 ```
 
-**Reviewer finding issues:**
+**Reviewer finding issues (declares fixes only — orchestrator appends the tail):**
 ```markdown
 ## Follow-up Tasks
 
 - Fix: Missing input validation on signup endpoint | agent: developer | priority: high
 - Fix: SQL injection risk in login query | agent: developer | priority: high
-- Re-review authentication fixes | agent: reviewer | priority: high | depends-on: all-developer
 ```
 
 ### How the Orchestrator Processes Follow-ups
 
-1. Read the completed task's "Follow-up Tasks" section
+1. Read the completed task's "Follow-up Tasks" section.
 2. For each line:
-   a. Parse title, agent, priority, and optional modifiers (`depends-on`, `plan-slice`)
-   b. Assign the next available TASK ID from BOARD.md counters
-   c. Create the task file in `.guild/tasks/` — if `plan-slice` was present, write it into the frontmatter
-   d. Add the task to BOARD.md Backlog section
-   e. If `depends-on: all-developer` — resolve to all developer task IDs just created
-3. Increment `next-task` counter in BOARD.md frontmatter
-4. Link new tasks back to the same requirement as the parent task
+   a. Parse title, agent, priority, and optional `plan-slice`.
+   b. Assign the next available TASK ID from `state.yaml` (`next-task`), then increment it.
+   c. Create the task file in `.guild/tasks/` with `status: todo` — if `plan-slice` was present,
+      write it into the frontmatter.
+3. Link new tasks back to the same requirement as the parent task.
+4. **Fix-loop tail:** if the completed ticket was a `reviewer` ticket and any `Fix:` tickets were
+   declared, after creating the fix tickets append one `test-writer` ticket and one `Re-review …`
+   ticket (only if a 2nd review round hasn't already run — see the round cap in `agent-chains.md`).
 
 ## Requirement File Format
 
@@ -180,13 +204,16 @@ created: 2026-04-07
 
 ## Knowledge Base: `.guild/docs/`
 
-The guild maintains a persistent knowledge base at `.guild/docs/` — researcher findings live here, one file per topic, named `{topic-slug}.md`.
+The guild maintains a persistent knowledge base at `.guild/docs/` — researcher findings live here,
+one file per topic, named `{topic-slug}.md`.
 
 **Characteristics:**
 
 - **Evergreen** — never archived on release, never cleared by `clear-board`
-- **One topic per file** — the researcher updates existing docs in place when topics overlap rather than creating duplicates
-- **Findable** — the architect globs `.guild/docs/` during codebase analysis; prior research informs new plans without re-dispatching the researcher
+- **One topic per file** — the researcher updates existing docs in place when topics overlap
+  rather than creating duplicates
+- **Findable** — the architect globs `.guild/docs/` during codebase analysis; prior research
+  informs new plans without re-dispatching the researcher
 
 **Doc format:**
 
@@ -211,14 +238,18 @@ sources:
 ## References
 ```
 
-Researcher task work logs contain only a short pointer (`See: .guild/docs/{slug}.md`) — the full findings live in the doc.
+Researcher task work logs contain only a short pointer (`See: .guild/docs/{slug}.md`) — the full
+findings live in the doc.
 
 ## Plan File Format
 
 The architect emits one overview file plus one slice per developer task.
 
 **Overview** at `.guild/plans/PLAN-NNN.md` — for reviewers and orientation.
-**Slices** at `.guild/plans/PLAN-NNN/slice-{slug}.md` — one per developer task. Each slice is self-contained: a developer reads only its slice (not the overview, not sibling slices) to do its work. The slice's "Interface Contract" section documents what the task exposes to or consumes from sibling tasks.
+**Slices** at `.guild/plans/PLAN-NNN/slice-{slug}.md` — one per developer task. Each slice is
+self-contained: a developer reads only its slice (not the overview, not sibling slices) to do its
+work. The slice's "Interface Contract" section documents what the task exposes to or consumes from
+sibling tasks.
 
 Overview format:
 

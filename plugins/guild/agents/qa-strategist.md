@@ -140,4 +140,4 @@ follow-up scoped to "run regression suite + exploratory pass on top-risk areas".
   as an open oracle question for the tester to confirm or file as a bug.
 - Don't dump the full plan into the task Work Log — it lives in the charter and
   missions; the work log gets a summary and pointers.
-- Don't update BOARD.md — that's the orchestrator's job.
+- Don't manage guild state (state.yaml, ticket creation) — that's the orchestrator's job.

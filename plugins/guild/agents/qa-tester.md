@@ -145,4 +145,4 @@ against (if any). One manifest entry per fixed bug — this is what makes the su
 - Don't assert suspect behavior as correct — file it or ask the user.
 - Don't put committed specs under `.guild/` — they live in the repo's e2e dir and
   run in CI. `.guild/qa/` holds the manifest, ledger, sessions, and charter only.
-- Don't update BOARD.md — that's the orchestrator's job.
+- Don't manage guild state (state.yaml, ticket creation) — that's the orchestrator's job.

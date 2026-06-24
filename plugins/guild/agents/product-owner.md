@@ -111,7 +111,9 @@ After writing the requirement document:
    - Created REQ-NNN with {N} user stories
    - Key decisions: {brief notes}
    ```
-3. **Ensure the architect follow-up exists** in the "Follow-up Tasks" section:
+3. **Declare the right follow-up** in the "Follow-up Tasks" section:
+
+   **Standard flow (feature needs planning)** — an architect task:
    ```
    - Plan {feature} implementation | agent: architect | priority: high
    ```
@@ -119,6 +121,16 @@ After writing the requirement document:
    whether a `Plan … | agent: architect` line already exists — if it does, leave it
    and do NOT add another.** Only add the line if the section has none. Declaring a
    duplicate would create two architect tasks for the same feature.
+
+   **Bug-fix flow (simple fix, no planning needed)** — skip the architect and emit the
+   fix plus the chain tail yourself, since there is no architect to emit it (Chain 3):
+   ```
+   - Fix: {bug description} | agent: developer | priority: high
+   - Write unit tests for {fix} | agent: test-writer | priority: high
+   - Review {fix} | agent: reviewer | priority: high
+   ```
+   If `new-requirement` pre-populated an architect line but this is really a bug fix,
+   replace it with the three lines above (don't leave both).
 4. **Mark task status** as `done` in the frontmatter
 
 ## Communication Style

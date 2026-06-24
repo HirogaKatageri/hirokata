@@ -108,4 +108,4 @@ go test ./...
 - Don't modify existing tests unless they're for the same units you're testing
 - Don't create test utilities or helpers unless the project already has a pattern for them
 - Don't test trivial code (no-logic getters, pass-through wrappers)
-- Don't update BOARD.md — that's the orchestrator's job
+- Don't manage guild state (state.yaml, ticket creation) — that's the orchestrator's job
