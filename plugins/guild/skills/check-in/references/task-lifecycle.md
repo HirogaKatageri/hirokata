@@ -53,6 +53,7 @@ _Agent declares follow-ups here upon completion._
 | `requirement` | string | yes | Linked requirement ID (e.g., `REQ-001`) |
 | `plan` | string | no | Linked plan ID (e.g., `PLAN-001`), `null` if none |
 | `plan-slice` | string | no | Path to a per-task plan slice (e.g., `.guild/plans/PLAN-001/slice-auth-middleware.md`). When present, the developer reads this instead of the full plan. |
+| `parallel-group` | string | no | A label (e.g., `A`, `B`) shared by `developer`/`developer-svelte` tickets the architect has verified touch **non-overlapping** files. Tickets with the same group run concurrently; a ticket with no group runs solo. Scoped per plan. |
 | `created` | string | yes | Creation date (YYYY-MM-DD) |
 
 **`agent` enum:** `product-owner`, `architect`, `developer`, `developer-svelte`, `test-writer`,
@@ -64,6 +65,11 @@ ticket.
 > There is **no `depends-on` field**. Sequencing is creation order (ID order) plus the per-REQ
 > review gate — not a dependency graph. The research-first flow works because the researcher
 > ticket is created before (lower ID than) the post-research architect ticket.
+
+> **`parallel-group` is not a dependency graph either.** It is a pure safety assertion by the
+> architect: "these dev tickets touch disjoint files and share no ordering, so the shared working
+> tree won't be corrupted if they run at once." It only ever groups `developer`/`developer-svelte`
+> tickets, never tail tickets (`test-writer`, `reviewer`). Ungrouped dev tickets stay sequential.
 
 ## Status Values & Transitions
 
@@ -109,15 +115,36 @@ the format:
 - {title} | agent: {agent-name} | priority: {high|medium|low}
 ```
 
-Optional modifier:
+Optional modifiers (combine freely, pipe-separated):
 ```
-- {title} | agent: developer | priority: {priority} | plan-slice: .guild/plans/PLAN-NNN/slice-{slug}.md
+- {title} | agent: developer | priority: {priority} | plan-slice: .guild/plans/PLAN-NNN/slice-{slug}.md | parallel-group: A
 ```
 
 The `plan-slice` modifier is emitted by the architect for each developer task. The orchestrator
-persists it into the new task's `plan-slice` frontmatter field. `priority` is advisory metadata
+persists it into the new task's `plan-slice` frontmatter field. The `parallel-group` modifier is
+also emitted by the architect, only on `developer`/`developer-svelte` tickets it has verified touch
+disjoint files; the orchestrator persists it into the `parallel-group` frontmatter field and uses
+it to batch the dispatch (see "Parallel developer batching" below). `priority` is advisory metadata
 only — it does **not** affect ordering (the cursor runs in ID order). There are no `depends-on`
 modifiers and no magic tokens.
+
+### Parallel developer batching
+
+Development is sequential **by default** — one ticket at a time, in ID order. The single escape
+hatch is `parallel-group`: when the architect marks two or more `developer`/`developer-svelte`
+tickets with the **same** group label, it has asserted their "Files to Touch" sets are disjoint and
+neither depends on the other's output. The orchestrator then dispatches that whole group
+concurrently in one message (multiple Agent calls in the shared working tree — no worktrees, no
+merge step, because the file sets don't overlap).
+
+Rules:
+- Only `developer`/`developer-svelte` tickets carry a group. Tail tickets (`test-writer`,
+  `reviewer`) and all other agents never do.
+- A group is scoped to one plan. Reuse simple labels (`A`, `B`, …) per plan.
+- A ticket with **no** `parallel-group` runs solo, exactly as before.
+- The batch is dispatched together and the cursor only advances past it once **every** member is
+  `done` — so the test-writer/reviewer tail still waits for all dev work, just as in the sequential
+  case.
 
 ### The chain tail (test → review)
 
@@ -146,11 +173,15 @@ The tail is a `test-writer` ticket followed by a `reviewer` ticket. Who emits it
 ## Follow-up Tasks
 
 - Implement user model and migration | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-001/slice-user-model.md
-- Implement signup endpoint | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-001/slice-signup.md
-- Implement login endpoint | agent: developer | priority: medium | plan-slice: .guild/plans/PLAN-001/slice-login.md
+- Implement signup endpoint | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-001/slice-signup.md | parallel-group: A
+- Implement login endpoint | agent: developer | priority: medium | plan-slice: .guild/plans/PLAN-001/slice-login.md | parallel-group: A
 - Write unit tests for authentication | agent: test-writer | priority: high
 - Review authentication implementation | agent: reviewer | priority: high
 ```
+
+Here the user-model ticket is left ungrouped (the signup and login slices both build on it, so it
+runs solo first). The signup and login slices touch disjoint files and share `parallel-group: A`, so
+the orchestrator dispatches them together after the model is `done`.
 
 **Reviewer finding issues (declares fixes only — orchestrator appends the tail):**
 ```markdown
@@ -164,10 +195,10 @@ The tail is a `test-writer` ticket followed by a `reviewer` ticket. Who emits it
 
 1. Read the completed task's "Follow-up Tasks" section.
 2. For each line:
-   a. Parse title, agent, priority, and optional `plan-slice`.
+   a. Parse title, agent, priority, and optional `plan-slice` / `parallel-group`.
    b. Assign the next available TASK ID from `state.yaml` (`next-task`), then increment it.
-   c. Create the task file in `.guild/tasks/` with `status: todo` — if `plan-slice` was present,
-      write it into the frontmatter.
+   c. Create the task file in `.guild/tasks/` with `status: todo` — if `plan-slice` or
+      `parallel-group` was present, write each into the frontmatter.
 3. Link new tasks back to the same requirement as the parent task.
 4. **Fix-loop tail:** if the completed ticket was a `reviewer` ticket and any `Fix:` tickets were
    declared, after creating the fix tickets append one `test-writer` ticket and one `Re-review …`

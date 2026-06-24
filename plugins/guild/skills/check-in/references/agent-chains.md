@@ -2,8 +2,8 @@
 
 This document defines the standard chains that drive the guild's continuous cycle:
 **Requirements → Tasks → Plans → Tasks**. Tickets are walked by a single cursor in **ID order**
-(see `state-format.md`); development is **sequential**; the only parallelism is the 4-reviewer
-fan-out.
+(see `state-format.md`); development is **sequential by default**, with two parallel cases: a
+`parallel-group` developer batch (architect-verified disjoint files) and the 4-reviewer fan-out.
 
 ## The Core Cycle
 
@@ -12,7 +12,8 @@ User provides input
   └→ product-owner: gathers details, writes REQ document
       └→ architect: reads REQ, explores codebase, writes PLAN,
          declares dev tickets + the test-writer + reviewer tail
-          └→ developer ×N: implement code per plan, ONE AT A TIME (sequential)
+          └→ developer ×N: implement code per plan (sequential, or
+             in parallel-group batches when slices touch disjoint files)
               └→ test-writer: writes and runs unit tests
                   └→ 4 reviewers in parallel:
                       ├── reviewer-security
@@ -31,16 +32,16 @@ The most common chain. A new requirement flows through all roles.
 |------|-------|-------|--------|-----------|
 | 1 | product-owner | User conversation | REQ document | architect ticket |
 | 2 | architect | REQ document + codebase | PLAN document | developer tickets **+ test-writer ticket + reviewer ticket** |
-| 3 | developer (×N, sequential) | PLAN + REQ + codebase | Code changes | (none) |
+| 3 | developer (×N, sequential or parallel-group batches) | PLAN + REQ + codebase | Code changes | (none) |
 | 4 | test-writer | Code changes + REQ + PLAN | Unit tests | fix tickets if bugs found |
 | 5 | 4 reviewers (parallel) | Code + tests + REQ + PLAN | Review report | fix tickets OR approval |
 
 The developer tickets, the test-writer ticket, and the reviewer ticket are all created at once
-from the architect's follow-ups. Because the cursor runs in ID order and development is sequential,
-the test-writer ticket is reached only after every developer ticket is `done`, and the reviewer
-ticket only after the test-writer is `done`. The reviewer ticket is additionally **gated**: the
-orchestrator dispatches it only when every non-tail ticket for the requirement is `done` (the
-N/N gate) — a cheap safety belt on top of ordering.
+from the architect's follow-ups. Because the cursor runs in ID order, the test-writer ticket is
+reached only after every developer ticket is `done`, and the reviewer ticket only after the
+test-writer is `done` — whether the dev tickets ran one at a time or in `parallel-group` batches.
+The reviewer ticket is additionally **gated**: the orchestrator dispatches it only when every
+non-tail ticket for the requirement is `done` (the N/N gate) — a cheap safety belt on top of ordering.
 
 ### Step 1: Product Owner
 
@@ -58,15 +59,17 @@ N/N gate) — a cheap safety belt on top of ordering.
 **Follow-up declaration (dev tickets + the tail):**
 ```
 - Implement {component-1} | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-1}.md
-- Implement {component-2} | agent: developer-svelte | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-2}.md
-- Implement {component-3} | agent: developer | priority: medium | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-3}.md
+- Implement {component-2} | agent: developer-svelte | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-2}.md | parallel-group: A
+- Implement {component-3} | agent: developer | priority: medium | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-3}.md | parallel-group: A
 - Write unit tests for {feature} | agent: test-writer | priority: high
 - Review {feature} implementation | agent: reviewer | priority: high
 ```
 
 The architect emits the `test-writer` and `reviewer` tail explicitly. The orchestrator does not
 auto-create them in the initial chain. Listing dev tickets first keeps their IDs lower, so they run
-before the tail.
+before the tail. The architect adds a `parallel-group` label to dev tickets it has verified touch
+disjoint files (components 2 and 3 above) — the orchestrator dispatches those concurrently; the tail
+tickets never carry a group.
 
 The architect picks the developer agent per slice. `developer-svelte` (sonnet, pre-loaded with
 Svelte 5 / SvelteKit knowledge via the `guild:svelte-*` skills) handles work touching Svelte
@@ -77,8 +80,10 @@ else. Both honor the `plan-slice` modifier.
 
 **Input task title pattern:** "Implement {component}"
 
-Developers run **one at a time** in ID order — there is no parallel-developer batching. Each reads
-its slice, implements, appends to the Work Log, and marks itself `done`. **Developers declare no
+Developers run **one at a time** in ID order, **except** when the architect has tagged a set of dev
+tickets with a shared `parallel-group` — those are dispatched concurrently (the architect verified
+their slices touch disjoint files, so they safely share the working tree). Each developer reads its
+slice, implements, appends to the Work Log, and marks itself `done`. **Developers declare no
 follow-ups** (the architect already emitted the tail), except a `Fix:`/`Clarify:` ticket if they
 discover a genuine blocker mid-work.
 
@@ -238,10 +243,16 @@ behavior, and QA reviews the update.
 6. **Handling escalation**: when a reviewer writes `ESCALATE` or round 2 still has fixes, prompt the
    user.
 
-## Sequential Execution & the One Exception
+## Sequential Execution & the Two Exceptions
 
-- **Development is sequential** — one developer ticket at a time, in ID order. No batching.
-- **The 4-reviewer fan-out is the only parallelism** — all 4 run at once on the same review ticket;
-  only the orchestrator materializes their follow-ups afterward.
+- **Development is sequential by default** — one developer ticket at a time, in ID order.
+- **Exception 1 — `parallel-group` dev batches.** When the architect tags dev tickets with a shared
+  `parallel-group` (verified disjoint "Files to Touch", no ordering dependency), the orchestrator
+  dispatches the whole group concurrently in the shared working tree — no worktrees, no merge step,
+  because the file sets don't overlap. The cursor advances past the group only when all members are
+  `done`. The orchestrator never invents groups; it only honors the architect's labels.
+- **Exception 2 — the 4-reviewer fan-out.** All 4 run at once on the same review ticket (safe
+  because reviewers are read-only); only the orchestrator materializes their follow-ups afterward.
 - **`qa-tester` tickets are strictly sequential** — one at a time even when several are pending,
-  because each drives its own dev server + Playwright and would otherwise collide on ports.
+  because each drives its own dev server + Playwright and would otherwise collide on ports. They are
+  never given a `parallel-group`.

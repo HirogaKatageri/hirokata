@@ -54,10 +54,16 @@ The orchestrator picks what to run by scanning `.guild/tasks/*.md`:
    for its requirement is `done` (the per-REQ N/N review gate). If the lowest-ID `todo` is a
    reviewer ticket whose requirement still has open implementation/test/fix tickets, skip it
    and take the next `todo`.
-4. **Nothing actionable** → set `current: null`; the board is caught up.
+4. **Parallel-group batch** — if the chosen ticket is a `developer`/`developer-svelte` ticket with a
+   `parallel-group`, the actionable unit is the **batch**: all `todo`/`in-progress` dev tickets
+   sharing that `parallel-group` and `requirement`. They are dispatched concurrently and the cursor
+   only advances past them once all are `done`. A ticket with no `parallel-group` is a batch of one.
+5. **Nothing actionable** → set `current: null`; the board is caught up.
 
 There is no priority sort and no dependency graph. Ordering is creation order (ID order); the
-review gate is the only conditional.
+review gate is the only conditional. `parallel-group` is not ordering — it is the architect's
+assertion that grouped dev tickets touch disjoint files and may run together (see
+`task-lifecycle.md` "Parallel developer batching").
 
 ## Rendering the live board view
 
