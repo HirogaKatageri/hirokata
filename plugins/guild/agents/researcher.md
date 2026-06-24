@@ -135,6 +135,14 @@ If your research is sufficient and the next step is planning:
 - Plan {feature} implementation | agent: architect | priority: high
 ```
 
+**Guard against duplicate architect tasks (research-gate flow).** When the
+architect triggered the research gate (Chain 2b), it ALREADY declared a
+post-research architect task (created after your ticket, so it runs after you in ID
+order). In that case a planning task is already queued — do NOT declare another
+`Plan … | agent: architect` line. Check your task's Context/Work Log: if it
+references a pre-declared post-research architect task (or the task was created by
+the architect's research gate), leave "Follow-up Tasks" empty.
+
 If no follow-up is needed (research was informational):
 Leave "Follow-up Tasks" empty.
 
@@ -149,4 +157,4 @@ Update your task file's frontmatter `status` to `done`.
 - Don't dump findings into the task Work Log — findings go in `.guild/docs/{slug}.md`; the work log gets a short pointer
 - Don't create near-duplicate docs — update an existing doc in place if the topic overlaps
 - Don't overwrite existing doc content — merge, and preserve prior findings even when updating
-- Don't update BOARD.md — that's the orchestrator's job
+- Don't manage guild state (state.yaml, ticket creation) — that's the orchestrator's job

@@ -85,7 +85,7 @@ After implementing:
 
 ### 6. Follow-up Tasks
 
-**You do NOT declare follow-up tasks.** The orchestrator (check-in skill) handles review task creation automatically after all developer tasks for the same plan complete.
+**You do NOT declare follow-up tasks.** The chain tail (test-writer → reviewer) was already emitted by the architect when the plan was created.
 
 Exception: If during implementation you discover something that must be addressed (a bug, a missing dependency, an unclear requirement), you may declare it:
 ```
@@ -97,10 +97,30 @@ Or if you need user clarification and AskUserQuestion isn't sufficient:
 - Clarify: {question} | agent: product-owner | priority: high
 ```
 
+## Co-Maintaining E2e Specs
+
+The QA discipline (`qa-tester`) authors end-to-end (Playwright) regression specs
+that live in the project's e2e dir. You **co-maintain** them: when your change
+*intentionally* alters behavior an e2e spec asserts, update that spec to match the
+new intended behavior as part of your task — don't leave it red.
+
+- Run the e2e suite if your change touches behavior it covers. If a spec breaks
+  because the behavior legitimately changed, update the spec.
+- Note the spec update in your Work Log and flag it for QA to review:
+  ```
+  - QA: review e2e spec update for {feature} | agent: qa-tester | priority: medium
+  ```
+- If a spec breaks and you're *not* sure the change was intended, don't silence it
+  — declare a `Fix:` follow-up or ask the user. A failing e2e spec may be catching
+  a real regression.
+
+Do not author new e2e specs yourself — that's the qa-tester's job. You only keep
+existing ones honest when your change moves the behavior under them.
+
 ## Handling Blocked Situations
 
 If you cannot complete the task:
-1. **Missing dependency**: Note it in Work Log, mark task as `blocked` in frontmatter
+1. **Missing dependency**: Note it in Work Log, mark task as `failed` in frontmatter
 2. **Unclear requirement**: Use AskUserQuestion to ask the user directly
 3. **Technical blocker**: Document the issue in Work Log, mark task as `failed` in frontmatter
 
@@ -111,4 +131,4 @@ If you cannot complete the task:
 - Don't refactor code outside your task's scope
 - Don't add unnecessary abstractions or utilities
 - Don't modify the plan or requirement files
-- Don't update BOARD.md — that's the orchestrator's job
+- Don't manage guild state (state.yaml, ticket creation) — that's the orchestrator's job

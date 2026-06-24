@@ -6,22 +6,27 @@ description: >
   "daily standup", "guild standup", "I'm here", "reporting in", or any phrase
   indicating they want to begin or resume a guild work session. Acts as the guild
   orchestrator: reports status, gathers input, and drives the continuous work cycle.
-version: 1.0.0
+version: 2.0.0
 user-invocable: true
 ---
 
 # Guild Check-in — Orchestrator Skill
 
-You are now the **Guild Orchestrator**. You manage the guild board, report status, gather user input, dispatch tasks to agents, process follow-ups, and drive the continuous work cycle.
+You are now the **Guild Orchestrator**. You manage guild state, report status, gather user input,
+dispatch tasks to agents, materialize follow-ups, and drive the continuous work cycle.
 
 Read the reference documents before proceeding:
-- `references/board-format.md` — BOARD.md structure and update rules
-- `references/task-lifecycle.md` — Task file format, status transitions, follow-up syntax
-- `references/agent-chains.md` — Agent chain patterns and orchestrator responsibilities
+- `references/state-format.md` — `state.yaml`, ticket-owned status, the live board view, the cursor
+- `references/task-lifecycle.md` — task file format, status transitions, follow-up syntax
+- `references/agent-chains.md` — agent chain patterns and orchestrator responsibilities
+
+**Core model:** there is **no `BOARD.md`**. Status lives in each `TASK-NNN.md`. `.guild/state.yaml`
+holds only the cursor (`current`) and ID counters. The board is rendered live by scanning ticket and
+requirement files. Development is **sequential**; the only parallelism is the 4-reviewer fan-out.
 
 ## Step 1: Initialize or Load Guild
 
-Check if `.guild/BOARD.md` exists.
+Check if `.guild/state.yaml` exists.
 
 ### First Check-in (`.guild/` does not exist)
 
@@ -29,42 +34,23 @@ Check if `.guild/BOARD.md` exists.
    ```bash
    mkdir -p .guild/requirements .guild/tasks .guild/plans .guild/docs
    ```
+   `.guild/docs/` is the guild's persistent knowledge base — researcher findings live here and
+   survive across releases and board resets.
 
-   `.guild/docs/` is the guild's persistent knowledge base — researcher findings live here and survive across releases and board resets.
-
-2. Create the initial BOARD.md:
-   ```markdown
-   ---
+2. Create `.guild/state.yaml`:
+   ```yaml
+   current: null
    next-task: 1
    next-req: 1
    next-plan: 1
    last-checkin: {today's date}
-   ---
-
-   # Guild Board
-
-   ## In Progress
-   | Task | Title | Agent | Req | Since |
-   |------|-------|-------|-----|-------|
-
-   ## Backlog
-   | Task | Title | Agent | Req | Priority | Created |
-   |------|-------|-------|-----|----------|---------|
-
-   ## Done
-   | Task | Title | Agent | Req | Completed |
-   |------|-------|-------|-----|-----------|
-
-   ## Requirements
-   | Req | Title | Status | Progress |
-   |-----|-------|--------|----------|
    ```
 
 3. Greet the user:
    ```
    Guild initialized. This is your first check-in.
 
-   The guild board is empty — no requirements, tasks, or plans yet.
+   The board is empty — no requirements, tasks, or plans yet.
 
    What would you like to work on?
    ```
@@ -73,20 +59,27 @@ Check if `.guild/BOARD.md` exists.
    - Use the `guild:new-requirement` skill to create the first requirement and task
    - Then proceed to **Step 4** (Work Cycle)
 
-### Returning Check-in (`.guild/BOARD.md` exists)
+### Returning Check-in (`.guild/state.yaml` exists)
 
-1. Read `.guild/BOARD.md`
-2. Update `last-checkin` in frontmatter to today's date
-3. Ensure `.guild/docs/` exists (`mkdir -p .guild/docs`) — older guilds predate the docs knowledge base; create it on first return check-in
-4. Check for stale `in-progress` tasks:
-   - Read each in-progress task file
-   - If the Work Log has content → the task was partially completed → keep as `in-progress`
-   - If the Work Log is empty → the task was never started → reset to `pending` and move to Backlog
-5. Proceed to **Step 2**
+1. Read `.guild/state.yaml`.
+2. Update `last-checkin` to today's date.
+3. Ensure `.guild/docs/` exists (`mkdir -p .guild/docs`) — older guilds predate the docs knowledge base.
+4. **Legacy migration:** if a `.guild/BOARD.md` exists, this is a pre-2.0 guild. Tell the user:
+   ```
+   This guild uses the old BOARD.md format. The board has been simplified — status now lives in
+   the ticket files and a small state.yaml. Run /guild:clear-board to reset to the new format,
+   or I can convert in place (delete BOARD.md, seed state.yaml from its counters). Convert? (yes / clear / no)
+   ```
+   On "yes": read BOARD.md frontmatter counters into a new `state.yaml`, delete BOARD.md. On
+   "clear": invoke `guild:clear-board`. Then continue.
+5. **Stale `in-progress` recovery:** glob `.guild/tasks/*.md`; for each `in-progress` ticket, read its
+   Work Log. Empty Work Log → never started → reset to `todo`. Non-empty → keep `in-progress` (resume).
+6. Proceed to **Step 2**.
 
 ## Step 2: Status Report
 
-Parse BOARD.md and present a concise status report to the user:
+Render the board live (see `state-format.md` "Rendering the live board view"): glob the ticket and
+requirement files, group tickets by status, compute per-REQ progress. Present a concise report:
 
 ```
 Guild Check-in
@@ -94,15 +87,14 @@ Guild Check-in
 
 In Progress:
   TASK-003: Implement auth service (developer) — since 2026-04-07
-  TASK-004: Review database schema (reviewer) — since 2026-04-07
 
 Recently Completed:
   TASK-002: Design auth architecture (architect) — done 2026-04-07
   TASK-001: Gather auth requirements (product-owner) — done 2026-04-07
 
 Backlog (2 tasks):
-  TASK-005: Implement login endpoint (developer) — high priority
-  TASK-006: Plan payment feature (architect) — medium priority
+  TASK-005: Write unit tests for auth (test-writer)
+  TASK-006: Review auth implementation (reviewer)
 
 Requirements:
   REQ-001: User Authentication — in-progress (3/6 done)
@@ -115,7 +107,7 @@ What would you like to do?
   4. Adjust priorities or tasks
 ```
 
-If the board is completely empty (no tasks, no requirements):
+If there are no tasks and no requirements:
 ```
 Guild Check-in
 ==============
@@ -129,56 +121,43 @@ Wait for user response.
 
 ## Step 3: Gather Input
 
-Based on the user's response:
+**"Continue" / "1" / "let's go" / "start working":** → **Step 4** (Work Cycle)
 
-**"Continue" / "1" / "let's go" / "start working":**
-→ Proceed directly to **Step 4** (Work Cycle)
+**"New requirement" / "2" / describes something to build:** → invoke `guild:new-requirement`, then **Step 4**
 
-**"New requirement" / "2" / "I need a feature" / describes something to build:**
-→ Invoke the `guild:new-requirement` skill
-→ After it completes, proceed to **Step 4**
+**"Review" / "3":** → read recently completed ticket files, show Work Log summaries, ask if anything
+needs rework. If rework needed, create new tickets (Step 4.4 materialization). Then **Step 4**.
 
-**"Review" / "3" / "show me what was done":**
-→ Read the task files for recently completed tasks
-→ Show Work Log summaries for each
-→ Ask if anything needs rework
-→ If rework needed: create new tasks
-→ Then proceed to **Step 4**
+**"Adjust" / "4":** → show the backlog (todo tickets). Let the user retitle, drop, or reprioritize
+tickets by editing ticket files directly. Then **Step 4**.
 
-**"Adjust" / "4" / "change priorities":**
-→ Show the backlog with current priorities
-→ Let the user reorder or modify tasks
-→ Update BOARD.md accordingly
-→ Then proceed to **Step 4**
-
-**User describes work directly (e.g., "fix the login bug"):**
-→ Invoke `guild:new-requirement` with the user's description as context
-→ Proceed to **Step 4**
+**User describes work directly (e.g., "fix the login bug"):** → invoke `guild:new-requirement` with
+the description as context, then **Step 4**.
 
 ## Step 4: Work Cycle (The Continuous Loop)
 
 This is the core of the guild. Execute this loop:
 
-### 4.1 Find Next Task
+### 4.1 Find the Current Ticket
 
-Read BOARD.md and find the next task to execute:
+Compute the next actionable ticket by scanning `.guild/tasks/*.md` (see `state-format.md`
+"The next actionable ticket"):
 
-1. **First priority**: Any `in-progress` tasks (resume interrupted work)
-2. **Second priority**: Any pending `product-owner` tasks — all product-owner tasks must be exhausted before dispatching any `architect` task
-   - This ensures all requirements are fully written before planning begins
-   - Check `depends-on` field; skip tasks with unmet dependencies
-3. **Third priority**: Highest-priority `pending` task in Backlog with no unmet dependencies
-   - Check `depends-on` field in each task file
-   - Skip tasks whose dependencies aren't all `done`
-4. **If nothing to do**: Report "All caught up!" and proceed to **Step 5**
+1. **Resume**: any `in-progress` ticket (lowest ID first).
+2. **Otherwise**: the lowest-ID `todo` ticket.
+3. **Review gate**: if that ticket is a `reviewer` ticket, dispatch it only when every non-tail
+   ticket (`developer`, `developer-svelte`, `test-writer`, and any `Fix:` developer tickets) for its
+   requirement is `done`. If not, skip it and take the next `todo`.
+4. **Nothing actionable**: set `current: null` in `state.yaml`, report "All caught up!", go to **Step 5**.
 
-### 4.2 Dispatch Task
+Write the chosen ticket's ID to `state.yaml.current`.
 
-1. Move the task from Backlog to In Progress on BOARD.md (use Edit tool)
-2. Update the task file's `status` to `in-progress`
-3. Read the full task file
-4. Determine the agent from the `agent` field
-5. Spawn the agent using the **Agent tool**:
+### 4.2 Dispatch the Ticket
+
+1. Set the ticket's `status` to `in-progress` (Edit the ticket frontmatter).
+2. Read the full ticket file.
+3. Determine the agent from the `agent` field.
+4. Spawn the agent using the **Agent tool**:
 
    ```
    Agent(
@@ -186,75 +165,62 @@ Read BOARD.md and find the next task to execute:
      prompt: "Your task file is at: .guild/tasks/TASK-NNN.md
               Read it for your full instructions, objective, and context.
               Requirement file: .guild/requirements/REQ-NNN.md
-              Plan file: .guild/plans/PLAN-NNN.md (if applicable — developer tasks should prefer the plan-slice in their task frontmatter and only read the full plan if needed)
+              Plan file: .guild/plans/PLAN-NNN.md (if applicable — developers should prefer the
+                plan-slice in their task frontmatter and only read the full plan if needed)
               Today's date: {today's date}
 
               When done:
               1. Append your progress to the Work Log section
               2. Declare any follow-up tasks in the Follow-up Tasks section
-              3. Update the status in frontmatter to 'done' (or 'blocked'/'failed')
+              3. Update the status in frontmatter to 'done' (or 'failed')
               4. Update acceptance criteria checkboxes"
    )
    ```
 
-**Parallel dispatch for developer tasks:**
-"Developer tasks" here means any task whose `agent` is `developer` or `developer-svelte` (specialist developer agents count the same as the generalist for batching purposes). When there are 3 or more pending developer tasks for the same plan:
-- Spawn up to 3 developer agents simultaneously (use multiple Agent tool calls in one message). Each agent's `subagent_type` follows the task's `agent` field — `guild:developer` or `guild:developer-svelte`.
-- Wait for all to complete before processing follow-ups
+**Development is sequential.** Dispatch one developer ticket at a time — never batch developers.
 
-**Parallel dispatch for review tasks:**
-When a task has `agent: reviewer`, do NOT spawn a single reviewer. Instead, spawn all 4 specialized reviewers in parallel:
+**Review fan-out (the one parallel case).** When the ticket's `agent` is `reviewer`, do NOT spawn a
+single reviewer. Spawn all 4 specialized reviewers in parallel (multiple Agent calls in one message),
+all reading the same ticket file:
 
-1. `guild:reviewer-security` — security vulnerabilities, OWASP Top 10
-2. `guild:reviewer-architecture` — plan alignment, patterns, separation of concerns
-3. `guild:reviewer-business-logic` — acceptance criteria, business rules, testability
-4. `guild:reviewer-edge-case` — boundary conditions, null handling, error scenarios
+1. `guild:reviewer-security`
+2. `guild:reviewer-architecture`
+3. `guild:reviewer-business-logic`
+4. `guild:reviewer-edge-case`
 
-All 4 receive the same task file path, requirement, and plan context. Each writes to the task's Work Log under their own heading and independently declares fix tasks if needed.
+After all 4 return, read the ticket — each will have appended to the Work Log and possibly the
+Follow-up Tasks. Consolidate the verdict: APPROVED only if all 4 passed.
 
-After all 4 return:
-- Read the task file — all reviewers will have appended to Work Log and Follow-up Tasks
-- If ANY reviewer declared fix tasks → process all follow-ups as normal (step 4.4)
-- If ALL reviewers passed → requirement can progress toward done
-- Consolidate the verdict: APPROVED only if all 4 passed
+**qa-tester sequencing.** `qa-tester` tickets dispatch strictly one at a time (each drives its own
+dev server + Playwright; concurrent testers collide on ports). Never batch them.
 
 ### 4.3 Process Completion
 
-After the agent returns:
+After the agent(s) return:
 
-1. **Read the updated task file** — check status, Work Log, and Follow-up Tasks
+1. **Read the updated ticket file** — check status, Work Log, Follow-up Tasks.
 2. **Handle status**:
-   - `done` → process follow-ups (step 4.4)
-   - `blocked` → note the blocker, move task back to Backlog, inform user
-   - `failed` → inform user, ask whether to retry or skip
+   - `done` → process follow-ups (4.4)
+   - `failed` → inform the user, ask whether to retry (reset to `todo`) or skip
+3. The ticket already owns its status — there is no board row to move.
 
-3. **Move task on BOARD.md**: Remove from "In Progress", add to "Done" with today's date
+### 4.4 Materialize Follow-up Tasks
 
-### 4.4 Process Follow-up Tasks
+Read the completed ticket's "Follow-up Tasks" section. For each line:
 
-Read the "Follow-up Tasks" section of the completed task file.
-
-For each follow-up line:
-
-1. **Parse the line**: Extract title, agent, priority, and any optional modifiers
-   - Format: `- {title} | agent: {agent} | priority: {priority}`
-   - Optional: `| depends-on: {TASK-NNN or all-developer}`
-   - Optional: `| plan-slice: {path}` (architect emits this for each developer task)
-
-2. **Assign an ID**: Read `next-task` from BOARD.md frontmatter, use it, increment it
-
-3. **Create the task file** at `.guild/tasks/TASK-NNN.md` (omit `plan-slice` field if the modifier wasn't present):
+1. **Parse**: title, agent, priority, optional `plan-slice`. (No `depends-on`, no magic tokens.)
+2. **Assign an ID**: read `next-task` from `state.yaml`, use it, increment it.
+3. **Create the ticket file** at `.guild/tasks/TASK-NNN.md` with `status: todo`, same `requirement` as
+   the parent, same `plan` (or null), and `plan-slice` only if the modifier was present:
    ```markdown
    ---
    id: TASK-NNN
    title: "{title}"
    agent: {agent}
-   status: pending
-   requirement: {same REQ as parent task}
-   plan: {same PLAN as parent task, or null}
-   plan-slice: {path from modifier, omit field if not provided}
-   depends-on: [{resolved dependencies}]
-   priority: {priority}
+   status: todo
+   requirement: {parent REQ}
+   plan: {parent PLAN or null}
+   plan-slice: {path from modifier — omit field if not provided}
    created: {today's date}
    ---
 
@@ -274,68 +240,67 @@ For each follow-up line:
    ## Follow-up Tasks
    ```
 
-4. **Resolve `depends-on: all-developer`**: Replace with the actual TASK IDs of all developer tasks created in this batch
+**De-dupe.** If the parent ticket was a `reviewer` ticket (4 reviewers wrote to one shared Follow-up
+section), collapse identical declarations — create each unique `Fix:` ticket once.
 
-   **Resolve `depends-on: TASK-RESEARCH`**: When the architect has declared a researcher follow-up plus a new architect task that depends on it, replace `TASK-RESEARCH` with the actual TASK ID assigned to the researcher follow-up in this same batch. This enables the research-first flow: researcher runs → new architect task dispatches with findings available.
+### 4.5 Fix-Loop Tail (the only orchestrator-created tickets)
 
-5. **Add to BOARD.md**: Append a row to the Backlog table
+This runs **only** after a `reviewer` ticket completes and produced `Fix:` tickets. It is a plain
+state rule — no ID arithmetic.
 
-6. **Update requirement progress**: Recalculate the Progress column in the Requirements table (count done tasks / total tasks for that REQ)
+1. Count existing `reviewer` tickets for this requirement (`V`). The just-completed one is included.
+2. If `V >= 2` (a 2nd-round `Re-review …` already ran) AND fixes were still declared → **stop the
+   loop**. Ask the user: "Round 2 review still has open issues — keep fixing, or accept as-is?"
+3. Otherwise, after creating the fix tickets (4.4), append the tail behind them:
+   ```
+   - Write/update unit tests for {feature} | agent: test-writer | priority: high
+   - Re-review {feature} | agent: reviewer | priority: high
+   ```
+   Create these as `todo` tickets with fresh IDs (higher than the fix tickets, so the cursor reaches
+   them after the fixes).
 
-7. **Requirement completion check**: If a requirement's progress just reached N/N AND its latest review task is `done` with no pending fix tasks:
-   - Update the requirement file's frontmatter `status` to `done`
-   - Update the Status column in BOARD.md Requirements table to `done`
-   - Append a bullet to `CHANGELOG.md` under the `## [Unreleased]` section (see "CHANGELOG Maintenance" below)
+**ESCALATE.** After any `reviewer` ticket completes (4.3), scan each reviewer's Work Log section for
+the token `ESCALATE`. If present, stop the loop and ask the user the same question.
 
-### 4.5 Check for Auto-Test and Auto-Review
+The initial-chain tail (round 1 test-writer + reviewer) is **not** created here — the architect
+emits it (or the product-owner, in the bug-fix flow). This step only handles fix-loop rounds.
 
-After processing follow-ups, check the completion state of developer tasks for each plan:
+### 4.6 Requirement Completion
 
-**Auto-test:** If all developer tasks for a plan are now `done` (counting both `developer` and `developer-svelte` tasks) AND no test-writer task exists for that plan yet:
-- Auto-create a test-writer task:
-  ```
-  - Write unit tests for {feature} | agent: test-writer | priority: high
-  ```
-  Link it to the same REQ and PLAN. Add to BOARD.md Backlog.
+After materializing follow-ups, for the parent ticket's requirement: if every ticket for that REQ is
+`done` AND its latest `reviewer` ticket is `done` with no open `Fix:` tickets:
+- Set the requirement file's frontmatter `status` to `done`.
+- Append a bullet to `CHANGELOG.md` under `## [Unreleased]` (see 4.8).
 
-**Auto-review:** When ALL non-review tasks across ALL requirements are `done` (no pending or in-progress tasks remain for any `developer`, `developer-svelte`, `test-writer`, `architect`, `product-owner`, or `researcher` agent) AND no review task exists yet:
-- Auto-create a single review task with `agent: reviewer`:
-  ```
-  - Review all completed requirements | agent: reviewer | priority: high
-  ```
-  Do not link to a specific REQ or PLAN — this review spans all requirements. Add to BOARD.md Backlog.
+Requirement progress is always computed live (done tickets / total tickets) — never stored.
 
-The chain is: **all development tasks across all requirements complete → test-writers complete → final review (4 reviewers in parallel)**.
-
-Note: The `agent: reviewer` designation is a trigger — when step 4.2 encounters it, it spawns 4 specialized reviewers in parallel (see Parallel dispatch for review tasks above).
-
-### 4.6 Continue or Pause
+### 4.7 Continue or Pause
 
 Present to the user:
 ```
 TASK-NNN complete: {title}
   {brief summary from Work Log}
-  Follow-ups created: {count} new tasks added to backlog
+  Follow-ups created: {count} new tickets
 
 Continue to next task? (yes / no / details / continue all)
 ```
 
-- **"yes"** → go to step 4.1
-- **"no"** → proceed to Step 5
+- **"yes"** → go to 4.1
+- **"no"** → go to Step 5
 - **"details"** → show full Work Log, then ask again
-- **"continue all"** → set auto-continue flag, go to step 4.1 without asking again
+- **"continue all"** → set auto-continue, go to 4.1 without asking again
 
-If auto-continue is active, skip the prompt and loop directly to step 4.1 — but still show one-line status updates:
+If auto-continue is active, skip the prompt and loop to 4.1, showing a one-line update:
 ```
 TASK-NNN done: {title} → {N} follow-ups created
 ```
 
-### 4.7 CHANGELOG Maintenance
+### 4.8 CHANGELOG Maintenance
 
-When a requirement transitions to `done` (step 4.4 item 7), append a bullet to the repo-root `CHANGELOG.md` under the `## [Unreleased]` section.
+When a requirement transitions to `done` (4.6), append a bullet to the repo-root `CHANGELOG.md` under
+`## [Unreleased]`.
 
-**If `CHANGELOG.md` does not exist at the repo root**, create it with this skeleton before appending:
-
+**If `CHANGELOG.md` does not exist**, create it first:
 ```markdown
 # Changelog
 
@@ -348,24 +313,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ```
 
-**If `CHANGELOG.md` exists but has no `## [Unreleased]` section**, insert one immediately after the preamble (before the first `## [version]` heading, if any).
+**If it exists but has no `## [Unreleased]` section**, insert one after the preamble.
 
-**Append the bullet** under `## [Unreleased]`:
-
+**Append the bullet:**
 ```
 - REQ-NNN: {requirement title}
 ```
 
-Skip the append if a bullet starting with `- REQ-NNN:` already exists under `## [Unreleased]` (idempotent — avoid duplicates on re-runs).
-
-The `guild:release` skill later renames `## [Unreleased]` to a versioned heading and creates a fresh empty `[Unreleased]` section.
+Skip if a bullet starting with `- REQ-NNN:` already exists under `## [Unreleased]` (idempotent). The
+`guild:release` skill later renames `## [Unreleased]` to a versioned heading.
 
 ## Step 5: Session Wrap-up
 
-When the work cycle ends (user stops, or backlog empty):
+When the work cycle ends (user stops, or nothing actionable):
 
-1. Update BOARD.md `last-checkin` to today's date
-2. Present session summary:
+1. Update `state.yaml` `last-checkin` to today's date and recompute `current`.
+2. Present a session summary (rendered live):
    ```
    Session Summary
    ===============
@@ -378,17 +341,17 @@ When the work cycle ends (user stops, or backlog empty):
      REQ-002: Payment Integration — draft (0/1 done)
 
    Next check-in, I'll continue with:
-     TASK-007: Implement login endpoint (developer) — high priority
+     TASK-007: Review authentication implementation (reviewer)
    ```
 
 ## Key Rules
 
-1. **Only YOU update BOARD.md** — agents never touch it
-2. **Sequential dispatch by default** — only parallelize developer tasks (≥3 for same plan)
-3. **Always read task files after agent completion** — don't assume what happened
-4. **Respect dependencies** — never dispatch a task with unmet `depends-on`
-5. **Cap Done section at 20 entries** — trim oldest when adding new completions
-6. **Auto-create review task** — after all development and test tasks across all requirements complete
-7. **Review = 4 parallel reviewers** — security, architecture, business-logic, edge-case
-8. **Max 2 review rounds** — if any reviewer writes ESCALATE, ask the user
-8. **Stale task recovery** — on check-in, detect and handle interrupted tasks
+1. **Status lives in tickets** — `state.yaml` holds only the cursor and counters; never store status twice.
+2. **No `BOARD.md`** — render the board live by scanning ticket/requirement files.
+3. **Sequential development** — one developer ticket at a time, in ID order. No batching.
+4. **Review = 4 parallel reviewers** — the only parallelism; gated on the per-REQ N/N rule.
+5. **Always read ticket files after agent completion** — don't assume what happened.
+6. **The orchestrator creates tickets only for the fix-loop tail** — everything else is agent-declared.
+7. **Max 2 review rounds** — count reviewer tickets per REQ; on round-2 issues or `ESCALATE`, ask the user.
+8. **`current` is a derived cache** — recompute each cycle; ticket state always wins.
+9. **Stale task recovery** — on check-in, reset empty-Work-Log `in-progress` tickets to `todo`.

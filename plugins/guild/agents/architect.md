@@ -62,13 +62,11 @@ If research IS needed, DO NOT write a plan. Instead:
    - Blocked on research: {specific question(s) that must be answered before planning}
    ```
 
-2. **Declare follow-ups** in the "Follow-up Tasks" section — a researcher task plus a new architect task that depends on it:
+2. **Declare follow-ups** in the "Follow-up Tasks" section — a researcher task plus a new architect task. List the researcher first so it gets the lower ID and the cursor runs it before the post-research planning task (sequencing is ID order — no `depends-on` needed):
    ```
    - Research {specific topic/technology/API} for {feature} | agent: researcher | priority: high
-   - Plan {feature} implementation (post-research) | agent: architect | priority: high | depends-on: TASK-RESEARCH
+   - Plan {feature} implementation (post-research) | agent: architect | priority: high
    ```
-
-   Use the literal token `TASK-RESEARCH` as a placeholder — the orchestrator resolves it to the actual researcher task ID after assigning one.
 
 3. **Mark your own task** `status: done` in the frontmatter. Your deliverable was the research gate decision, not a plan. The new architect task will produce the plan after the researcher finishes.
 
@@ -178,13 +176,20 @@ After writing the plan:
    - Created PLAN-NNN with {N} implementation tasks
    ```
 
-2. **Declare follow-ups** in the "Follow-up Tasks" section. Transcribe each implementation task from your plan, including the slice path so the developer reads only its scoped brief:
+2. **Declare follow-ups** in the "Follow-up Tasks" section. Transcribe each implementation task from your plan (with its slice path), then emit the chain tail — one `test-writer` ticket and one `reviewer` ticket — after the developer tickets:
    ```
    - Implement {component-1} | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-1}.md
    - Implement {component-2} | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-2}.md
    - Implement {component-3} | agent: developer | priority: medium | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-3}.md
-   - Review {feature} implementation | agent: reviewer | priority: high | depends-on: all-developer
+   - Write unit tests for {feature} | agent: test-writer | priority: high
+   - Review {feature} implementation | agent: reviewer | priority: high
    ```
+
+   **You emit the tail.** List the developer tickets first (lower IDs → they run first), then the
+   `test-writer` ticket, then the `reviewer` ticket. Because development is sequential and the cursor
+   runs in ID order, the test-writer is reached only after every developer ticket is `done`, and the
+   reviewer only after the test-writer — so reviewers never run before tests exist. The orchestrator
+   does NOT auto-create these in the initial chain; if you omit them, the chain has no tail.
 
    **Choosing the developer agent.** For each implementation task, route to the right specialist:
 
@@ -193,7 +198,7 @@ After writing the plan:
 
    In a mixed-stack repo, route per slice rather than per plan — a slice that builds a Rust API uses `developer`; a sibling slice that wires up the Svelte UI uses `developer-svelte`.
 
-   Every developer follow-up MUST include a `plan-slice` modifier pointing to its slice file. The reviewer task does not need a slice — reviewers read the full overview plus all slices.
+   Every developer follow-up MUST include a `plan-slice` modifier pointing to its slice file. The `test-writer` and `reviewer` tail tickets read the full overview plus all slices, so they need no slice modifier.
 
 3. **Mark task status** as `done` in the frontmatter
 

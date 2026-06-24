@@ -27,11 +27,11 @@ Run in parallel:
 - `git rev-parse --is-inside-work-tree` — confirm git repo
 - `git status --short` — check for uncommitted changes
 - `git tag --list --sort=-v:refname` — list existing tags
-- Read `.guild/BOARD.md` — confirm board exists
+- Read `.guild/state.yaml` — confirm the guild exists
 
 Stop conditions:
 - Not a git repo → `Not inside a git repository. Guild release requires git.`
-- No board → `No guild board found. Nothing to release.`
+- No `.guild/state.yaml` → `No guild found. Nothing to release.`
 - Uncommitted changes → ask:
   ```
   You have uncommitted changes. A release should be a clean point in history.
@@ -44,7 +44,7 @@ Stop conditions:
 Find requirements to include:
 
 - If `--only REQ-NNN,...` provided: use exactly those.
-- Otherwise: read BOARD.md Requirements table and `.guild/requirements/REQ-*.md` — include every requirement with `status: done` that is NOT already present in any `.guild/archive/*/requirements/` directory.
+- Otherwise: scan `.guild/requirements/REQ-*.md` — include every requirement with `status: done` that is NOT already present in any `.guild/archive/*/requirements/` directory.
 
 If the resulting set is empty, stop with:
 ```
@@ -55,14 +55,14 @@ No completed requirements to release since the last release.
 
 For each requirement in scope:
 
-1. Find all its tasks (`.guild/tasks/TASK-*.md` with matching `requirement` frontmatter) AND the tasks still listed on the BOARD (In Progress, Backlog).
+1. Find all its tasks (`.guild/tasks/TASK-*.md` with matching `requirement` frontmatter).
 
 2. **Block release** if ANY task for an included requirement has:
    - `status: failed` → report which task and stop
    - A Work Log entry containing the literal token `ESCALATE` that has not been resolved → report and stop
 
 3. **Warn (do not block)** if ANY task for an included requirement has:
-   - `status: in-progress` or `status: pending` → list them and ask:
+   - `status: in-progress` or `status: todo` → list them and ask:
      ```
      These tasks for included requirements are not yet done:
        TASK-NNN: {title} ({status})
@@ -148,21 +148,26 @@ For each requirement in scope:
 3. For each task file with matching `requirement: REQ-NNN`, `status: done`:
    - Move `.guild/tasks/TASK-NNN.md` → `.guild/archive/{version}/tasks/TASK-NNN.md`
 
-Leave any `in-progress` / `pending` tasks in place on the board.
+Leave any `in-progress` / `todo` tasks in place (their files stay in `.guild/tasks/`).
 
 **Never archive `.guild/docs/`** — the knowledge base is evergreen. Researcher findings persist across releases so future architects and researchers can reuse them. Docs are not versioned alongside releases.
 
+**Never archive `.guild/qa/`** — the QA discipline's charter, ledger, regression
+manifest, sessions, and missions are evergreen and span releases. The standing
+"Product QA & E2E Regression" umbrella requirement stays `in-progress` and is
+never included in a release.
+
 ### 8. Snapshot Board State
 
-Write `.guild/archive/{version}/BOARD-snapshot.md` containing the BOARD.md frontmatter values at release time:
+Write `.guild/archive/{version}/STATE-snapshot.md` containing the `state.yaml` counter values at release time:
 
 ```markdown
 ---
 released: {today's date}
 version: {version}
-next-task-at-release: {value from BOARD.md frontmatter}
-next-req-at-release: {value from BOARD.md frontmatter}
-next-plan-at-release: {value from BOARD.md frontmatter}
+next-task-at-release: {value from state.yaml}
+next-req-at-release: {value from state.yaml}
+next-plan-at-release: {value from state.yaml}
 requirements:
   - REQ-NNN: {title}
   - REQ-MMM: {title}
@@ -174,11 +179,13 @@ Requirements included in this release are archived alongside this file.
 ID counters are continuous across releases — they are NOT reset.
 ```
 
-Do NOT reset the BOARD.md counters. IDs remain continuous across releases to keep archived references stable.
+Do NOT reset the `state.yaml` counters. IDs remain continuous across releases to keep archived references stable.
 
-### 9. Update BOARD.md Requirements Table
+### 9. No Board Table to Update
 
-Remove rows for released requirements from the Requirements table in BOARD.md. Leave In Progress, Backlog, and Done tables untouched (those reflect task state, not requirement state).
+There is no `BOARD.md`. Once a released requirement's REQ file is moved into the archive (step 7), it
+no longer appears in the live requirements view — nothing else to update. Leave the completed task
+files for that requirement archived in step 7; any unfinished tasks stay in `.guild/tasks/`.
 
 ### 10. Create Git Tag
 

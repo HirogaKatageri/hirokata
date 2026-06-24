@@ -106,7 +106,19 @@ Add to the "Follow-up Tasks" section:
 
 Only declare fixes for critical and major issues.
 
-### 5. Mark Done
+### 5. Round 2 — Re-review and Escalation
+
+Your task title tells you the round. A task titled `Re-review …` is round 2 — the
+developers have applied fixes for round-1 findings.
+
+- On a re-review, re-check the previously-flagged issues plus anything the fixes
+  newly introduced.
+- If issues still remain after round 2, do NOT declare another round of fix tasks
+  (the loop is capped at 2 rounds). Instead write `ESCALATE` on its own line in
+  your Work Log, followed by a one-line reason. The orchestrator scans for
+  `ESCALATE` and asks the user how to proceed.
+
+### 6. Mark Done
 
 Update the task frontmatter `status` to `done`.
 
