@@ -1,10 +1,13 @@
 {
   "name": "research",
   "version": "1.0.0",
-  "description": "PhD-level multi-perspective research, inspired by Stanford's STORM method. The 'storm research' skill orchestrates five expert persona agents, maps their contradictions, synthesizes a cited briefing, and red-teams the result. Say 'storm research <topic>' to start.",
+  "description": "PhD-level multi-perspective research inspired by Stanford's STORM. The 'storm research' skill orchestrates five expert persona agents (practitioner, skeptic, economist, historian, academic), maps their contradictions, synthesizes a cited briefing, and red-teams the result. Say 'storm research <topic>' to start.",
   "author": {
     "name": "Gian Patrick Quintana",
     "email": "gian.quintana@hirokata.dev"
   },
-  "license": "MIT"
+  "homepage": "https://github.com/HirogaKatageri/hirokata/tree/main/plugins/research",
+  "repository": "https://github.com/HirogaKatageri/hirokata",
+  "license": "MIT",
+  "keywords": ["research", "storm", "multi-perspective", "agents", "synthesis", "peer-review", "deep-research"]
 }

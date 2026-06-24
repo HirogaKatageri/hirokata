@@ -65,6 +65,7 @@
         "name": "Gian Patrick Quintana",
         "email": "gian.quintana@hirokata.dev"
       },
+      "homepage": "https://github.com/HirogaKatageri/hirokata/tree/main/plugins/research",
       "license": "MIT",
       "keywords": ["research", "storm", "multi-perspective", "agents", "synthesis", "peer-review", "deep-research"]
     }
