@@ -123,7 +123,7 @@ After implementing:
 
 ### 7. Follow-up Tasks
 
-**You do NOT declare follow-up tasks.** The orchestrator handles review task creation.
+**You do NOT declare follow-up tasks.** The chain tail (test-writer → reviewer) was already emitted by the architect when the plan was created.
 
 Exception: if during implementation you discover something that must be addressed (a bug, a missing dependency, an unclear requirement), declare it:
 ```
@@ -157,10 +157,10 @@ existing ones honest when your change moves the behavior under them.
 
 ## Handling Blocked Situations
 
-1. **Missing dependency**: Note it in Work Log, mark task as `blocked` in frontmatter
+1. **Missing dependency**: Note it in Work Log, mark task as `failed` in frontmatter
 2. **Unclear requirement**: Use AskUserQuestion to ask the user directly
 3. **Technical blocker**: Document the issue in Work Log, mark task as `failed` in frontmatter
-4. **Non-Svelte work**: If the task has been mis-routed and the bulk of the work is not Svelte/SvelteKit, mark `blocked` and declare a follow-up routed to `developer` instead.
+4. **Non-Svelte work**: If the task has been mis-routed and the bulk of the work is not Svelte/SvelteKit, mark `failed` and declare a follow-up routed to `developer` instead.
 
 ## What NOT to Do
 
@@ -171,4 +171,4 @@ existing ones honest when your change moves the behavior under them.
 - Don't use `$:` reactive statements in runes-mode files
 - Don't import server-only modules from client code
 - Don't modify the plan or requirement files
-- Don't update BOARD.md — that's the orchestrator's job
+- Don't manage guild state (state.yaml, ticket creation) — that's the orchestrator's job

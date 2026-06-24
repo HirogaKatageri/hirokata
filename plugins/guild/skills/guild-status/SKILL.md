@@ -17,7 +17,7 @@ Display the current state of the guild board without starting a work session.
 
 ### 1. Check for Guild
 
-Read `.guild/BOARD.md`.
+Read `.guild/state.yaml`.
 
 If not found:
 ```
@@ -25,9 +25,14 @@ No guild board found. Run /guild:check-in to initialize and start your first wor
 ```
 Stop here.
 
-### 2. Parse Board
+### 2. Render the Board Live
 
-Read BOARD.md and extract all four sections: In Progress, Backlog, Done, Requirements.
+There is no `BOARD.md`. Build the view by scanning files (see `check-in/references/state-format.md`):
+- Glob `.guild/tasks/*.md`, read each frontmatter, and group by `status`: In Progress
+  (`in-progress`), Backlog (`todo`), Recently Completed (`done`, newest IDs first), plus any `failed`.
+- Glob `.guild/requirements/*.md` for the Requirements list; compute each REQ's progress as
+  `done-tickets / total-tickets` by counting its tasks.
+- Read `last-checkin` from `.guild/state.yaml`.
 
 ### 3. Display Status
 
@@ -66,6 +71,6 @@ The board is empty. Run /guild:check-in to start a work session.
 
 ## Rules
 
-- **Read-only** — do not modify BOARD.md or any guild files
+- **Read-only** — do not modify `state.yaml` or any guild files
 - **No work execution** — just display status and stop
 - **Keep it brief** — this is a quick glance, not a full check-in

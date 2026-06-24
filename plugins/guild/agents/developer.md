@@ -85,7 +85,7 @@ After implementing:
 
 ### 6. Follow-up Tasks
 
-**You do NOT declare follow-up tasks.** The orchestrator (check-in skill) handles review task creation automatically after all developer tasks for the same plan complete.
+**You do NOT declare follow-up tasks.** The chain tail (test-writer → reviewer) was already emitted by the architect when the plan was created.
 
 Exception: If during implementation you discover something that must be addressed (a bug, a missing dependency, an unclear requirement), you may declare it:
 ```
@@ -120,7 +120,7 @@ existing ones honest when your change moves the behavior under them.
 ## Handling Blocked Situations
 
 If you cannot complete the task:
-1. **Missing dependency**: Note it in Work Log, mark task as `blocked` in frontmatter
+1. **Missing dependency**: Note it in Work Log, mark task as `failed` in frontmatter
 2. **Unclear requirement**: Use AskUserQuestion to ask the user directly
 3. **Technical blocker**: Document the issue in Work Log, mark task as `failed` in frontmatter
 
@@ -131,4 +131,4 @@ If you cannot complete the task:
 - Don't refactor code outside your task's scope
 - Don't add unnecessary abstractions or utilities
 - Don't modify the plan or requirement files
-- Don't update BOARD.md — that's the orchestrator's job
+- Don't manage guild state (state.yaml, ticket creation) — that's the orchestrator's job

@@ -34,7 +34,7 @@ Parse from `$ARGUMENTS` or user input:
 
 ### 1. Check for Guild
 
-Read `.guild/BOARD.md`.
+Read `.guild/state.yaml`.
 
 If not found:
 ```
@@ -44,7 +44,7 @@ Stop here.
 
 ### 1.5. Offer to Clear the Board
 
-If the board has any existing requirements, tasks, or plans (check BOARD.md tables and the `.guild/requirements/`, `.guild/tasks/`, `.guild/plans/` directories), ask the user:
+If the board has any existing requirements, tasks, or plans (check the `.guild/requirements/`, `.guild/tasks/`, `.guild/plans/` directories), ask the user:
 
 ```
 The guild board currently has {N} requirements, {N} tasks, and {N} plans.
@@ -69,9 +69,9 @@ If `description` is not provided, ask the user:
 Briefly describe what you need. The product-owner will gather full details later.
 ```
 
-### 3. Read Board Counters
+### 3. Read State Counters
 
-Read BOARD.md frontmatter to get:
+Read `.guild/state.yaml` to get:
 - `next-req` → use as REQ ID
 - `next-task` → use as TASK ID
 
@@ -117,10 +117,9 @@ Write `.guild/tasks/TASK-NNN.md`:
 id: TASK-NNN
 title: "Gather requirements for {title}"
 agent: product-owner
-status: pending
+status: todo
 requirement: REQ-NNN
 plan: null
-depends-on: []
 priority: high
 created: {today's date}
 ---
@@ -150,23 +149,14 @@ Interview the user and gather comprehensive requirements for: {title}
 - Plan {title} implementation | agent: architect | priority: high
 ```
 
-### 6. Update BOARD.md
+### 6. Update state.yaml
 
-Using the Edit tool, make these updates:
+Using the Edit tool, increment counters in `.guild/state.yaml`:
+- `next-req` → increment by 1
+- `next-task` → increment by 1
 
-1. **Increment counters** in frontmatter:
-   - `next-req` → increment by 1
-   - `next-task` → increment by 1
-
-2. **Add task to Backlog** — append a row:
-   ```
-   | TASK-NNN | Gather requirements for {title} | product-owner | REQ-NNN | high | {today's date} |
-   ```
-
-3. **Add requirement to Requirements** — append a row:
-   ```
-   | REQ-NNN | {title} | draft | 0/1 done |
-   ```
+The new requirement and task are now discoverable by scanning their files — there is no board
+table to update.
 
 ### 7. Confirm
 
@@ -187,3 +177,5 @@ Run /guild:check-in to start working.
 - **Always increment counters** — prevent ID collisions
 - **Keep the stub minimal** — the product-owner will flesh it out
 - **Pre-populate Follow-up Tasks** — the standard chain starts with an architect task
+
+- **No board tables** — requirements and tasks are discovered by scanning their files; `state.yaml` holds only counters

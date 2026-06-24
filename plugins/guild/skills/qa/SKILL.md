@@ -34,7 +34,7 @@ load automatically; consult them if you need detail while seeding:
 
 ## Step 1: Check for Guild
 
-Read `.guild/BOARD.md`. If not found:
+Read `.guild/state.yaml`. If not found:
 
 ```
 No guild found. Run /guild:check-in to initialize first.
@@ -63,7 +63,8 @@ Parse from `$ARGUMENTS` / user input:
 
 QA tasks must anchor to a requirement. Reuse a single evergreen QA umbrella REQ
 across passes. Glob `.guild/requirements/` for one titled "Product QA & E2E
-Regression". If none exists, create it using the next `next-req` counter:
+Regression". If none exists, create it using the next `next-req` counter from
+`.guild/state.yaml`:
 
 ```markdown
 ---
@@ -91,21 +92,20 @@ specs when feature changes alter asserted behavior.
 Unit tests (owned by test-writer).
 ```
 
-Increment `next-req` and add the row to BOARD.md Requirements if newly created.
+Increment `next-req` in `.guild/state.yaml` if the requirement was newly created.
 
 ## Step 5: Seed the QA Strategist Task
 
-Read `next-task` from BOARD.md. Create `.guild/tasks/TASK-NNN.md`:
+Read `next-task` from `.guild/state.yaml`. Create `.guild/tasks/TASK-NNN.md`:
 
 ```markdown
 ---
 id: TASK-NNN
 title: "QA strategy: {scope}"
 agent: qa-strategist
-status: pending
+status: todo
 requirement: REQ-NNN
 plan: null
-depends-on: []
 priority: high
 created: {today}
 ---
@@ -133,7 +133,7 @@ coverage matrix, then declare qa-tester missions.
 ## Follow-up Tasks
 ```
 
-Increment `next-task` and add the task to BOARD.md Backlog.
+Increment `next-task` in `.guild/state.yaml`. The task is now discoverable by scanning `.guild/tasks/`.
 
 ## Step 6: Confirm and Offer to Run
 

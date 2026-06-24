@@ -16,7 +16,7 @@ Wipe all tasks, requirements, and plans from the guild board and reset it to a c
 
 ### 1. Check for Guild
 
-Read `.guild/BOARD.md`.
+Read `.guild/state.yaml`.
 
 If not found:
 ```
@@ -27,11 +27,11 @@ Stop here.
 
 ### 2. Inventory the Board
 
-Count items in each category:
-- Requirements: count rows in the Requirements table in BOARD.md
-- Tasks in progress: count rows in the In Progress table
-- Tasks in backlog: count rows in the Backlog table
-- Completed tasks: count rows in the Done table
+Count items by scanning the directories:
+- Requirements: count files in `.guild/requirements/`
+- Tasks in progress: count `.guild/tasks/*.md` with `status: in-progress`
+- Tasks in backlog: count `.guild/tasks/*.md` with `status: todo`
+- Completed tasks: count `.guild/tasks/*.md` with `status: done`
 - Plan files: count files in `.guild/plans/`
 
 ### 3. Confirm with User
@@ -81,35 +81,18 @@ rm -rf .guild/requirements/* .guild/tasks/* .guild/plans/*
 
 The `-r` flag removes plan slice subdirectories (e.g. `.guild/plans/PLAN-001/`). `.guild/docs/`, `.guild/qa/`, and `.guild/archive/` are not in the glob, so they remain untouched.
 
-### 5. Reset BOARD.md
+If a legacy `.guild/BOARD.md` exists, delete it too (`rm -f .guild/BOARD.md`) — the new format has no board file.
 
-Overwrite BOARD.md with a clean slate, preserving today's date as `last-checkin`:
+### 5. Reset state.yaml
 
-```markdown
----
+Overwrite `.guild/state.yaml` with a clean slate, preserving today's date as `last-checkin`:
+
+```yaml
+current: null
 next-task: 1
 next-req: 1
 next-plan: 1
 last-checkin: {today's date}
----
-
-# Guild Board
-
-## In Progress
-| Task | Title | Agent | Req | Since |
-|------|-------|-------|-----|-------|
-
-## Backlog
-| Task | Title | Agent | Req | Priority | Created |
-|------|-------|-------|-----|----------|---------|
-
-## Done
-| Task | Title | Agent | Req | Completed |
-|------|-------|-------|-----|-----------|
-
-## Requirements
-| Req | Title | Status | Progress |
-|-----|-------|--------|----------|
 ```
 
 ### 6. Confirm
@@ -130,5 +113,6 @@ Run /guild:new-requirement to add work, or /guild:check-in to start a session.
 - **Never clear `.guild/docs/`** — the knowledge base is evergreen and preserved across resets
 - **Never clear `.guild/qa/`** — the QA discipline's artifacts are evergreen and preserved across resets
 - **Never clear `.guild/archive/`** — prior releases stay archived
-- **Reset all counters to 1** — prevent ID confusion on the fresh board
-- **Update last-checkin** — so the board reflects when it was last touched
+- **Reset all counters to 1** in `state.yaml` — prevent ID confusion on the fresh board
+- **Delete any legacy BOARD.md** — the new format stores state in `state.yaml` + ticket files
+- **Update last-checkin** — so the state reflects when it was last touched
