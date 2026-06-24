@@ -22,7 +22,8 @@ Read the reference documents before proceeding:
 
 **Core model:** there is **no `BOARD.md`**. Status lives in each `TASK-NNN.md`. `.guild/state.yaml`
 holds only the cursor (`current`) and ID counters. The board is rendered live by scanning ticket and
-requirement files. Development is **sequential**; the only parallelism is the 4-reviewer fan-out.
+requirement files. Development is **sequential by default**, with two parallel cases: a
+`parallel-group` developer batch (architect-verified disjoint files) and the 4-reviewer fan-out.
 
 ## Step 1: Initialize or Load Guild
 
@@ -150,14 +151,21 @@ Compute the next actionable ticket by scanning `.guild/tasks/*.md` (see `state-f
    requirement is `done`. If not, skip it and take the next `todo`.
 4. **Nothing actionable**: set `current: null` in `state.yaml`, report "All caught up!", go to **Step 5**.
 
-Write the chosen ticket's ID to `state.yaml.current`.
+5. **Parallel batch**: if the chosen ticket is a `developer`/`developer-svelte` ticket **with** a
+   `parallel-group`, expand it into a **batch** — every `todo` (and any resuming `in-progress`)
+   `developer`/`developer-svelte` ticket that shares the same `parallel-group` value *and*
+   `requirement`. Tickets without a `parallel-group`, and all non-developer tickets, are batches of
+   one. The batch is what gets dispatched in 4.2.
 
-### 4.2 Dispatch the Ticket
+Write the chosen ticket's ID (the lowest in the batch) to `state.yaml.current`.
 
-1. Set the ticket's `status` to `in-progress` (Edit the ticket frontmatter).
-2. Read the full ticket file.
-3. Determine the agent from the `agent` field.
-4. Spawn the agent using the **Agent tool**:
+### 4.2 Dispatch the Batch
+
+1. Set every ticket in the batch to `status: in-progress` (Edit each ticket's frontmatter).
+2. Read each full ticket file.
+3. Determine the agent from each ticket's `agent` field.
+4. Spawn the agent(s) using the **Agent tool**. For a batch of one, a single Agent call; for a
+   parallel-group batch, **one Agent call per ticket in the same message** so they run concurrently:
 
    ```
    Agent(
@@ -177,9 +185,15 @@ Write the chosen ticket's ID to `state.yaml.current`.
    )
    ```
 
-**Development is sequential.** Dispatch one developer ticket at a time — never batch developers.
+**Development is sequential by default — `parallel-group` is the one escape hatch.** Dispatch one
+developer ticket at a time unless the ticket carries a `parallel-group`: then dispatch the whole
+group (computed in 4.1) concurrently in one message. The architect guarantees grouped tickets touch
+disjoint files, so they share the working tree without a worktree or merge step. Never group tickets
+yourself — only honor the architect's `parallel-group` labels. If two tickets in a dispatched group
+turn out to write the same file (the architect mis-scoped), treat it as a failure: finish the batch,
+then surface the collision to the user in 4.3.
 
-**Review fan-out (the one parallel case).** When the ticket's `agent` is `reviewer`, do NOT spawn a
+**Review fan-out (the other parallel case).** When the ticket's `agent` is `reviewer`, do NOT spawn a
 single reviewer. Spawn all 4 specialized reviewers in parallel (multiple Agent calls in one message),
 all reading the same ticket file:
 
@@ -198,11 +212,18 @@ dev server + Playwright; concurrent testers collide on ports). Never batch them.
 
 After the agent(s) return:
 
-1. **Read the updated ticket file** — check status, Work Log, Follow-up Tasks.
-2. **Handle status**:
-   - `done` → process follow-ups (4.4)
+1. **Read every updated ticket file in the batch** — check status, Work Log, Follow-up Tasks for each.
+2. **Handle status** per ticket:
+   - `done` → process its follow-ups (4.4)
    - `failed` → inform the user, ask whether to retry (reset to `todo`) or skip
-3. The ticket already owns its status — there is no board row to move.
+3. The tickets already own their status — there is no board row to move.
+4. **Parallel-batch checks** (only when the batch had more than one ticket):
+   - Do not advance the cursor past the group until **every** member is `done`. A `failed` member
+     leaves the group incomplete — handle it before moving on, as the tail (test-writer/reviewer)
+     gates on all dev work being `done`.
+   - Scan the batch's Work Logs for any file written by more than one ticket. If found, the architect
+     mis-scoped the disjoint-file assertion — surface it: "Parallel tickets TASK-X and TASK-Y both
+     modified {file}; their changes may have collided. Re-run sequentially?" and let the user decide.
 
 ### 4.4 Materialize Follow-up Tasks
 
@@ -276,7 +297,7 @@ Requirement progress is always computed live (done tickets / total tickets) — 
 
 ### 4.7 Continue or Pause
 
-Present to the user:
+Present to the user (when a parallel-group batch completed, list every ticket in it):
 ```
 TASK-NNN complete: {title}
   {brief summary from Work Log}
@@ -348,8 +369,11 @@ When the work cycle ends (user stops, or nothing actionable):
 
 1. **Status lives in tickets** — `state.yaml` holds only the cursor and counters; never store status twice.
 2. **No `BOARD.md`** — render the board live by scanning ticket/requirement files.
-3. **Sequential development** — one developer ticket at a time, in ID order. No batching.
-4. **Review = 4 parallel reviewers** — the only parallelism; gated on the per-REQ N/N rule.
+3. **Sequential development by default** — one developer ticket at a time, in ID order. The sole
+   exception is a `parallel-group`: dispatch all dev tickets sharing a group concurrently (the
+   architect has verified they touch disjoint files). Never group tickets yourself.
+4. **Two parallel cases** — a `parallel-group` dev batch (disjoint files, shared tree) and the
+   4-reviewer fan-out (read-only, gated on the per-REQ N/N rule). Everything else is sequential.
 5. **Always read ticket files after agent completion** — don't assume what happened.
 6. **The orchestrator creates tickets only for the fix-loop tail** — everything else is agent-declared.
 7. **Max 2 review rounds** — count reviewer tickets per REQ; on round-2 issues or `ESCALATE`, ask the user.

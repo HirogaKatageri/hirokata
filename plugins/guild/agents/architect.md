@@ -80,7 +80,12 @@ Based on the requirement and codebase analysis:
 2. **Determine task boundaries**: Each developer task should be independently implementable
 3. **Order by dependency**: Foundation first, then features that depend on it
 4. **Assess complexity**: Rate each task (1=simple, 2=moderate, 3=complex)
-5. **Identify risks**: What could go wrong? What assumptions are we making?
+5. **Identify parallelizable tasks**: Find sets of developer tasks that (a) touch **disjoint** files
+   — no file appears in two slices' "Files to Touch" — and (b) have no ordering dependency between
+   them (neither consumes a file the other creates). Such tasks can safely run concurrently in the
+   shared working tree. You will mark each such set with a shared `parallel-group` label in Step 6.
+   Tasks that share a file, or where one builds on another's output, MUST stay ungrouped (sequential).
+6. **Identify risks**: What could go wrong? What assumptions are we making?
 
 ### 5. Write the Plan
 
@@ -159,6 +164,7 @@ complexity: {1|2|3}
 
 **Rules:**
 - One overview file. One slice per developer task.
+- **"Files to Touch" must be accurate and complete** — it is the basis for parallel-group disjointness. If a slice ends up touching a file you didn't list, two grouped developers could collide. List every file the task will create or modify; if you cannot bound the file set confidently, leave that task ungrouped.
 - Slices are self-contained — a developer should not need to read the overview or sibling slices to start work. The Interface Contract section is what makes this possible.
 - Slug the slice filename from the task title (lowercase, hyphenated, no punctuation).
 - Base everything on actual codebase analysis, not assumptions.
@@ -179,17 +185,27 @@ After writing the plan:
 2. **Declare follow-ups** in the "Follow-up Tasks" section. Transcribe each implementation task from your plan (with its slice path), then emit the chain tail — one `test-writer` ticket and one `reviewer` ticket — after the developer tickets:
    ```
    - Implement {component-1} | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-1}.md
-   - Implement {component-2} | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-2}.md
-   - Implement {component-3} | agent: developer | priority: medium | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-3}.md
+   - Implement {component-2} | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-2}.md | parallel-group: A
+   - Implement {component-3} | agent: developer | priority: medium | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-3}.md | parallel-group: A
    - Write unit tests for {feature} | agent: test-writer | priority: high
    - Review {feature} implementation | agent: reviewer | priority: high
    ```
 
    **You emit the tail.** List the developer tickets first (lower IDs → they run first), then the
-   `test-writer` ticket, then the `reviewer` ticket. Because development is sequential and the cursor
-   runs in ID order, the test-writer is reached only after every developer ticket is `done`, and the
-   reviewer only after the test-writer — so reviewers never run before tests exist. The orchestrator
-   does NOT auto-create these in the initial chain; if you omit them, the chain has no tail.
+   `test-writer` ticket, then the `reviewer` ticket. Because development is sequential by default and
+   the cursor runs in ID order, the test-writer is reached only after every developer ticket is
+   `done`, and the reviewer only after the test-writer — so reviewers never run before tests exist.
+   The orchestrator does NOT auto-create these in the initial chain; if you omit them, the chain has
+   no tail.
+
+   **Mark parallelizable dev tickets with `parallel-group`.** For each set of developer tickets you
+   identified in Step 4.5 as touching disjoint files with no ordering dependency, add the same
+   `parallel-group: {label}` modifier (e.g. `A`, then `B` for a second independent set). The
+   orchestrator dispatches a group concurrently in the shared working tree. Only add a group when you
+   are confident the "Files to Touch" sets do not overlap — when in doubt, leave the tickets ungrouped
+   and they run sequentially (the safe default). Never put a `parallel-group` on the `test-writer` or
+   `reviewer` tail. In the example above, components 2 and 3 are independent (`group: A`) while
+   component 1 is foundational and runs solo first.
 
    **Choosing the developer agent.** For each implementation task, route to the right specialist:
 
