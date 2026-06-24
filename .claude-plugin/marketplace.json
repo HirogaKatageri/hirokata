@@ -1,6 +1,6 @@
 {
   "name": "hirokata",
-  "version": "2.8.2",
+  "version": "3.0.0",
   "owner": {
     "name": "Gian Patrick Quintana",
     "email": "gian.quintana@hirokata.dev"
@@ -47,8 +47,8 @@
     {
       "name": "guild",
       "source": "./plugins/guild",
-      "version": "1.8.2",
-      "description": "Continuous agent orchestration system. Manages requirements, planning, development, and review through a persistent guild board and automated agent chains, with a Svelte/SvelteKit specialist developer agent and an independent QA discipline. Say 'check in' to start a work session.",
+      "version": "2.0.0",
+      "description": "Continuous agent orchestration system. Manages requirements, planning, development, and review through a simple ticket queue and automated agent chains, with a Svelte/SvelteKit specialist developer agent and an independent QA discipline. Say 'check in' to start a work session.",
       "author": {
         "name": "Gian Patrick Quintana",
         "email": "gian.quintana@hirokata.dev"

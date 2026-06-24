@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Guild Plugin v2.0.0 — Board simplification (BREAKING)**
+  - Removed `.guild/BOARD.md` entirely. Task status now lives solely in each `TASK-NNN.md` (`todo` → `in-progress` → `done` / `failed`); a new `.guild/state.yaml` holds only the cursor (`current`) and ID counters. The board is rendered as a live view by scanning ticket and requirement files — eliminating the dual-store reconciliation the orchestrator did every cycle.
+  - Replaced the three-way sequencing logic (follow-up declarations + ID-arithmetic auto-triggers + magic `depends-on` tokens) with a single cursor that walks tickets in ID order. Removed the `depends-on` field, the `all-developer`/`TASK-RESEARCH` tokens, the `blocked` status, and parallel-developer batching.
+  - **Development is now sequential** (one developer ticket at a time). Review remains per-requirement and gated on all implementation tickets being done, then fans out to the 4 reviewers in parallel — the only parallelism left.
+  - The architect now emits the test-writer + reviewer **chain tail** as real tickets up front (product-owner emits it in the bug-fix flow); the orchestrator only creates tickets for the fix-loop tail. Fix loop is capped at 2 review rounds by counting reviewer tickets per requirement.
+  - Renamed reference `board-format.md` → `state-format.md`. Updated `check-in`, `new-requirement`, `clear-board`, `guild-status`, and `release` skills plus the architect, product-owner, developer, and developer-svelte agents accordingly.
+  - **Migration:** no automatic path — clearing the board (`/guild:clear-board`) is the upgrade. Returning check-ins on a pre-2.0 guild are offered an in-place convert or clear.
+  - Marketplace bumped to v3.0.0 to mirror the guild major.
+
 ### Planned
 - Test Plugin: Automated test generation and execution
 - Review Plugin: Code review assistance and suggestions
