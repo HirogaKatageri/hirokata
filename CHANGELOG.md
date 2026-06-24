@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Research Plugin v1.0.0** — PhD-level multi-perspective research inspired by Stanford's STORM method
+  - `research:storm-research` — orchestrates the full four-phase pipeline: parallel five-persona fan-out, contradiction mapping, synthesis into a cited briefing, and an adversarial peer review with an optional revision loop; each phase delegated to a dedicated sub-agent to keep the main context lean
+  - `research:multi-perspective-scan` — STORM Phase 1 standalone; fans out the five persona agents in parallel for a fast multi-angle read
+  - `research:contradiction-map` — STORM Phase 2 standalone; maps disagreements (with verdicts), the reliable core of agreement, and blind spots across a workspace, documents, or pasted viewpoints
+  - `research:research-peer-review` — STORM Phase 4 standalone; audits any research artifact for hallucinations, bias, completeness, fair contradiction handling, and actionability, then assigns a reliability grade
+  - Five persona agents (`practitioner`, `skeptic`, `economist`, `historian`, `academic`), each with an owned worldview and owned bias, gathering cited web evidence; plus `contradiction-mapper`, `synthesizer` (Opus), and `peer-reviewer` (Opus) analytical agents
+  - Runs write to a reusable, gitignored `.storm/{topic-slug}/` workspace
+
 ### Changed
 - **Guild Plugin v2.0.0 — Board simplification (BREAKING)**
   - Removed `.guild/BOARD.md` entirely. Task status now lives solely in each `TASK-NNN.md` (`todo` → `in-progress` → `done` / `failed`); a new `.guild/state.yaml` holds only the cursor (`current`) and ID counters. The board is rendered as a live view by scanning ticket and requirement files — eliminating the dual-store reconciliation the orchestrator did every cycle.
@@ -15,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The architect now emits the test-writer + reviewer **chain tail** as real tickets up front (product-owner emits it in the bug-fix flow); the orchestrator only creates tickets for the fix-loop tail. Fix loop is capped at 2 review rounds by counting reviewer tickets per requirement.
   - Renamed reference `board-format.md` → `state-format.md`. Updated `check-in`, `new-requirement`, `clear-board`, `guild-status`, and `release` skills plus the architect, product-owner, developer, and developer-svelte agents accordingly.
   - **Migration:** no automatic path — clearing the board (`/guild:clear-board`) is the upgrade. Returning check-ins on a pre-2.0 guild are offered an in-place convert or clear.
-  - Marketplace bumped to v3.0.0 to mirror the guild major.
+  - Marketplace bumped to v3.1.0 — the v3 major mirrors this Guild breaking change; the v3.1 minor adds the new Research Plugin.
 
 ### Planned
 - Test Plugin: Automated test generation and execution

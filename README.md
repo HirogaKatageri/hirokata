@@ -302,6 +302,45 @@ Automatically logs and summarizes Claude Code work sessions using Claude Haiku s
 
 ---
 
+### Research Plugin (v1.0.0)
+
+PhD-level, multi-perspective research inspired by Stanford's **STORM** method. Instead of the majority view a single prompt returns, it analyzes a topic from five independent expert lenses, maps where they disagree, synthesizes a cited briefing, and red-teams its own output — each phase delegated to a dedicated sub-agent so the heavy reading stays off your main context window.
+
+**How it works:**
+
+1. Say `storm research <topic>` to run the full pipeline
+2. Phase 1 fans out five persona agents in parallel (practitioner, skeptic, economist, historian, academic)
+3. Phase 2 maps their contradictions, agreements, and blind spots
+4. Phase 3 synthesizes a cited research briefing with reliability ratings
+5. Phase 4 peer-reviews the briefing and assigns a reliability grade
+6. All artifacts land in a reusable `.storm/{topic-slug}/` workspace (gitignored)
+
+**Skills:**
+
+| Skill | What it does | Trigger Phrases |
+|-------|-------------|----------------|
+| `research:storm-research` | Runs the full four-phase STORM pipeline end-to-end | "storm research <topic>", "run STORM on <topic>", "deep research <topic>", "research <topic> from every angle" |
+| `research:multi-perspective-scan` | STORM Phase 1 standalone — fast five-lens read of a topic | "5 perspectives on <topic>", "multi-perspective scan", "analyze <topic> from multiple angles" |
+| `research:contradiction-map` | STORM Phase 2 standalone — maps disagreements, agreements, and blind spots | "contradiction map", "where do these disagree", "map the conflicts" |
+| `research:research-peer-review` | STORM Phase 4 standalone — audits any research artifact, assigns a reliability grade | "peer review this", "red team this report", "audit my research" |
+
+**Agents:**
+
+| Agent | Role |
+|-------|------|
+| `research:practitioner` | The theory–practice gap; what actually works in the field |
+| `research:skeptic` | Overclaims, hidden flaws, the buried failure cases |
+| `research:economist` | Who profits, who pays, the misaligned incentives |
+| `research:historian` | The pattern that repeated before; where we are in the cycle |
+| `research:academic` | What the evidence actually shows, including conflicting findings |
+| `research:contradiction-mapper` | Maps contradictions (with verdicts), the reliable core, and blind spots |
+| `research:synthesizer` | Weaves all lenses into one cited briefing with reliability ratings |
+| `research:peer-reviewer` | Adversarial audit: hallucination, bias, completeness, fairness, actionability |
+
+[View Research Plugin Documentation](plugins/research/README.md)
+
+---
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.
