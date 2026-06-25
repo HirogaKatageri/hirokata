@@ -9,9 +9,9 @@ The **guild** plugin manages an ongoing development workflow through a queue of 
 ### Key Features
 
 - **Single source of truth**: status is the directory a ticket lives in; `state.yaml` holds only `last-checkin`. IDs and the cursor are derived from the filesystem — no counters, no duplicated board state to reconcile.
-- **Cursor-driven sequencing**: tickets run in creation (ID) order. Development is **sequential** — one developer ticket at a time.
+- **Cursor-driven sequencing**: tickets run in creation (ID) order. Development is **sequential by default** — one developer ticket at a time — except when the architect tags dev tickets with a shared `parallel-group` (verified disjoint files), which the orchestrator dispatches concurrently.
 - **Automatic Agent Chains**: a new requirement flows through product-owner → architect → developers → test-writer → 4 parallel reviewers. The architect emits the test + review tail as real tickets up front.
-- **Per-requirement review gate**: reviewers run once all of a requirement's implementation tickets are done, and fan out 4-wide in parallel — the only parallelism in the system.
+- **Per-requirement review gate**: reviewers run once all of a requirement's implementation tickets are done, and fan out 4-wide in parallel. Together with `parallel-group` dev batches, these are the system's two parallel cases.
 - **Session-Based Workflow**: each check-in resumes exactly where the last session ended.
 - **Stale Task Recovery**: tickets interrupted mid-session are detected and handled on the next check-in.
 
@@ -22,7 +22,8 @@ User provides input
   └→ product-owner: gathers details, writes REQ document
       └→ architect: reads REQ, explores codebase, writes PLAN,
          declares dev tickets + the test-writer + reviewer tail
-          └→ developer ×N: implement code per plan, ONE AT A TIME (sequential)
+          └→ developer ×N: implement code per plan (sequential, or
+             parallel-group batches when slices touch disjoint files)
               └→ test-writer: writes and runs unit tests
                   └→ 4 reviewers in parallel:
                       ├── reviewer-security

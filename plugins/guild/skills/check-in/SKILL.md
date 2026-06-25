@@ -23,7 +23,8 @@ Read the reference documents before proceeding:
 **Core model:** there is **no `BOARD.md`** and **no `status` frontmatter field**. A ticket's status
 is the **subdirectory it lives in** (`tasks/{todo,in-progress,done,failed}/`). `.guild/state.yaml`
 holds only `last-checkin`. IDs and the cursor are **derived from the filesystem**. The board is
-rendered live. Development is **sequential**; the only parallelism is the 4-reviewer fan-out.
+rendered live. Development is **sequential by default**, with two parallel cases: a `parallel-group`
+developer batch (architect-verified disjoint files) and the 4-reviewer fan-out.
 
 ## The guild CLI — use it for every deterministic operation
 
@@ -38,8 +39,9 @@ GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
 | Create the layout | `"$GUILD" init {today}` |
 | Detect / convert a legacy guild | `"$GUILD" is-legacy` · `"$GUILD" migrate` |
 | Next actionable ticket | `"$GUILD" next` → `TASK-NNN <path>` or `none` |
+| Expand a parallel-group dev batch | `"$GUILD" batch TASK-NNN` → the TASK IDs to dispatch together |
 | Dispatch / complete / fail / retry | `"$GUILD" move TASK-NNN in-progress\|done\|failed\|todo` |
-| Create a follow-up task | `"$GUILD" new task --title "…" --agent A --req REQ-NNN [--plan PLAN-NNN] [--plan-slice slug]` |
+| Create a follow-up task | `"$GUILD" new task --title "…" --agent A --req REQ-NNN [--plan PLAN-NNN] [--plan-slice slug] [--parallel-group L]` |
 | Resolve a ticket / plan slice | `"$GUILD" path ID` · `"$GUILD" read ID` · `"$GUILD" slice PLAN-NNN slug` |
 | Mark a requirement done | `"$GUILD" move REQ-NNN done` |
 | Render the board | `"$GUILD" board` |
@@ -145,15 +147,20 @@ Run `"$GUILD" next`. It returns `TASK-NNN <path>` for the next actionable ticket
 
 If it prints `none`: report "All caught up!" and go to **Step 4**.
 
-### 3.2 Dispatch the Ticket
+### 3.2 Dispatch the Ticket (or parallel-group batch)
 
-1. Move it to in-progress: `"$GUILD" move TASK-NNN in-progress`. If the ticket's requirement is still
-   in `requirements/todo/` (`"$GUILD" status REQ-NNN` → `todo`), advance it too:
-   `"$GUILD" move REQ-NNN in-progress`.
-2. Read the full ticket: `"$GUILD" read TASK-NNN`.
-3. Determine the agent from the `agent` field. Resolve linked paths to pass to the agent:
-   `"$GUILD" path REQ-NNN`, and if the ticket has a `plan-slice`, `"$GUILD" slice PLAN-NNN {slug}`.
-4. Spawn the agent using the **Agent tool**:
+1. **Expand to a batch**: run `"$GUILD" batch TASK-NNN`. For an ordinary ticket this returns just
+   `TASK-NNN` (a batch of one); for a `developer`/`developer-svelte` ticket carrying a
+   `parallel-group`, it returns every `todo`/`in-progress` dev ticket sharing that group and
+   requirement — the batch dispatched together.
+2. Move every ticket in the batch to in-progress: `"$GUILD" move TASK-NNN in-progress` (one per
+   member). If the requirement is still in `requirements/todo/` (`"$GUILD" status REQ-NNN` → `todo`),
+   advance it too: `"$GUILD" move REQ-NNN in-progress`.
+3. Read each ticket (`"$GUILD" read TASK-NNN`). Determine each agent from its `agent` field, and
+   resolve linked paths to pass along: `"$GUILD" path REQ-NNN`, and for any `plan-slice`,
+   `"$GUILD" slice PLAN-NNN {slug}`.
+4. Spawn with the **Agent tool** — a single call for a solo ticket; for a parallel-group batch, **one
+   Agent call per ticket in the same message** so they run concurrently:
 
    ```
    Agent(
@@ -174,9 +181,15 @@ If it prints `none`: report "All caught up!" and go to **Step 4**.
    )
    ```
 
-**Development is sequential.** Dispatch one developer ticket at a time — never batch developers.
+**Development is sequential by default — `parallel-group` is the one escape hatch.** Dispatch one
+developer ticket at a time unless the ticket carries a `parallel-group`: then dispatch the whole
+group (computed in 3.2 via `"$GUILD" batch`) concurrently in one message. The architect guarantees
+grouped tickets touch disjoint files, so they share the working tree without a worktree or merge step.
+Never group tickets yourself — only honor the architect's `parallel-group` labels. If two tickets in a
+dispatched group turn out to write the same file (the architect mis-scoped), treat it as a failure:
+finish the batch, then surface the collision to the user in 3.3.
 
-**Review fan-out (the one parallel case).** When the ticket's `agent` is `reviewer`, do NOT spawn a
+**Review fan-out (the other parallel case).** When the ticket's `agent` is `reviewer`, do NOT spawn a
 single reviewer. Spawn all 4 specialized reviewers in parallel (multiple Agent calls in one message),
 all reading the same ticket:
 
@@ -195,12 +208,22 @@ dev server + Playwright; concurrent testers collide on ports). Never batch them.
 
 After the agent(s) return:
 
+For **each** ticket in the dispatched batch:
+
 1. **Read the updated ticket** (`"$GUILD" read TASK-NNN`) — check the Work Log and Follow-up Tasks,
    and note whether the agent reported success or failure.
 2. **Move the ticket** to its terminal status — **the orchestrator is the only writer of status**:
    - Reported done → `"$GUILD" move TASK-NNN done`, then process follow-ups (3.4)
    - Reported failed → `"$GUILD" move TASK-NNN failed`, then ask the user (AskUserQuestion) whether
      to **retry** (`"$GUILD" move TASK-NNN todo`) or **skip** (leave in `failed/`).
+
+**Parallel-batch checks** (only when the batch had more than one ticket):
+- Do not move on until **every** member has reached `done` (or been resolved). A `failed` member
+  leaves the group incomplete — handle it first, since the tail (test-writer/reviewer) gates on all
+  dev work being `done`.
+- Scan the batch's Work Logs for any file written by more than one ticket. If found, the architect
+  mis-scoped the disjoint-file assertion — surface it: "Parallel tickets TASK-X and TASK-Y both
+  modified {file}; their changes may have collided. Re-run sequentially?" and let the user decide.
 
 ### 3.4 Materialize Follow-up Tasks
 
@@ -254,7 +277,7 @@ stored.
 
 ### 3.7 Continue or Pause
 
-Present to the user:
+Present to the user (when a parallel-group batch completed, list every ticket in it):
 ```
 TASK-NNN complete: {title}
   {brief summary from Work Log}
@@ -328,10 +351,14 @@ When the work cycle ends (user stops, or nothing actionable):
 2. **The orchestrator owns all status transitions** — agents report done/failed and never move files.
 3. **No `BOARD.md`, no counters, no cursor field** — render the board live (`"$GUILD" board`); IDs and
    the cursor are derived by the CLI.
-4. **Use the CLI for every deterministic op** — `next`, `move`, `new task`, `path`, `read`, `slice`,
-   `board`, `list`. No hand-rolled `find`/`mv`/ID math.
-5. **Sequential development** — one developer ticket at a time, in ID order. No batching.
-6. **Review = 4 parallel reviewers** — the only parallelism; gated by `"$GUILD" next`'s review gate.
+4. **Use the CLI for every deterministic op** — `next`, `batch`, `move`, `new task`, `path`, `read`,
+   `slice`, `board`, `list`. No hand-rolled `find`/`mv`/ID math.
+5. **Sequential development by default** — one developer ticket at a time, in ID order. The sole
+   exception is a `parallel-group`: expand it with `"$GUILD" batch` and dispatch all dev tickets
+   sharing the group concurrently (the architect verified they touch disjoint files). Never group
+   tickets yourself.
+6. **Two parallel cases** — a `parallel-group` dev batch (disjoint files, shared tree) and the
+   4-reviewer fan-out (read-only, gated by `"$GUILD" next`'s review gate). Everything else is sequential.
 7. **Always read ticket files after agent completion** — don't assume what happened.
 8. **The orchestrator creates tickets only for the fix-loop tail** — everything else is agent-declared.
 9. **Max 2 review rounds** — count `reviewer` tickets per REQ; on round-2 issues or `ESCALATE`, ask.

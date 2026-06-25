@@ -58,7 +58,8 @@ the current path with `guild path <ID>` / `guild read <ID>` (locations move as s
 | `agent` | string | yes | Assigned agent (see enum below). The orchestrator spawns `guild:{agent}`. |
 | `requirement` | string | yes | Linked requirement ID (e.g., `REQ-001`) |
 | `plan` | string | no | Linked plan ID (e.g., `PLAN-001`), `null` if none |
-| `plan-slice` | string | no | Slice slug or path for a per-task plan slice. Resolve with `guild slice PLAN-NNN <slug>`. When present, the developer reads this instead of the full plan. |
+| `plan-slice` | string | no | Slice **slug** for a per-task plan slice (e.g. `signup`). Resolve the current file with `guild slice PLAN-NNN <slug>`. When present, the developer reads this instead of the full plan. |
+| `parallel-group` | string | no | A label (e.g., `A`, `B`) shared by `developer`/`developer-svelte` tickets the architect has verified touch **non-overlapping** files. Tickets with the same group run concurrently; a ticket with no group runs solo. Scoped per plan. |
 | `created` | string | yes | Creation date (YYYY-MM-DD) |
 
 > There is **no `status` field** — status is the containing directory. There is **no `depends-on`
@@ -71,6 +72,11 @@ the current path with `guild path <ID>` / `guild read <ID>` (locations move as s
 real agent — when dispatched it spawns the 4 specialized reviewers (`reviewer-security`,
 `reviewer-architecture`, `reviewer-business-logic`, `reviewer-edge-case`) in parallel on the same
 ticket.
+
+> **`parallel-group` is not a dependency graph either.** It is a pure safety assertion by the
+> architect: "these dev tickets touch disjoint files and share no ordering, so the shared working
+> tree won't be corrupted if they run at once." It only ever groups `developer`/`developer-svelte`
+> tickets, never tail tickets (`test-writer`, `reviewer`). Ungrouped dev tickets stay sequential.
 
 ## Status Values & Transitions
 
@@ -123,15 +129,38 @@ format:
 - {title} | agent: {agent-name} | priority: {high|medium|low}
 ```
 
-Optional modifier:
+Optional modifiers (combine freely, pipe-separated):
 ```
-- {title} | agent: developer | priority: {priority} | plan-slice: {slice-slug}
+- {title} | agent: developer | priority: {priority} | plan-slice: {slice-slug} | parallel-group: A
 ```
 
-The `plan-slice` modifier is emitted by the architect for each developer task. The orchestrator
-passes it to `guild new task --plan-slice {slug}`, which records it in the new task's frontmatter.
-`priority` is advisory metadata only — it does **not** affect ordering (the cursor runs in ID
-order). There are no `depends-on` modifiers and no magic tokens.
+The `plan-slice` modifier is emitted by the architect for each developer task as a slice **slug**;
+the orchestrator passes it to `guild new task --plan-slice {slug}`, which records it in the new
+task's frontmatter. The `parallel-group` modifier is also emitted by the architect, only on
+`developer`/`developer-svelte` tickets it has verified touch disjoint files; the orchestrator passes
+it to `guild new task --parallel-group {label}` and uses it to batch the dispatch (see "Parallel
+developer batching" below). `priority` is advisory metadata only — it does **not** affect ordering
+(the cursor runs in ID order). There are no `depends-on` modifiers and no magic tokens.
+
+### Parallel developer batching
+
+Development is sequential **by default** — one ticket at a time, in ID order. The single escape
+hatch is `parallel-group`: when the architect marks two or more `developer`/`developer-svelte`
+tickets with the **same** group label, it has asserted their "Files to Touch" sets are disjoint and
+neither depends on the other's output. The orchestrator expands the batch deterministically with
+`guild batch TASK-NNN` (which lists every `todo`/`in-progress` task sharing that ticket's
+`parallel-group` and `requirement`), then dispatches the whole group concurrently in one message
+(multiple Agent calls in the shared working tree — no worktrees, no merge step, because the file
+sets don't overlap).
+
+Rules:
+- Only `developer`/`developer-svelte` tickets carry a group. Tail tickets (`test-writer`,
+  `reviewer`) and all other agents never do.
+- A group is scoped to one plan. Reuse simple labels (`A`, `B`, …) per plan.
+- A ticket with **no** `parallel-group` runs solo, exactly as before.
+- The batch is dispatched together and the cursor only advances past it once **every** member is
+  `done` — so the test-writer/reviewer tail still waits for all dev work, just as in the sequential
+  case.
 
 ### The chain tail (test → review)
 
@@ -160,11 +189,15 @@ The tail is a `test-writer` ticket followed by a `reviewer` ticket. Who emits it
 ## Follow-up Tasks
 
 - Implement user model and migration | agent: developer | priority: high | plan-slice: user-model
-- Implement signup endpoint | agent: developer | priority: high | plan-slice: signup
-- Implement login endpoint | agent: developer | priority: medium | plan-slice: login
+- Implement signup endpoint | agent: developer | priority: high | plan-slice: signup | parallel-group: A
+- Implement login endpoint | agent: developer | priority: medium | plan-slice: login | parallel-group: A
 - Write unit tests for authentication | agent: test-writer | priority: high
 - Review authentication implementation | agent: reviewer | priority: high
 ```
+
+Here the user-model ticket is left ungrouped (the signup and login slices both build on it, so it
+runs solo first). The signup and login slices touch disjoint files and share `parallel-group: A`, so
+the orchestrator dispatches them together after the model is `done`.
 
 **Reviewer finding issues (declares fixes only — orchestrator appends the tail):**
 ```markdown
@@ -178,10 +211,10 @@ The tail is a `test-writer` ticket followed by a `reviewer` ticket. Who emits it
 
 1. Read the completed task's "Follow-up Tasks" section.
 2. For each line:
-   a. Parse title, agent, priority, and optional `plan-slice`.
+   a. Parse title, agent, priority, and optional `plan-slice` / `parallel-group`.
    b. Create the task with `guild new task --title "{title}" --agent {agent} --req {REQ}
-      [--plan {PLAN}] [--plan-slice {slug}]`. The CLI derives the next ID and writes the file into
-      `tasks/todo/`. New tasks inherit the parent's requirement.
+      [--plan {PLAN}] [--plan-slice {slug}] [--parallel-group {label}]`. The CLI derives the next ID
+      and writes the file into `tasks/todo/`. New tasks inherit the parent's requirement.
 3. **Fix-loop tail:** if the completed ticket was a `reviewer` ticket and any `Fix:` tickets were
    declared, after creating the fix tickets append one `test-writer` ticket and one `Re-review …`
    ticket (only if a 2nd review round hasn't already run — see the round cap in `agent-chains.md`).

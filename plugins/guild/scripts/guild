@@ -227,6 +227,24 @@ cmd_list() {
   done | sort
 }
 
+# batch <TASK-ID> — echo the task IDs that must dispatch together with this one: all
+# todo/in-progress tasks sharing its `parallel-group` AND `requirement`. A task with no
+# parallel-group prints just itself (a batch of one). Used by the orchestrator to expand
+# `guild next` into a concurrent developer batch.
+cmd_batch() {
+  local id="$1" p grp req
+  p="$(find_path "$id")" || { echo "guild: $id not found" >&2; return 1; }
+  grp="$(fm "$p" parallel-group)"
+  req="$(fm "$p" requirement)"
+  if [ -z "$grp" ]; then echo "$id"; return 0; fi
+  local q qid qgrp qreq
+  for q in $(ls "$GUILD_DIR/tasks/todo/"TASK-*.md "$GUILD_DIR/tasks/in-progress/"TASK-*.md 2>/dev/null); do
+    qid="$(basename "$q" .md)"
+    qgrp="$(fm "$q" parallel-group)"; qreq="$(fm "$q" requirement)"
+    [ "$qgrp" = "$grp" ] && [ "$qreq" = "$req" ] && echo "$qid"
+  done | sort -u
+}
+
 # next — echo the next actionable task as "<TASK-ID> <path>", or "none".
 # Rule: resume any in-progress task (lowest ID); else lowest-ID todo task; a `reviewer`
 # task is gated — only actionable when no other task for its requirement remains in
@@ -389,7 +407,7 @@ EOF
 new_task() {
   local title="${flag_title:-}" agent="${flag_agent:-}" req="${flag_req:-}" \
         plan="${flag_plan:-}" slice="${flag_plan_slice:-}" date="${flag_date:-$(_today)}" \
-        objective="${flag_objective:-}"
+        objective="${flag_objective:-}" pgroup="${flag_parallel_group:-}"
   [ -n "$title" ]  || { echo "guild: new task requires --title" >&2; return 1; }
   [ -n "$agent" ]  || { echo "guild: new task requires --agent" >&2; return 1; }
   [ -n "$req" ]    || { echo "guild: new task requires --req" >&2; return 1; }
@@ -405,6 +423,7 @@ new_task() {
     echo "requirement: $req"
     if [ -n "$plan" ]; then echo "plan: $plan"; else echo "plan: null"; fi
     [ -n "$slice" ] && echo "plan-slice: $slice"
+    [ -n "$pgroup" ] && echo "parallel-group: $pgroup"
     echo "created: $date"
     echo "---"
     echo
@@ -537,7 +556,7 @@ Setup:
 Create (templates, auto-derived IDs):
   guild new req  --title T [--desc D] [--date YYYY-MM-DD]
   guild new task --title T --agent A --req REQ-NNN [--plan PLAN-NNN]
-                 [--plan-slice slug] [--objective O] [--date YYYY-MM-DD]
+                 [--plan-slice slug] [--parallel-group LABEL] [--objective O] [--date YYYY-MM-DD]
   guild new plan --title T --req REQ-NNN [--task TASK-NNN] [--date YYYY-MM-DD]
       Each prints "<ID> <path>".
 
@@ -555,6 +574,7 @@ Status transitions (status = which directory the file lives in):
 Query:
   guild list <req|task|plan> [status]   List "<ID> <status>" lines
   guild next                            Print next actionable task "<TASK-ID> <path>" or "none"
+  guild batch <TASK-ID>                 Print the dev tickets that dispatch together (parallel-group)
   guild board                           Render the live board
 
 Environment:
@@ -579,6 +599,7 @@ main() {
     move)     cmd_move "$@" ;;
     list)     cmd_list "$@" ;;
     next)     cmd_next "$@" ;;
+    batch)    cmd_batch "$@" ;;
     next-id)  cmd_next_id "$@" ;;
     board)    cmd_board "$@" ;;
     help|-h|--help) cmd_help ;;

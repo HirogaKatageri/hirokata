@@ -64,8 +64,16 @@ The orchestrator never scans by hand; it runs `guild next`, which encodes:
    and the next `todo` is taken.
 4. **Nothing actionable** → `guild next` prints `none`; the board is caught up.
 
+**Parallel-group batch.** When the task `guild next` returns is a `developer`/`developer-svelte`
+ticket carrying a `parallel-group`, the actionable unit is the **batch**, not the single ticket. The
+orchestrator expands it with `guild batch TASK-NNN` — all `todo`/`in-progress` dev tickets sharing
+that `parallel-group` and `requirement` — dispatches them concurrently, and only advances once all
+are `done`. A ticket with no `parallel-group` is a batch of one.
+
 There is no priority sort and no dependency graph. Ordering is creation order (ID order); the
-review gate is the only conditional.
+review gate is the only conditional. `parallel-group` is not ordering — it is the architect's
+assertion that grouped dev tickets touch disjoint files and may run together (see
+`task-lifecycle.md` "Parallel developer batching").
 
 ## Rendering the live board view — `guild board`
 
