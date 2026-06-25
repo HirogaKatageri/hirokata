@@ -57,12 +57,15 @@ N/N gate) — a cheap safety belt on top of ordering.
 
 **Follow-up declaration (dev tickets + the tail):**
 ```
-- Implement {component-1} | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-1}.md
-- Implement {component-2} | agent: developer-svelte | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-2}.md
-- Implement {component-3} | agent: developer | priority: medium | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-3}.md
+- Implement {component-1} | agent: developer | priority: high | plan-slice: {slug-1}
+- Implement {component-2} | agent: developer-svelte | priority: high | plan-slice: {slug-2}
+- Implement {component-3} | agent: developer | priority: medium | plan-slice: {slug-3}
 - Write unit tests for {feature} | agent: test-writer | priority: high
 - Review {feature} implementation | agent: reviewer | priority: high
 ```
+
+The `plan-slice` value is the slice **slug** (e.g. `signup`), not a path — agents resolve the
+current file with `guild slice PLAN-NNN {slug}`, since slice locations move with the plan's status.
 
 The architect emits the `test-writer` and `reviewer` tail explicitly. The orchestrator does not
 auto-create them in the initial chain. Listing dev tickets first keeps their IDs lower, so they run
@@ -226,16 +229,21 @@ behavior, and QA reviews the update.
 
 ## Orchestrator Responsibilities in the Chain
 
+All of these run through the guild CLI (`${CLAUDE_PLUGIN_ROOT}/scripts/guild`):
+
 1. **Materializing follow-ups**: read the "Follow-up Tasks" section, create real task files with
-   `status: todo`, increment `next-task` in `state.yaml`.
-2. **Appending the fix-loop tail**: after a review round with fixes, append one test-writer and one
+   `guild new task …` (the CLI derives the next ID and writes them into `tasks/todo/`).
+2. **Status transitions**: `guild move TASK-NNN in-progress` on dispatch, `… done` on completion,
+   `… failed` on failure. Agents never move their own files.
+3. **Appending the fix-loop tail**: after a review round with fixes, append one test-writer and one
    re-review ticket behind the fix tickets (the only orchestrator-created tickets).
-3. **Enforcing the review gate**: dispatch a `reviewer` ticket only when its requirement's non-tail
-   tickets are all `done`.
-4. **Tracking requirement progress**: computed live (done tickets / total tickets per REQ) — not
-   stored.
-5. **Marking requirements done**: when a requirement's reviewer ticket completes with no open fixes.
-6. **Handling escalation**: when a reviewer writes `ESCALATE` or round 2 still has fixes, prompt the
+4. **Enforcing the review gate**: `guild next` skips a `reviewer` ticket until its requirement's
+   other tickets have left `todo/` and `in-progress/`.
+5. **Tracking requirement progress**: computed live by `guild board` (done tickets / total tickets
+   per REQ, doneness read from the directory) — not stored.
+6. **Marking requirements done**: `guild move REQ-NNN done` when a requirement's reviewer ticket
+   completes with no open fixes.
+7. **Handling escalation**: when a reviewer writes `ESCALATE` or round 2 still has fixes, prompt the
    user.
 
 ## Sequential Execution & the One Exception

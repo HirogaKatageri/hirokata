@@ -6,7 +6,7 @@ description: >
   "guild release", or wants to finalize completed requirements into a versioned
   release. Renames CHANGELOG Unreleased to a version, archives completed REQs,
   and creates an annotated git tag. Does not push.
-version: 1.0.0
+version: 2.0.0
 user-invocable: true
 ---
 
@@ -14,10 +14,15 @@ user-invocable: true
 
 Finalize completed guild requirements into a versioned release: stamp the `CHANGELOG.md` Unreleased section with a version, move completed requirement artifacts into a dated archive, and create an annotated git tag.
 
+Status is encoded by the subdirectory an artifact lives in — there is **no `status:` frontmatter field**. All board lookups and moves go through the guild CLI. Bind it once and reuse:
+```bash
+GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
+```
+
 ## Arguments
 
 - `--dry-run` — print the full plan without making any changes
-- `--only REQ-NNN[,REQ-MMM]` — release only the named requirements (default: all requirements with `status: done` since last release)
+- `--only REQ-NNN[,REQ-MMM]` — release only the named requirements (default: all requirements in `.guild/requirements/done/` since last release)
 
 ## Steps
 
@@ -44,7 +49,7 @@ Stop conditions:
 Find requirements to include:
 
 - If `--only REQ-NNN,...` provided: use exactly those.
-- Otherwise: scan `.guild/requirements/REQ-*.md` — include every requirement with `status: done` that is NOT already present in any `.guild/archive/*/requirements/` directory.
+- Otherwise: list the done requirements with `"$GUILD" list req done` — include every requirement in `.guild/requirements/done/` that is NOT already present in any `.guild/archive/*/requirements/` directory.
 
 If the resulting set is empty, stop with:
 ```
@@ -53,16 +58,18 @@ No completed requirements to release since the last release.
 
 ### 3. Pre-release Gate
 
+A task's status is the subdirectory it lives in (`tasks/{todo,in-progress,done,failed}/`), not a frontmatter field. The CLI does not filter tasks by requirement, so to find a REQ's tasks, glob `.guild/tasks/*/TASK-*.md` and read each file's `requirement:` frontmatter (resolve a task's status with `"$GUILD" status TASK-NNN`, which returns its directory). For per-status sweeps use `"$GUILD" list task <status>`.
+
 For each requirement in scope:
 
-1. Find all its tasks (`.guild/tasks/TASK-*.md` with matching `requirement` frontmatter).
+1. Find all its tasks — glob `.guild/tasks/*/TASK-*.md` and keep those whose `requirement:` frontmatter matches the REQ.
 
-2. **Block release** if ANY task for an included requirement has:
-   - `status: failed` → report which task and stop
-   - A Work Log entry containing the literal token `ESCALATE` that has not been resolved → report and stop
+2. **Block release** if ANY task for an included requirement is:
+   - in `.guild/tasks/failed/` (status `failed`) → report which task and stop
+   - has a Work Log entry containing the literal token `ESCALATE` that has not been resolved → report and stop
 
-3. **Warn (do not block)** if ANY task for an included requirement has:
-   - `status: in-progress` or `status: todo` → list them and ask:
+3. **Warn (do not block)** if ANY task for an included requirement is:
+   - in `.guild/tasks/in-progress/` or `.guild/tasks/todo/` → list them and ask:
      ```
      These tasks for included requirements are not yet done:
        TASK-NNN: {title} ({status})
@@ -139,16 +146,19 @@ Transform `CHANGELOG.md`:
 
 Create archive directory `.guild/archive/{version}/` with subdirectories `requirements/`, `plans/`, `tasks/`.
 
+File moves come FROM the status subdirectories. Use `"$GUILD" path <ID>` to locate an artifact wherever it currently lives rather than hardcoding a status dir.
+
 For each requirement in scope:
 
-1. Move `.guild/requirements/REQ-NNN.md` → `.guild/archive/{version}/requirements/REQ-NNN.md`
-2. For each plan with matching `requirement: REQ-NNN` in its frontmatter:
-   - Move `.guild/plans/PLAN-NNN.md` → `.guild/archive/{version}/plans/PLAN-NNN.md`
-   - Move the slice directory `.guild/plans/PLAN-NNN/` (if exists) → `.guild/archive/{version}/plans/PLAN-NNN/`
-3. For each task file with matching `requirement: REQ-NNN`, `status: done`:
-   - Move `.guild/tasks/TASK-NNN.md` → `.guild/archive/{version}/tasks/TASK-NNN.md`
+1. Move the done requirement → archive:
+   `.guild/requirements/done/REQ-NNN.md` → `.guild/archive/{version}/requirements/REQ-NNN.md`
+2. For each plan with matching `requirement: REQ-NNN` in its frontmatter (glob `.guild/plans/*/PLAN-*.md` and read frontmatter, or resolve with `"$GUILD" path PLAN-NNN`):
+   - Move `.guild/plans/<status>/PLAN-NNN.md` → `.guild/archive/{version}/plans/PLAN-NNN.md`
+   - Move the sibling slice directory `.guild/plans/<status>/PLAN-NNN/` (if it exists) → `.guild/archive/{version}/plans/PLAN-NNN/` — the slice dir sits beside the overview in the same status dir.
+3. For each done task with matching `requirement: REQ-NNN` (glob `.guild/tasks/done/TASK-*.md` and read frontmatter):
+   - Move `.guild/tasks/done/TASK-NNN.md` → `.guild/archive/{version}/tasks/TASK-NNN.md`
 
-Leave any `in-progress` / `todo` tasks in place (their files stay in `.guild/tasks/`).
+Leave any `todo` / `in-progress` / `failed` tasks in place (their files stay in `.guild/tasks/<status>/`).
 
 **Never archive `.guild/docs/`** — the knowledge base is evergreen. Researcher findings persist across releases so future architects and researchers can reuse them. Docs are not versioned alongside releases.
 
@@ -159,15 +169,17 @@ never included in a release.
 
 ### 8. Snapshot Board State
 
-Write `.guild/archive/{version}/STATE-snapshot.md` containing the `state.yaml` counter values at release time:
+There are no ID counters in the new model — IDs are derived from the filesystem (`max(existing across all status dirs + archive) + 1`) and stay continuous across releases because archived files keep their IDs. `state.yaml` holds only `last-checkin`; do NOT touch it here.
+
+Write `.guild/archive/{version}/STATE-snapshot.md` recording the release and the requirements it covers. Optionally capture the highest ID per kind at release time as `"$GUILD" next-id <kind>` minus 1 (these are derived, not stored counters); omit them if you prefer:
 
 ```markdown
 ---
 released: {today's date}
 version: {version}
-next-task-at-release: {value from state.yaml}
-next-req-at-release: {value from state.yaml}
-next-plan-at-release: {value from state.yaml}
+highest-req-at-release: {next-id req - 1}
+highest-task-at-release: {next-id task - 1}
+highest-plan-at-release: {next-id plan - 1}
 requirements:
   - REQ-NNN: {title}
   - REQ-MMM: {title}
@@ -176,16 +188,16 @@ requirements:
 # Release {version} Snapshot
 
 Requirements included in this release are archived alongside this file.
-ID counters are continuous across releases — they are NOT reset.
+IDs are derived from the filesystem (status dirs + archive) and remain
+continuous across releases — there are no counters to reset.
 ```
-
-Do NOT reset the `state.yaml` counters. IDs remain continuous across releases to keep archived references stable.
 
 ### 9. No Board Table to Update
 
 There is no `BOARD.md`. Once a released requirement's REQ file is moved into the archive (step 7), it
-no longer appears in the live requirements view — nothing else to update. Leave the completed task
-files for that requirement archived in step 7; any unfinished tasks stay in `.guild/tasks/`.
+no longer appears in the live requirements view (`guild board` scans the status dirs) — nothing else
+to update. Leave the completed task files for that requirement archived in step 7; any unfinished
+tasks stay in `.guild/tasks/<status>/`.
 
 ### 10. Create Git Tag
 
@@ -248,7 +260,7 @@ CHANGELOG.md changes:
   New [Unreleased] section would be created empty
 
 Files to move:
-  .guild/requirements/REQ-NNN.md → .guild/archive/{version}/requirements/REQ-NNN.md
+  .guild/requirements/done/REQ-NNN.md → .guild/archive/{version}/requirements/REQ-NNN.md
   ...
 
 Git actions:
@@ -266,7 +278,7 @@ Do not create files, move anything, or run any git commands.
 
 - **Never push** — the user decides when to push commits and tags
 - **Never skip hooks** — do not pass `--no-verify`
-- **Never reset ID counters** — archived references must remain valid
+- **IDs are derived, not counters** — there is nothing to reset; archived files keep their IDs so the sequence stays continuous
 - **Never delete files** — archive (move) only
 - **CHANGELOG.md lives at repo root** — not inside `.guild/`
 - **`.guild/docs/` is evergreen** — never archive or touch the knowledge base during a release

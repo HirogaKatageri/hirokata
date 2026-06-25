@@ -99,7 +99,7 @@ go test ./...
    - Fix: {bug description found during testing} | agent: developer | priority: high
    ```
 
-3. **Mark task status** as `done` in the frontmatter
+3. **Report completion** in your final message — done, or failed if you declared fix tickets. Do NOT edit any status field or move your task file — the orchestrator moves it.
 
 ## What NOT to Do
 

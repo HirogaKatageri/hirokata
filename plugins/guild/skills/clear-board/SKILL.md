@@ -4,7 +4,7 @@ description: >
   This skill should be used when the user asks to "clear the board", "reset the guild",
   "start fresh", "wipe the board", "clear all tasks", "reset the board", or wants to
   remove all current work from the guild board and start over.
-version: 1.0.0
+version: 2.0.0
 user-invocable: true
 ---
 
@@ -12,11 +12,16 @@ user-invocable: true
 
 Wipe all tasks, requirements, and plans from the guild board and reset it to a clean state.
 
+Bind the guild CLI once and reuse it for all inventory/recreate operations:
+```bash
+GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
+```
+
 ## Steps
 
 ### 1. Check for Guild
 
-Read `.guild/state.yaml`.
+Read `.guild/state.yaml` (it holds only `last-checkin`).
 
 If not found:
 ```
@@ -27,12 +32,14 @@ Stop here.
 
 ### 2. Inventory the Board
 
-Count items by scanning the directories:
-- Requirements: count files in `.guild/requirements/`
-- Tasks in progress: count `.guild/tasks/*.md` with `status: in-progress`
-- Tasks in backlog: count `.guild/tasks/*.md` with `status: todo`
-- Completed tasks: count `.guild/tasks/*.md` with `status: done`
-- Plan files: count files in `.guild/plans/`
+Count items via the CLI — status is the directory an artifact lives in, so never scan flat files or a `status:` frontmatter field:
+- Requirements: `"$GUILD" list req`
+- Tasks in progress: `"$GUILD" list task in-progress`
+- Tasks in backlog: `"$GUILD" list task todo`
+- Completed tasks: `"$GUILD" list task done`
+- Plan files: `"$GUILD" list plan`
+
+Each `list` prints one `<ID> <status>` line per artifact; count the lines.
 
 ### 3. Confirm with User
 
@@ -62,9 +69,7 @@ Stop here.
 
 ### 4. Clear the Board
 
-1. Delete all files in `.guild/requirements/` (keep the directory)
-2. Delete all files in `.guild/tasks/` (keep the directory)
-3. Delete all files in `.guild/plans/` (keep the directory, including any slice subdirectories)
+Status is encoded by the subdirectory each artifact lives in, so clearing the board means wiping the status subdirectories under `requirements/`, `tasks/`, and `plans/` (this includes any plan slice subdirectories).
 
 **NEVER touch `.guild/docs/`** — the knowledge base is evergreen and survives board resets. Researcher findings accumulate across requirements and should not be lost when clearing the board.
 
@@ -74,24 +79,23 @@ Stop here.
 manifest, sessions, and missions are evergreen and accumulate across passes and
 releases, like `.guild/docs/`.
 
-Use Bash to delete only the cleared directories' contents:
+Use Bash to delete only the cleared directories' contents, then recreate the empty status-dir skeleton so the board stays valid:
 ```bash
 rm -rf .guild/requirements/* .guild/tasks/* .guild/plans/*
+"$GUILD" init {today's date}
 ```
 
-The `-r` flag removes plan slice subdirectories (e.g. `.guild/plans/PLAN-001/`). `.guild/docs/`, `.guild/qa/`, and `.guild/archive/` are not in the glob, so they remain untouched.
+The `-r` flag removes the status subdirectories and any plan slice subdirectories (e.g. `.guild/plans/done/PLAN-001/`). `.guild/docs/`, `.guild/qa/`, and `.guild/archive/` are not in the glob, so they remain untouched.
+
+`guild init` is idempotent: it recreates `requirements|tasks|plans/{todo,in-progress,done}`, the tasks `failed/` dir, plus `docs/` and `qa/`, **without** overwriting an existing `state.yaml`. (Step 5 resets `state.yaml` explicitly.)
 
 If a legacy `.guild/BOARD.md` exists, delete it too (`rm -f .guild/BOARD.md`) — the new format has no board file.
 
 ### 5. Reset state.yaml
 
-Overwrite `.guild/state.yaml` with a clean slate, preserving today's date as `last-checkin`:
+There are no ID counters or cursor in the new model — IDs are derived from the filesystem and the cursor is whatever sits in `tasks/in-progress/`. Overwrite `.guild/state.yaml` with the single fact it holds, today's date:
 
 ```yaml
-current: null
-next-task: 1
-next-req: 1
-next-plan: 1
 last-checkin: {today's date}
 ```
 
@@ -101,7 +105,9 @@ last-checkin: {today's date}
 Board cleared.
 
   Removed: {N} requirement(s), {N} task(s), {N} plan(s)
-  Counters reset to: REQ-001, TASK-001, PLAN-001
+
+The board is empty — the next IDs restart at REQ-001 / TASK-001 / PLAN-001
+(unless archived items keep the sequence higher).
 
 Run /guild:new-requirement to add work, or /guild:check-in to start a session.
 ```
@@ -109,10 +115,10 @@ Run /guild:new-requirement to add work, or /guild:check-in to start a session.
 ## Rules
 
 - **Always confirm before deleting** — this action is irreversible
-- **Keep directories** — only delete files, not the `.guild/requirements/`, `.guild/tasks/`, `.guild/plans/` folders themselves
+- **Keep the skeleton valid** — after `rm -rf`, run `guild init {today}` to recreate the empty `requirements|tasks|plans` status subdirectories
 - **Never clear `.guild/docs/`** — the knowledge base is evergreen and preserved across resets
 - **Never clear `.guild/qa/`** — the QA discipline's artifacts are evergreen and preserved across resets
 - **Never clear `.guild/archive/`** — prior releases stay archived
-- **Reset all counters to 1** in `state.yaml` — prevent ID confusion on the fresh board
+- **No counters to reset** — IDs derive from the filesystem; after clearing, the next IDs naturally restart at 001 unless archived items exist
 - **Delete any legacy BOARD.md** — the new format stores state in `state.yaml` + ticket files
 - **Update last-checkin** — so the state reflects when it was last touched

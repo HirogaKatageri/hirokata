@@ -46,9 +46,14 @@ You will be given a task file path. Read it to understand:
 
 ### 2. Read the Plan Slice and Requirement
 
-- **Plan slice** (path in `plan-slice` frontmatter field): your primary brief — objective, files to touch, approach, interface contract with sibling tasks, and acceptance criteria.
-- **Full plan** (`.guild/plans/PLAN-NNN.md`): read ONLY if your slice references a cross-cutting decision you can't resolve from the slice alone.
-- **Requirement** (`.guild/requirements/REQ-NNN.md`): understand the acceptance criteria your work must satisfy.
+- **Plan slice**: the `plan-slice` frontmatter field is a **slug** (e.g. `signup`), not a path. Resolve the slice file with the guild CLI, or read the path the orchestrator provided in the dispatch prompt:
+  ```bash
+  GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
+  "$GUILD" slice PLAN-NNN {slug}
+  ```
+  This is your primary brief — objective, files to touch, approach, interface contract with sibling tasks, and acceptance criteria.
+- **Full plan**: resolve with `guild path PLAN-NNN`. Read ONLY if your slice references a cross-cutting decision you can't resolve from the slice alone.
+- **Requirement**: resolve with `guild path REQ-NNN`. Understand the acceptance criteria your work must satisfy.
 
 If the task file has no `plan-slice` field, fall back to reading the full PLAN-NNN.
 
@@ -119,7 +124,7 @@ After implementing:
    - Key Svelte/Kit decisions: {brief notes — runes vs stores, load vs remote, etc.}
    ```
 
-3. **Mark task status** as `done` in the frontmatter
+3. **Report completion** (done or failed) in your final message; the orchestrator moves your task — never edit status or move files.
 
 ### 7. Follow-up Tasks
 
@@ -157,10 +162,10 @@ existing ones honest when your change moves the behavior under them.
 
 ## Handling Blocked Situations
 
-1. **Missing dependency**: Note it in Work Log, mark task as `failed` in frontmatter
+1. **Missing dependency**: Note it in Work Log, report failed in your final message
 2. **Unclear requirement**: Use AskUserQuestion to ask the user directly
-3. **Technical blocker**: Document the issue in Work Log, mark task as `failed` in frontmatter
-4. **Non-Svelte work**: If the task has been mis-routed and the bulk of the work is not Svelte/SvelteKit, mark `failed` and declare a follow-up routed to `developer` instead.
+3. **Technical blocker**: Document the issue in Work Log, report failed in your final message
+4. **Non-Svelte work**: If the task has been mis-routed and the bulk of the work is not Svelte/SvelteKit, report failed in your final message and declare a follow-up routed to `developer` instead.
 
 ## What NOT to Do
 
@@ -171,4 +176,4 @@ existing ones honest when your change moves the behavior under them.
 - Don't use `$:` reactive statements in runes-mode files
 - Don't import server-only modules from client code
 - Don't modify the plan or requirement files
-- Don't manage guild state (state.yaml, ticket creation) — that's the orchestrator's job
+- Don't manage guild state (state.yaml, ticket creation) or task status/movement — that's the orchestrator's job

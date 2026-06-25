@@ -25,7 +25,7 @@ You will be given a task file path. Read it to understand:
 
 ### 2. Analyze the Requirement
 
-Read the requirement document at `.guild/requirements/REQ-NNN.md`. Understand:
+Read the requirement document (resolve its path with `guild path REQ-NNN` — requirements live under `requirements/<status>/`). Understand:
 - All user stories and acceptance criteria
 - Technical considerations and constraints
 - What's in scope and what's out
@@ -68,7 +68,7 @@ If research IS needed, DO NOT write a plan. Instead:
    - Plan {feature} implementation (post-research) | agent: architect | priority: high
    ```
 
-3. **Mark your own task** `status: done` in the frontmatter. Your deliverable was the research gate decision, not a plan. The new architect task will produce the plan after the researcher finishes.
+3. **Report completion in your final message** (done). Your deliverable was the research gate decision, not a plan. Do NOT edit any status field or move your task file — the orchestrator moves it. The new architect task will produce the plan after the researcher finishes.
 
 If research is NOT needed, proceed directly to Step 4.
 
@@ -86,7 +86,16 @@ Based on the requirement and codebase analysis:
 
 Write the plan as one overview file plus one slice file per developer task. The overview is for reviewers and orientation; each slice is the focused, self-contained brief a single developer reads to do their work.
 
-**5a. Overview file** at `.guild/plans/PLAN-NNN.md`:
+**Scaffold the plan first.** You have Bash — use the guild CLI to create the plan overview (in `plans/todo/`) and its sibling slice directory:
+
+```bash
+GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
+"$GUILD" new plan --title "{Feature} Implementation Plan" --req REQ-NNN --task TASK-NNN
+```
+
+It prints `<PLAN-ID> <path>`. Fill in the overview at that printed path, and write each slice into the printed plan's `PLAN-NNN/` slice directory (alongside the overview). Resolve paths later with `guild path PLAN-NNN` (overview) and `guild slice PLAN-NNN {slug}` (a slice) rather than hardcoding — plans live under `plans/<status>/` and move as status changes.
+
+**5a. Overview file** (the printed plan path under `plans/todo/PLAN-NNN.md`):
 
 ```markdown
 ---
@@ -110,7 +119,7 @@ created: {today's date}
 ## Implementation Tasks
 
 ### 1. {Task Title} (complexity: {1|2|3})
-- **Slice**: `.guild/plans/PLAN-NNN/slice-{slug}.md`
+- **Slice**: `{slug}` (resolve with `guild slice PLAN-NNN {slug}`)
 - **Summary**: {One line — full detail lives in the slice}
 - **Depends on**: {Prerequisites, if any}
 
@@ -130,7 +139,7 @@ created: {today's date}
 | {Risk} | {Impact} | {How to handle} |
 ```
 
-**5b. Slice files** at `.guild/plans/PLAN-NNN/slice-{slug}.md` — one per developer task:
+**5b. Slice files** in the printed plan's `PLAN-NNN/` slice directory, named `slice-{slug}.md` — one per developer task:
 
 ```markdown
 ---
@@ -176,11 +185,11 @@ After writing the plan:
    - Created PLAN-NNN with {N} implementation tasks
    ```
 
-2. **Declare follow-ups** in the "Follow-up Tasks" section. Transcribe each implementation task from your plan (with its slice path), then emit the chain tail — one `test-writer` ticket and one `reviewer` ticket — after the developer tickets:
+2. **Declare follow-ups** in the "Follow-up Tasks" section. Transcribe each implementation task from your plan (with its slice **slug** as the `plan-slice` value — a slug like `signup`, not a path), then emit the chain tail — one `test-writer` ticket and one `reviewer` ticket — after the developer tickets:
    ```
-   - Implement {component-1} | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-1}.md
-   - Implement {component-2} | agent: developer | priority: high | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-2}.md
-   - Implement {component-3} | agent: developer | priority: medium | plan-slice: .guild/plans/PLAN-NNN/slice-{slug-3}.md
+   - Implement {component-1} | agent: developer | priority: high | plan-slice: {slug-1}
+   - Implement {component-2} | agent: developer | priority: high | plan-slice: {slug-2}
+   - Implement {component-3} | agent: developer | priority: medium | plan-slice: {slug-3}
    - Write unit tests for {feature} | agent: test-writer | priority: high
    - Review {feature} implementation | agent: reviewer | priority: high
    ```
@@ -198,9 +207,9 @@ After writing the plan:
 
    In a mixed-stack repo, route per slice rather than per plan — a slice that builds a Rust API uses `developer`; a sibling slice that wires up the Svelte UI uses `developer-svelte`.
 
-   Every developer follow-up MUST include a `plan-slice` modifier pointing to its slice file. The `test-writer` and `reviewer` tail tickets read the full overview plus all slices, so they need no slice modifier.
+   Every developer follow-up MUST include a `plan-slice` modifier carrying its slice **slug**. The `test-writer` and `reviewer` tail tickets read the full overview plus all slices, so they need no slice modifier.
 
-3. **Mark task status** as `done` in the frontmatter
+3. **Report completion in your final message** (done). Do NOT edit any status field or move your task file — the orchestrator moves it.
 
 ## What NOT to Do
 

@@ -1,0 +1,589 @@
+#!/usr/bin/env bash
+#
+# guild — deterministic CLI for the Guild plugin's file-based board.
+#
+# Status is encoded by DIRECTORY, not a frontmatter field:
+#   .guild/requirements/{todo,in-progress,done}/REQ-NNN.md
+#   .guild/plans/{todo,in-progress,done}/PLAN-NNN.md   (+ PLAN-NNN/ slice dir alongside)
+#   .guild/tasks/{todo,in-progress,done,failed}/TASK-NNN.md
+#
+# IDs are DERIVED from the filesystem (max existing + 1, archive included) — there is
+# no counter to maintain. The cursor (current task) is DERIVED (the in-progress task).
+# state.yaml holds only `last-checkin`.
+#
+# All commands operate relative to the guild root (default: ./.guild, override $GUILD_DIR).
+#
+# Usage: guild <command> [args]   —   run `guild help` for the full list.
+
+set -euo pipefail
+
+GUILD_DIR="${GUILD_DIR:-.guild}"
+
+# ---- artifact-type configuration -------------------------------------------------
+
+# kind -> directory name
+kind_dir() {
+  case "$1" in
+    req|REQ)   echo "requirements" ;;
+    task|TASK) echo "tasks" ;;
+    plan|PLAN) echo "plans" ;;
+    *) echo "guild: unknown kind '$1'" >&2; return 1 ;;
+  esac
+}
+
+# kind -> ID prefix
+kind_prefix() {
+  case "$1" in
+    req|REQ)   echo "REQ" ;;
+    task|TASK) echo "TASK" ;;
+    plan|PLAN) echo "PLAN" ;;
+    *) echo "guild: unknown kind '$1'" >&2; return 1 ;;
+  esac
+}
+
+# kind -> valid statuses (space separated)
+kind_statuses() {
+  case "$1" in
+    req|REQ)   echo "todo in-progress done" ;;
+    task|TASK) echo "todo in-progress done failed" ;;
+    plan|PLAN) echo "todo in-progress done" ;;
+    *) echo "guild: unknown kind '$1'" >&2; return 1 ;;
+  esac
+}
+
+# ID string (e.g. TASK-001) -> kind token
+id_kind() {
+  case "$1" in
+    REQ-*)  echo "req" ;;
+    TASK-*) echo "task" ;;
+    PLAN-*) echo "plan" ;;
+    *) echo "guild: unrecognized id '$1'" >&2; return 1 ;;
+  esac
+}
+
+# ---- frontmatter helpers ---------------------------------------------------------
+
+# fm <file> <key> — print the frontmatter value for <key> (first match), stripped of
+# surrounding quotes/whitespace. Empty string if absent.
+fm() {
+  awk -v k="$2" '
+    BEGIN { infm = 0 }
+    /^---[ \t]*$/ { infm++; if (infm == 2) exit; next }
+    infm == 1 {
+      if ($0 ~ "^"k"[ \t]*:") {
+        sub("^"k"[ \t]*:[ \t]*", "")
+        gsub(/^["'\''[:space:]]+|["'\''[:space:]]+$/, "")
+        print
+        exit
+      }
+    }
+  ' "$1"
+}
+
+# sval <file> <key> — read a top-level "key: value" from a plain YAML file (no
+# frontmatter fences, e.g. state.yaml). Empty string if absent.
+sval() {
+  awk -v k="$2" '
+    $0 ~ "^"k"[ \t]*:" {
+      sub("^"k"[ \t]*:[ \t]*", "")
+      gsub(/^["'\''[:space:]]+|["'\''[:space:]]+$/, "")
+      print
+      exit
+    }
+  ' "$1"
+}
+
+# ---- path resolution -------------------------------------------------------------
+
+# find_path <ID> — echo the path to the artifact wherever it lives (live dirs first,
+# then archive). Exit 1 if not found.
+find_path() {
+  local id="$1" kind dir prefix num statuses st p
+  kind="$(id_kind "$id")"
+  dir="$(kind_dir "$kind")"
+  statuses="$(kind_statuses "$kind")"
+  for st in $statuses; do
+    p="$GUILD_DIR/$dir/$st/$id.md"
+    [ -f "$p" ] && { echo "$p"; return 0; }
+  done
+  # archive: .guild/archive/<version>/<dir>/<ID>.md
+  if [ -d "$GUILD_DIR/archive" ]; then
+    p="$(find "$GUILD_DIR/archive" -type f -name "$id.md" -path "*/$dir/*" 2>/dev/null | head -n1)"
+    [ -n "$p" ] && { echo "$p"; return 0; }
+  fi
+  return 1
+}
+
+# status_of <ID> — echo the status (directory name) of an artifact. "archived" if in
+# the archive. Exit 1 if not found.
+status_of() {
+  local id="$1" p
+  p="$(find_path "$id")" || return 1
+  case "$p" in
+    "$GUILD_DIR/archive/"*) echo "archived" ;;
+    *) basename "$(dirname "$p")" ;;
+  esac
+}
+
+# ---- ID derivation ---------------------------------------------------------------
+
+# max_num <kind> — echo the highest numeric ID in use for <kind> across ALL status
+# dirs and the archive. 0 if none exist.
+max_num() {
+  local kind dir prefix
+  kind="$1"
+  dir="$(kind_dir "$kind")"
+  prefix="$(kind_prefix "$kind")"
+  {
+    find "$GUILD_DIR/$dir" -type f -name "$prefix-*.md" 2>/dev/null || true
+    [ -d "$GUILD_DIR/archive" ] && find "$GUILD_DIR/archive" -type f -name "$prefix-*.md" -path "*/$dir/*" 2>/dev/null || true
+  } | sed -E "s#.*/$prefix-0*([0-9]+)\.md#\1#" | sort -n | tail -n1 | grep -E '^[0-9]+$' || echo 0
+}
+
+# next_num <kind> — echo the next zero-padded 3-digit ID number for <kind>.
+next_num() {
+  local n
+  n="$(max_num "$1")"
+  printf '%03d\n' "$((n + 1))"
+}
+
+# ---- commands --------------------------------------------------------------------
+
+cmd_init() {
+  mkdir -p \
+    "$GUILD_DIR/requirements/todo" "$GUILD_DIR/requirements/in-progress" "$GUILD_DIR/requirements/done" \
+    "$GUILD_DIR/tasks/todo" "$GUILD_DIR/tasks/in-progress" "$GUILD_DIR/tasks/done" "$GUILD_DIR/tasks/failed" \
+    "$GUILD_DIR/plans/todo" "$GUILD_DIR/plans/in-progress" "$GUILD_DIR/plans/done" \
+    "$GUILD_DIR/docs" "$GUILD_DIR/qa"
+  if [ ! -f "$GUILD_DIR/state.yaml" ]; then
+    printf 'last-checkin: %s\n' "${1:-null}" > "$GUILD_DIR/state.yaml"
+  fi
+  echo "Guild initialized at $GUILD_DIR"
+}
+
+cmd_path() { find_path "$1" || { echo "guild: $1 not found" >&2; return 1; }; }
+
+cmd_read() { local p; p="$(find_path "$1")" || { echo "guild: $1 not found" >&2; return 1; }; cat "$p"; }
+
+cmd_status() { status_of "$1" || { echo "guild: $1 not found" >&2; return 1; }; }
+
+cmd_next_id() { next_num "$1"; }
+
+# slice <PLAN-ID> <slug> — echo the path to a plan slice wherever the plan lives.
+cmd_slice() {
+  local plan="$1" slug="$2" pp dir
+  pp="$(find_path "$plan")" || { echo "guild: $plan not found" >&2; return 1; }
+  dir="$(dirname "$pp")/$plan"
+  # normalize slug -> slice-<slug>.md (accept either form)
+  case "$slug" in
+    slice-*) : ;;
+    *) slug="slice-$slug" ;;
+  esac
+  case "$slug" in
+    *.md) : ;;
+    *) slug="$slug.md" ;;
+  esac
+  echo "$dir/$slug"
+}
+
+# move <ID> <status> — move an artifact's file (and, for plans, its slice dir) into
+# the target status subdirectory. Validates the status against the kind.
+cmd_move() {
+  local id="$1" target="$2" kind dir statuses ok st src
+  kind="$(id_kind "$id")"
+  dir="$(kind_dir "$kind")"
+  statuses="$(kind_statuses "$kind")"
+  ok=0
+  for st in $statuses; do [ "$st" = "$target" ] && ok=1; done
+  [ "$ok" = 1 ] || { echo "guild: invalid status '$target' for $kind (allowed: $statuses)" >&2; return 1; }
+  src="$(find_path "$id")" || { echo "guild: $id not found" >&2; return 1; }
+  case "$src" in "$GUILD_DIR/archive/"*) echo "guild: $id is archived; refusing to move" >&2; return 1 ;; esac
+  mkdir -p "$GUILD_DIR/$dir/$target"
+  if [ "$src" = "$GUILD_DIR/$dir/$target/$id.md" ]; then echo "$src"; return 0; fi
+  mv "$src" "$GUILD_DIR/$dir/$target/$id.md"
+  # plans carry a sibling slice directory named after the plan ID
+  if [ "$kind" = "plan" ]; then
+    local slicedir; slicedir="$(dirname "$src")/$id"
+    [ -d "$slicedir" ] && mv "$slicedir" "$GUILD_DIR/$dir/$target/$id"
+  fi
+  echo "$GUILD_DIR/$dir/$target/$id.md"
+}
+
+# list <kind> [status] — list IDs of a kind, optionally filtered to one status.
+# Output: "<ID> <status>" per line, sorted by ID.
+cmd_list() {
+  local kind="$1" filter="${2:-}" dir prefix statuses st p id
+  dir="$(kind_dir "$kind")"
+  prefix="$(kind_prefix "$kind")"
+  statuses="$(kind_statuses "$kind")"
+  for st in $statuses; do
+    [ -n "$filter" ] && [ "$filter" != "$st" ] && continue
+    [ -d "$GUILD_DIR/$dir/$st" ] || continue
+    for p in "$GUILD_DIR/$dir/$st/$prefix-"*.md; do
+      [ -f "$p" ] || continue
+      id="$(basename "$p" .md)"
+      echo "$id $st"
+    done
+  done | sort
+}
+
+# next — echo the next actionable task as "<TASK-ID> <path>", or "none".
+# Rule: resume any in-progress task (lowest ID); else lowest-ID todo task; a `reviewer`
+# task is gated — only actionable when no other task for its requirement remains in
+# todo/ or in-progress/ (the per-REQ N/N review gate).
+cmd_next() {
+  local p id
+  # 1. resume in-progress (lowest ID)
+  for p in $(ls "$GUILD_DIR/tasks/in-progress/"TASK-*.md 2>/dev/null | sort); do
+    id="$(basename "$p" .md)"; echo "$id $p"; return 0
+  done
+  # 2. lowest-ID todo, honoring the review gate
+  for p in $(ls "$GUILD_DIR/tasks/todo/"TASK-*.md 2>/dev/null | sort); do
+    id="$(basename "$p" .md)"
+    local agent req other_open=0 q qid qreq
+    agent="$(fm "$p" agent)"
+    if [ "$agent" = "reviewer" ]; then
+      req="$(fm "$p" requirement)"
+      # any OTHER task for this REQ still in todo/ or in-progress/ ?
+      for q in $(ls "$GUILD_DIR/tasks/todo/"TASK-*.md "$GUILD_DIR/tasks/in-progress/"TASK-*.md 2>/dev/null); do
+        qid="$(basename "$q" .md)"; [ "$qid" = "$id" ] && continue
+        qreq="$(fm "$q" requirement)"
+        [ "$qreq" = "$req" ] && { other_open=1; break; }
+      done
+      [ "$other_open" = 1 ] && continue
+    fi
+    echo "$id $p"; return 0
+  done
+  echo "none"
+}
+
+# Shared: emit one display line for a task file.
+_task_line() {
+  local p id title agent
+  p="$1"; id="$(basename "$p" .md)"
+  title="$(fm "$p" title)"; agent="$(fm "$p" agent)"
+  printf '  %s: %s (%s)\n' "$id" "$title" "$agent"
+}
+
+# board — render the live board by scanning the status directories.
+cmd_board() {
+  local p any
+  echo "Guild Board"
+  echo "==========="
+  echo
+
+  echo "In Progress:"
+  any=0
+  for p in $(ls "$GUILD_DIR/tasks/in-progress/"TASK-*.md 2>/dev/null | sort); do _task_line "$p"; any=1; done
+  [ "$any" = 0 ] && echo "  (none)"
+  echo
+
+  echo "Backlog:"
+  any=0
+  for p in $(ls "$GUILD_DIR/tasks/todo/"TASK-*.md 2>/dev/null | sort); do _task_line "$p"; any=1; done
+  [ "$any" = 0 ] && echo "  (none)"
+  echo
+
+  echo "Recently Completed:"
+  any=0
+  for p in $(ls "$GUILD_DIR/tasks/done/"TASK-*.md 2>/dev/null | sort -r | head -n 20); do _task_line "$p"; any=1; done
+  [ "$any" = 0 ] && echo "  (none)"
+
+  if ls "$GUILD_DIR/tasks/failed/"TASK-*.md >/dev/null 2>&1; then
+    echo
+    echo "Failed:"
+    for p in $(ls "$GUILD_DIR/tasks/failed/"TASK-*.md 2>/dev/null | sort); do _task_line "$p"; done
+  fi
+  echo
+
+  echo "Requirements:"
+  any=0
+  local rp rid rtitle rstatus total done q qreq qst
+  for rstatus in todo in-progress done; do
+    for rp in $(ls "$GUILD_DIR/requirements/$rstatus/"REQ-*.md 2>/dev/null | sort); do
+      rid="$(basename "$rp" .md)"; rtitle="$(fm "$rp" title)"
+      total=0; done=0
+      for q in $(find "$GUILD_DIR/tasks" -type f -name 'TASK-*.md' 2>/dev/null); do
+        qreq="$(fm "$q" requirement)"; [ "$qreq" = "$rid" ] || continue
+        total=$((total + 1))
+        qst="$(basename "$(dirname "$q")")"; [ "$qst" = "done" ] && done=$((done + 1))
+      done
+      printf '  %s: %s — %s (%s/%s done)\n' "$rid" "$rtitle" "$rstatus" "$done" "$total"
+      any=1
+    done
+  done
+  [ "$any" = 0 ] && echo "  (none)"
+
+  echo
+  printf 'Last check-in: %s\n' "$(sval "$GUILD_DIR/state.yaml" last-checkin)"
+}
+
+# ---- creation commands -----------------------------------------------------------
+
+# parse --flags into flag_<name> shell variables (dashes in the flag name become
+# underscores, e.g. --plan-slice -> $flag_plan_slice). Bash 3.2 compatible.
+parse_flags() {
+  local key
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --*)
+        key="${1#--}"
+        key="$(printf '%s' "$key" | tr '-' '_')"
+        shift
+        printf -v "flag_$key" '%s' "${1:-}"
+        [ $# -gt 0 ] && shift
+        ;;
+      *) shift ;;
+    esac
+  done
+}
+
+_today() { sval "$GUILD_DIR/state.yaml" last-checkin; }
+
+cmd_new() {
+  local sub="$1"; shift
+  parse_flags "$@"
+  case "$sub" in
+    req)  new_req ;;
+    task) new_task ;;
+    plan) new_plan ;;
+    *) echo "guild: unknown 'new' target '$sub' (req|task|plan)" >&2; return 1 ;;
+  esac
+}
+
+new_req() {
+  local title="${flag_title:-}" desc="${flag_desc:-}" date="${flag_date:-$(_today)}"
+  [ -n "$title" ] || { echo "guild: new req requires --title" >&2; return 1; }
+  local num id path
+  num="$(next_num req)"; id="REQ-$num"
+  mkdir -p "$GUILD_DIR/requirements/todo"
+  path="$GUILD_DIR/requirements/todo/$id.md"
+  cat > "$path" <<EOF
+---
+id: $id
+title: "$title"
+created: $date
+---
+
+# $title
+
+## Summary
+
+${desc:-_To be gathered by the product-owner._}
+
+## User Stories
+
+_To be gathered by the product-owner._
+
+## Technical Considerations
+
+_To be determined._
+
+## Out of Scope
+
+_To be determined._
+EOF
+  echo "$id $path"
+}
+
+new_task() {
+  local title="${flag_title:-}" agent="${flag_agent:-}" req="${flag_req:-}" \
+        plan="${flag_plan:-}" slice="${flag_plan_slice:-}" date="${flag_date:-$(_today)}" \
+        objective="${flag_objective:-}"
+  [ -n "$title" ]  || { echo "guild: new task requires --title" >&2; return 1; }
+  [ -n "$agent" ]  || { echo "guild: new task requires --agent" >&2; return 1; }
+  [ -n "$req" ]    || { echo "guild: new task requires --req" >&2; return 1; }
+  local num id path
+  num="$(next_num task)"; id="TASK-$num"
+  mkdir -p "$GUILD_DIR/tasks/todo"
+  path="$GUILD_DIR/tasks/todo/$id.md"
+  {
+    echo "---"
+    echo "id: $id"
+    echo "title: \"$title\""
+    echo "agent: $agent"
+    echo "requirement: $req"
+    if [ -n "$plan" ]; then echo "plan: $plan"; else echo "plan: null"; fi
+    [ -n "$slice" ] && echo "plan-slice: $slice"
+    echo "created: $date"
+    echo "---"
+    echo
+    echo "## Objective"
+    echo
+    echo "${objective:-$title}"
+    echo
+    echo "## Context"
+    echo
+    echo "- Requirement: $req"
+    [ -n "$plan" ] && echo "- Plan: $plan"
+    [ -n "$slice" ] && echo "- Plan slice: $slice"
+    echo
+    echo "## Acceptance Criteria"
+    echo
+    echo "- [ ] Task completed successfully"
+    echo
+    echo "## Work Log"
+    echo
+    echo "## Follow-up Tasks"
+    echo
+  } > "$path"
+  echo "$id $path"
+}
+
+new_plan() {
+  local title="${flag_title:-}" req="${flag_req:-}" task="${flag_task:-}" date="${flag_date:-$(_today)}"
+  [ -n "$title" ] || { echo "guild: new plan requires --title" >&2; return 1; }
+  [ -n "$req" ]   || { echo "guild: new plan requires --req" >&2; return 1; }
+  local num id path
+  num="$(next_num plan)"; id="PLAN-$num"
+  mkdir -p "$GUILD_DIR/plans/todo/$id"
+  path="$GUILD_DIR/plans/todo/$id.md"
+  cat > "$path" <<EOF
+---
+id: $id
+title: "$title"
+requirement: $req
+task: ${task:-null}
+created: $date
+---
+
+# $title
+
+## Architecture Overview
+
+_High-level design decisions._
+
+## Implementation Tasks
+
+_Specific developer tasks — transcribed into the originating task's Follow-up Tasks._
+
+## Technical Decisions
+
+_Key choices and rationale._
+
+## Risks
+
+_Identified risks and mitigations._
+EOF
+  echo "$id $path"
+}
+
+# ---- migration -------------------------------------------------------------------
+
+# is the guild in the legacy (pre-status-dir) format?
+is_legacy() {
+  [ -f "$GUILD_DIR/BOARD.md" ] && return 0
+  local d
+  for d in requirements tasks plans; do
+    if ls "$GUILD_DIR/$d/"*.md >/dev/null 2>&1; then return 0; fi
+  done
+  return 1
+}
+
+# migrate one kind's flat files into status subdirs, stripping the `status:` field.
+_migrate_kind() {
+  local kind="$1" dir prefix default="$2" p id st target slicedir
+  dir="$(kind_dir "$kind")"
+  prefix="$(kind_prefix "$kind")"
+  for p in "$GUILD_DIR/$dir/"*.md; do
+    [ -f "$p" ] || continue
+    id="$(basename "$p" .md)"
+    st="$(fm "$p" status)"
+    case "$st" in
+      draft|"") target="$default" ;;
+      todo|to-do) target="todo" ;;
+      in-progress|in_progress) target="in-progress" ;;
+      done) target="done" ;;
+      failed) target="failed" ;;
+      *) target="$default" ;;
+    esac
+    # tasks are the only kind with failed/; clamp others
+    [ "$kind" != "task" ] && [ "$target" = "failed" ] && target="done"
+    mkdir -p "$GUILD_DIR/$dir/$target"
+    # strip the status: line, then place in the target dir
+    sed '/^status:[[:space:]]/d' "$p" > "$GUILD_DIR/$dir/$target/$id.md"
+    rm -f "$p"
+    if [ "$kind" = "plan" ]; then
+      slicedir="$GUILD_DIR/$dir/$id"
+      [ -d "$slicedir" ] && mv "$slicedir" "$GUILD_DIR/$dir/$target/$id"
+    fi
+  done
+}
+
+# migrate — convert a legacy flat-file guild into the status-directory layout.
+cmd_migrate() {
+  local lc
+  lc="$(sval "$GUILD_DIR/state.yaml" last-checkin)"
+  cmd_init "${lc:-null}" >/dev/null
+  _migrate_kind req  todo
+  _migrate_kind task todo
+  _migrate_kind plan todo
+  [ -f "$GUILD_DIR/BOARD.md" ] && rm -f "$GUILD_DIR/BOARD.md"
+  printf 'last-checkin: %s\n' "${lc:-null}" > "$GUILD_DIR/state.yaml"
+  echo "Migration complete — status is now encoded by directory."
+}
+
+# ---- help ------------------------------------------------------------------------
+
+cmd_help() {
+  cat <<'EOF'
+guild — deterministic CLI for the Guild file-based board (status = directory).
+
+Setup:
+  guild init [DATE]              Create the .guild status-dir layout + state.yaml
+  guild is-legacy                Exit 0 if the guild uses the old flat-file format
+  guild migrate                  Convert a legacy flat-file guild to status dirs
+
+Create (templates, auto-derived IDs):
+  guild new req  --title T [--desc D] [--date YYYY-MM-DD]
+  guild new task --title T --agent A --req REQ-NNN [--plan PLAN-NNN]
+                 [--plan-slice slug] [--objective O] [--date YYYY-MM-DD]
+  guild new plan --title T --req REQ-NNN [--task TASK-NNN] [--date YYYY-MM-DD]
+      Each prints "<ID> <path>".
+
+Resolve / read:
+  guild path  <ID>              Print the file path (searches all statuses + archive)
+  guild read  <ID>              Print the file contents
+  guild status <ID>             Print the status (directory) the artifact is in
+  guild slice <PLAN-ID> <slug>  Print the path to a plan slice
+  guild next-id <req|task|plan> Print the next available ID number (NNN)
+
+Status transitions (status = which directory the file lives in):
+  guild move <ID> <status>      Move artifact to todo|in-progress|done[|failed]
+                                (plans carry their slice dir along)
+
+Query:
+  guild list <req|task|plan> [status]   List "<ID> <status>" lines
+  guild next                            Print next actionable task "<TASK-ID> <path>" or "none"
+  guild board                           Render the live board
+
+Environment:
+  GUILD_DIR   Guild root directory (default: .guild)
+EOF
+}
+
+# ---- dispatch --------------------------------------------------------------------
+
+main() {
+  [ $# -ge 1 ] || { cmd_help; return 1; }
+  local cmd="$1"; shift
+  case "$cmd" in
+    init)     cmd_init "$@" ;;
+    is-legacy) is_legacy ;;
+    migrate)  cmd_migrate "$@" ;;
+    new)      cmd_new "$@" ;;
+    path)     cmd_path "$@" ;;
+    read)     cmd_read "$@" ;;
+    status)   cmd_status "$@" ;;
+    slice)    cmd_slice "$@" ;;
+    move)     cmd_move "$@" ;;
+    list)     cmd_list "$@" ;;
+    next)     cmd_next "$@" ;;
+    next-id)  cmd_next_id "$@" ;;
+    board)    cmd_board "$@" ;;
+    help|-h|--help) cmd_help ;;
+    *) echo "guild: unknown command '$cmd' (try 'guild help')" >&2; return 1 ;;
+  esac
+}
+
+main "$@"

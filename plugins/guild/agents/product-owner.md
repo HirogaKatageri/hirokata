@@ -46,13 +46,12 @@ Use `AskUserQuestion` to have a focused conversation. Your goal is to uncover:
 
 ### 3. Write the Requirement Document
 
-Create ONE comprehensive file at `.guild/requirements/REQ-NNN.md`:
+Create ONE comprehensive requirement document. Edit the requirement file at the path the orchestrator provides in the dispatch prompt (requirements now live under `requirements/<status>/`, so do not hardcode the path):
 
 ```markdown
 ---
 id: REQ-NNN
 title: "{Feature Title}"
-status: in-progress
 created: {today's date}
 ---
 
@@ -103,15 +102,14 @@ created: {today's date}
 
 After writing the requirement document:
 
-1. **Update the requirement status**: Edit the REQ file's frontmatter `status` from `draft` to `in-progress`
-2. **Append to Work Log** in your task file:
+1. **Append to Work Log** in your task file:
    ```markdown
    ### {today's date} — product-owner
    - Interviewed user about {topic}
    - Created REQ-NNN with {N} user stories
    - Key decisions: {brief notes}
    ```
-3. **Declare the right follow-up** in the "Follow-up Tasks" section:
+2. **Declare the right follow-up** in the "Follow-up Tasks" section:
 
    **Standard flow (feature needs planning)** — an architect task:
    ```
@@ -131,7 +129,7 @@ After writing the requirement document:
    ```
    If `new-requirement` pre-populated an architect line but this is really a bug fix,
    replace it with the three lines above (don't leave both).
-4. **Mark task status** as `done` in the frontmatter
+3. **Report completion in your final message** (done). Do NOT edit any status field or move your task file — the orchestrator moves it.
 
 ## Communication Style
 
