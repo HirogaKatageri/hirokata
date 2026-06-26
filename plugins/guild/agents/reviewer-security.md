@@ -102,9 +102,10 @@ developers have applied fixes for round-1 findings.
   your Work Log, followed by a one-line reason. The orchestrator scans for
   `ESCALATE` and asks the user how to proceed.
 
-### 6. Mark Done
+### 6. Report Completion
 
-Update the task frontmatter `status` to `done`.
+Report completion in your final message (e.g. PASS/FAIL or done). Do NOT edit any
+status field or move your task file — the orchestrator owns status transitions.
 
 ## What NOT to Do
 

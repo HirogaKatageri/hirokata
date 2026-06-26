@@ -4,11 +4,11 @@ A Claude Code plugin for continuous agent orchestration through a persistent boa
 
 ## Overview
 
-The **guild** plugin manages an ongoing development workflow through a queue of ticket files. Each ticket owns its own status; a small `.guild/state.yaml` holds only the cursor and ID counters. There is **no `BOARD.md`** — the board is a live view rendered by scanning the ticket and requirement files. Each work session starts with a check-in: the orchestrator reports status, gathers input, and walks a cursor through the queue — dispatching one ticket at a time to specialized agents, materializing their follow-ups, and continuing to the next ticket.
+The **guild** plugin manages an ongoing development workflow through a queue of ticket files. A ticket's status is the **subdirectory it lives in** (`todo`/`in-progress`/`done`/`failed`) — there is no status field and no `BOARD.md`; the board is a live view rendered by scanning those directories. A small `.guild/state.yaml` holds only `last-checkin` (IDs and the cursor are derived from the filesystem). A dependency-free **`scripts/guild` CLI** performs every deterministic operation. Each work session starts with a check-in: the orchestrator reports status, gathers input, and walks a cursor through the queue — dispatching one ticket at a time to specialized agents, materializing their follow-ups, and continuing to the next ticket.
 
 ### Key Features
 
-- **Single source of truth**: status lives in each `TASK-NNN.md`; `state.yaml` holds only the cursor (`current`) and counters (`next-task`, `next-req`, `next-plan`). No duplicated board state to reconcile.
+- **Single source of truth**: status is the directory a ticket lives in; `state.yaml` holds only `last-checkin`. IDs and the cursor are derived from the filesystem — no counters, no duplicated board state to reconcile.
 - **Cursor-driven sequencing**: tickets run in creation (ID) order. Development is **sequential by default** — one developer ticket at a time — except when the architect tags dev tickets with a shared `parallel-group` (verified disjoint files), which the orchestrator dispatches concurrently.
 - **Automatic Agent Chains**: a new requirement flows through product-owner → architect → developers → test-writer → 4 parallel reviewers. The architect emits the test + review tail as real tickets up front.
 - **Per-requirement review gate**: reviewers run once all of a requirement's implementation tickets are done, and fan out 4-wide in parallel. Together with `parallel-group` dev batches, these are the system's two parallel cases.
@@ -222,13 +222,10 @@ The guild maintains a `.guild/` directory in your project:
 
 ```
 .guild/
-├── state.yaml                  # Cursor (current) + ID counters — the only orchestrator state file
-├── requirements/
-│   └── REQ-NNN.md              # One file per requirement
-├── tasks/
-│   └── TASK-NNN.md             # One file per task — OWNS its status, work log, and follow-ups
-├── plans/
-│   └── PLAN-NNN.md             # One file per implementation plan (+ slice files)
+├── state.yaml                  # Holds only `last-checkin` — the only orchestrator state file
+├── requirements/{todo,in-progress,done}/REQ-NNN.md   # status = which subdir
+├── tasks/{todo,in-progress,done,failed}/TASK-NNN.md  # status = which subdir
+├── plans/{todo,in-progress,done}/PLAN-NNN.md         # (+ PLAN-NNN/ slice dir alongside)
 ├── docs/                       # Evergreen knowledge base (researcher findings)
 │   └── {topic-slug}.md         # One file per topic; updated in place on overlap
 ├── qa/                         # Evergreen QA artifacts (charter, missions, ledger, manifest)
@@ -236,22 +233,28 @@ The guild maintains a `.guild/` directory in your project:
     └── {version}/              # Archived requirements, plans, tasks per release
 ```
 
-There is **no `BOARD.md`**. Status lives in each `TASK-NNN.md` (`todo` → `in-progress` → `done` / `failed`); the "board" is rendered live by scanning the ticket and requirement files. `state.yaml` holds only:
+There is **no `BOARD.md`** and **no `status` frontmatter field**. A ticket's status is the
+**subdirectory it lives in** (`todo` → `in-progress` → `done` / `failed`); the "board" is rendered
+live by scanning those directories. IDs are **derived** from the filesystem (max existing + 1, archive
+included) and the cursor is **derived** (whatever sits in `tasks/in-progress/`), so `state.yaml` holds
+only:
 
 ```yaml
-current: TASK-005     # the ticket the orchestrator is on (derived cache)
-next-task: 6
-next-req: 2
-next-plan: 1
 last-checkin: 2026-06-23
 ```
 
+All deterministic board operations go through the **guild CLI** at `scripts/guild` (invoked as
+`${CLAUDE_PLUGIN_ROOT}/scripts/guild` — see `scripts/README.md`): `new req|task|plan`, `next`, `move`,
+`path`, `read`, `slice`, `list`, `board`, plus `migrate` for converting a pre-3.0 flat-file guild. The
+**orchestrator owns every status transition** (`guild move`); agents report completion and never move
+their own files.
+
 **`.guild/docs/`** is the guild's persistent knowledge base. The researcher writes findings here (not to task work logs), and the architect reads these docs during codebase analysis — so prior research informs new plans without re-dispatching the researcher. Docs are evergreen: they survive `guild:clear-board` and `guild:release`.
 
-The live board view groups tickets by status:
-- **In Progress** — tickets with `status: in-progress`
-- **Backlog** — `todo` tickets, walked by the cursor in ID order
-- **Recently Completed** — most recent `done` tickets
+The live board view (`guild board`) groups tickets by status:
+- **In Progress** — tickets in `tasks/in-progress/`
+- **Backlog** — tickets in `tasks/todo/`, walked by the cursor in ID order
+- **Recently Completed** — most recent tickets in `tasks/done/`
 - **Requirements** — all requirements with live-computed progress counters
 
 ## Quick Start
@@ -282,6 +285,9 @@ clear the board
 guild/
 ├── .claude-plugin/
 │   └── plugin.json                     # Plugin manifest
+├── scripts/
+│   ├── guild                           # Deterministic board CLI (status = directory)
+│   └── README.md                       # CLI reference
 ├── agents/
 │   ├── architect.md
 │   ├── developer.md
@@ -301,8 +307,8 @@ guild/
     │   ├── SKILL.md
     │   └── references/
     │       ├── agent-chains.md         # Agent chain patterns
-    │       ├── state-format.md         # state.yaml, ticket-owned status, live board view, cursor
-    │       └── task-lifecycle.md       # Task file format and status transitions
+    │       ├── state-format.md         # state.yaml, directory-encoded status, live board, the CLI
+    │       └── task-lifecycle.md       # Task file format and status (= directory) transitions
     ├── clear-board/
     │   └── SKILL.md
     ├── comprehensive-review/

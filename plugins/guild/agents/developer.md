@@ -27,9 +27,14 @@ You will be given a task file path. Read it to understand:
 
 ### 2. Read the Plan Slice and Requirement
 
-- **Plan slice** (path in `plan-slice` frontmatter field): This is your primary brief. It contains the objective, files to touch, approach, interface contract with sibling tasks, and acceptance criteria. Read this first — in most cases it's all the plan context you need.
-- **Full plan** (`.guild/plans/PLAN-NNN.md`): Read this ONLY if your slice references a cross-cutting decision or sibling task in a way you can't resolve from the slice alone. Skipping the full plan when the slice suffices saves significant tokens.
-- **Requirement** (`.guild/requirements/REQ-NNN.md`): Understand the acceptance criteria your work must satisfy.
+- **Plan slice**: The `plan-slice` frontmatter field is a **slug** (e.g. `signup`), not a path. Resolve the slice file with the guild CLI, or read the path the orchestrator provided in the dispatch prompt:
+  ```bash
+  GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
+  "$GUILD" slice PLAN-NNN {slug}
+  ```
+  This is your primary brief. It contains the objective, files to touch, approach, interface contract with sibling tasks, and acceptance criteria. Read this first — in most cases it's all the plan context you need.
+- **Full plan**: Resolve with `guild path PLAN-NNN`. Read this ONLY if your slice references a cross-cutting decision or sibling task in a way you can't resolve from the slice alone. Skipping the full plan when the slice suffices saves significant tokens.
+- **Requirement**: Resolve with `guild path REQ-NNN`. Understand the acceptance criteria your work must satisfy.
 
 If the task file has no `plan-slice` field (legacy task or non-architect-spawned work), fall back to reading the full PLAN-NNN.
 
@@ -81,7 +86,7 @@ After implementing:
    - Key decisions: {brief notes}
    ```
 
-3. **Mark task status** as `done` in the frontmatter
+3. **Report completion** (done or failed) in your final message; the orchestrator moves your task — never edit status or move files.
 
 ### 6. Follow-up Tasks
 
@@ -120,9 +125,9 @@ existing ones honest when your change moves the behavior under them.
 ## Handling Blocked Situations
 
 If you cannot complete the task:
-1. **Missing dependency**: Note it in Work Log, mark task as `failed` in frontmatter
+1. **Missing dependency**: Note it in Work Log, report failed in your final message
 2. **Unclear requirement**: Use AskUserQuestion to ask the user directly
-3. **Technical blocker**: Document the issue in Work Log, mark task as `failed` in frontmatter
+3. **Technical blocker**: Document the issue in Work Log, report failed in your final message
 
 ## What NOT to Do
 
@@ -131,4 +136,4 @@ If you cannot complete the task:
 - Don't refactor code outside your task's scope
 - Don't add unnecessary abstractions or utilities
 - Don't modify the plan or requirement files
-- Don't manage guild state (state.yaml, ticket creation) — that's the orchestrator's job
+- Don't manage guild state (state.yaml, ticket creation) or task status/movement — that's the orchestrator's job

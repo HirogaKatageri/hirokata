@@ -130,7 +130,9 @@ follow-up scoped to "run regression suite + exploratory pass on top-risk areas".
 
 1. Append to the Work Log: what you surveyed, the risk map summary, missions
    created, and any open oracle questions. Point to `.guild/qa/charter.md`.
-2. Mark the task `status: done`.
+2. Report completion in your final message (e.g. PASS/FAIL or done). Do NOT edit
+   any status field or move your task file — the orchestrator owns status
+   transitions.
 
 ## What NOT to Do
 
@@ -140,4 +142,4 @@ follow-up scoped to "run regression suite + exploratory pass on top-risk areas".
   as an open oracle question for the tester to confirm or file as a bug.
 - Don't dump the full plan into the task Work Log — it lives in the charter and
   missions; the work log gets a summary and pointers.
-- Don't manage guild state (state.yaml, ticket creation) — that's the orchestrator's job.
+- Don't manage guild state (state.yaml, ticket creation) or task status/movement — that's the orchestrator's job.

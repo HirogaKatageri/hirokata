@@ -136,7 +136,9 @@ against (if any). One manifest entry per fixed bug — this is what makes the su
    bugs filed, and the pass status of the suite.
 3. Declare follow-ups: developer fix tasks for bugs, and a developer follow-up to
    set up Playwright if it was missing.
-4. Mark the task `status: done`.
+4. Report completion in your final message (e.g. PASS/FAIL or done). Do NOT edit
+   any status field or move your task file — the orchestrator owns status
+   transitions.
 
 ## What NOT to Do
 
@@ -145,4 +147,4 @@ against (if any). One manifest entry per fixed bug — this is what makes the su
 - Don't assert suspect behavior as correct — file it or ask the user.
 - Don't put committed specs under `.guild/` — they live in the repo's e2e dir and
   run in CI. `.guild/qa/` holds the manifest, ledger, sessions, and charter only.
-- Don't manage guild state (state.yaml, ticket creation) — that's the orchestrator's job.
+- Don't manage guild state (state.yaml, ticket creation) or task status/movement — that's the orchestrator's job.

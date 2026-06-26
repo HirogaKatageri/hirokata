@@ -8,7 +8,7 @@ description: >
   end-to-end regression coverage. Seeds the guild's independent QA discipline:
   a qa-strategist plans risk-based coverage, then qa-testers run the app and
   author Playwright specs while filing bugs back to the board.
-version: 1.0.0
+version: 2.0.0
 user-invocable: true
 arguments:
   - name: scope
@@ -61,55 +61,40 @@ Parse from `$ARGUMENTS` / user input:
 
 ## Step 4: Ensure the QA Umbrella Requirement
 
+Bind the CLI: `GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"`.
+
 QA tasks must anchor to a requirement. Reuse a single evergreen QA umbrella REQ
-across passes. Glob `.guild/requirements/` for one titled "Product QA & E2E
-Regression". If none exists, create it using the next `next-req` counter from
-`.guild/state.yaml`:
+across passes. Look for an existing one titled "Product QA & E2E Regression" by
+scanning the requirement files listed by `"$GUILD" list req` (read each title). If
+none exists, create it (the CLI derives the ID and writes the stub into
+`requirements/todo/`):
 
-```markdown
----
-id: REQ-NNN
-title: "Product QA & E2E Regression"
-status: in-progress
-created: {today}
----
-
-# Product QA & E2E Regression
-
-## Summary
-Umbrella for the guild's independent QA discipline: risk-based coverage planning,
-empirical testing of the running product, end-to-end regression specs, and bug
-findings. Standing — not tied to a single feature.
-
-## User Stories
-_QA missions and findings attach here; see `.guild/qa/charter.md`._
-
-## Technical Considerations
-E2e specs live in the project's real test dir and run in CI. Devs co-maintain
-specs when feature changes alter asserted behavior.
-
-## Out of Scope
-Unit tests (owned by test-writer).
+```bash
+REQ=$("$GUILD" new req --title "Product QA & E2E Regression" \
+  --desc "Umbrella for the guild's independent QA discipline: risk-based coverage planning, empirical testing of the running product, end-to-end regression specs, and bug findings. Standing — not tied to a single feature." \
+  --date {today} | awk '{print $1}')
+"$GUILD" move "$REQ" in-progress   # the umbrella is standing/evergreen
 ```
 
-Increment `next-req` in `.guild/state.yaml` if the requirement was newly created.
+Then Edit the umbrella REQ file (`"$GUILD" path "$REQ"`) to flesh out the User
+Stories / Technical Considerations / Out of Scope sections as needed (e2e specs
+live in the project's real test dir and run in CI; unit tests stay out of scope —
+owned by test-writer). There is no `status` field — its directory is its status.
 
 ## Step 5: Seed the QA Strategist Task
 
-Read `next-task` from `.guild/state.yaml`. Create `.guild/tasks/TASK-NNN.md`:
+Create the strategist task with the CLI (it derives the ID and writes into
+`tasks/todo/`):
+
+```bash
+TASK=$("$GUILD" new task --title "QA strategy: {scope}" --agent qa-strategist \
+  --req "$REQ" --date {today} | awk '{print $1}')
+```
+
+Then Edit the new task file (`"$GUILD" path "$TASK"`) to set its Objective,
+Context, and Acceptance Criteria:
 
 ```markdown
----
-id: TASK-NNN
-title: "QA strategy: {scope}"
-agent: qa-strategist
-status: todo
-requirement: REQ-NNN
-plan: null
-priority: high
-created: {today}
----
-
 ## Objective
 
 Plan a {mode} QA pass for: {scope}. Build/refresh the charter, risk map, and
@@ -117,7 +102,7 @@ coverage matrix, then declare qa-tester missions.
 
 ## Context
 
-- Requirement: .guild/requirements/REQ-NNN.md
+- Requirement: {REQ id}
 - Mode: {full | cadence}
 - Scope: {product | named area}
 - Charter: .guild/qa/charter.md (create or update in place)
@@ -127,13 +112,9 @@ coverage matrix, then declare qa-tester missions.
 - [ ] Oracle sources resolved (specs / board / code+app / user)
 - [ ] Charter written with quality definition, risk map, coverage matrix
 - [ ] Missions declared as qa-tester follow-ups, prioritized by risk
-
-## Work Log
-
-## Follow-up Tasks
 ```
 
-Increment `next-task` in `.guild/state.yaml`. The task is now discoverable by scanning `.guild/tasks/`.
+The task now lives in `tasks/todo/` and is discoverable by `"$GUILD" next`.
 
 ## Step 6: Confirm and Offer to Run
 
@@ -188,7 +169,8 @@ suite green and extends coverage over time without rebuilding the charter.
 ## Rules
 
 - **Never overwrite** the charter/ledger/regression manifest — update in place.
-- **Always increment counters** to avoid ID collisions.
+- **IDs are derived by the CLI** — never hand-assign or maintain counters.
+- **No `status` field** — an artifact's status is the directory it lives in.
 - **Committed specs live in the repo's e2e dir**, never under `.guild/`.
 - **Don't bake in bugs** — suspect behavior is filed or asked, never asserted as
   correct (the hybrid oracle rule).

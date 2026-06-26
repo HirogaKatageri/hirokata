@@ -6,7 +6,7 @@ description: >
   "queue a feature", "I want to build", or wants to add a new work item to the
   guild board. Creates a requirement stub and a product-owner task to gather
   the full details.
-version: 1.0.0
+version: 2.0.0
 user-invocable: true
 arguments:
   - name: title
@@ -21,6 +21,12 @@ arguments:
 
 Create a new requirement stub and a task for the product-owner to gather full details.
 
+All deterministic state operations go through the guild CLI. Bind it once:
+
+```bash
+GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
+```
+
 ## Arguments
 
 Parse from `$ARGUMENTS` or user input:
@@ -34,7 +40,7 @@ Parse from `$ARGUMENTS` or user input:
 
 ### 1. Check for Guild
 
-Read `.guild/state.yaml`.
+Read `.guild/state.yaml` (it holds only `last-checkin`).
 
 If not found:
 ```
@@ -44,7 +50,15 @@ Stop here.
 
 ### 1.5. Offer to Clear the Board
 
-If the board has any existing requirements, tasks, or plans (check the `.guild/requirements/`, `.guild/tasks/`, `.guild/plans/` directories), ask the user:
+Detect existing items via the CLI rather than counting files:
+
+```bash
+"$GUILD" list req
+"$GUILD" list task
+"$GUILD" list plan
+```
+
+If any of these print items, ask the user (use the counts from the list output):
 
 ```
 The guild board currently has {N} requirements, {N} tasks, and {N} plans.
@@ -55,7 +69,7 @@ Clear the board before adding this new requirement? (yes / no)
 
 **If "no"**: Proceed without changes.
 
-If the board is empty, skip this step.
+If all three lists are empty, skip this step.
 
 ### 2. Gather Details
 
@@ -69,103 +83,50 @@ If `description` is not provided, ask the user:
 Briefly describe what you need. The product-owner will gather full details later.
 ```
 
-### 3. Read State Counters
+### 3. Create the Requirement Stub
 
-Read `.guild/state.yaml` to get:
-- `next-req` → use as REQ ID
-- `next-task` → use as TASK ID
+Run the CLI — it derives the next ID, scaffolds the template (Summary / User Stories /
+Technical Considerations / Out of Scope, no status field) in `requirements/todo/`, and prints
+`REQ-NNN <path>`. `--desc` populates the Summary section.
 
-Zero-pad IDs to 3 digits (e.g., `1` → `001`).
-
-### 4. Create Requirement Stub
-
-Write `.guild/requirements/REQ-NNN.md`:
-
-```markdown
----
-id: REQ-NNN
-title: "{title}"
-status: draft
-created: {today's date}
----
-
-# {title}
-
-## Summary
-
-{description}
-
-## User Stories
-
-_To be gathered by the product-owner._
-
-## Technical Considerations
-
-_To be determined._
-
-## Out of Scope
-
-_To be determined._
+```bash
+read REQ _ < <("$GUILD" new req --title "{title}" --desc "{description}" --date {today})
 ```
 
-### 5. Create Product-Owner Task
+`$REQ` is now the requirement ID (e.g. `REQ-001`).
 
-Write `.guild/tasks/TASK-NNN.md`:
+### 4. Create the Product-Owner Task
 
-```markdown
----
-id: TASK-NNN
-title: "Gather requirements for {title}"
-agent: product-owner
-status: todo
-requirement: REQ-NNN
-plan: null
-priority: high
-created: {today's date}
----
+Run the CLI — it derives the next ID, scaffolds the task template in `tasks/todo/`, and prints
+`TASK-NNN <path>`. Capture both the ID and the path.
 
-## Objective
+```bash
+read TASK TASK_PATH < <("$GUILD" new task \
+  --title "Gather requirements for {title}" \
+  --agent product-owner \
+  --req "$REQ" \
+  --date {today})
+```
 
-Interview the user and gather comprehensive requirements for: {title}
+### 5. Add the Follow-up
 
-{description}
+Edit the new task file at `$TASK_PATH` and add this line under its `## Follow-up Tasks` section:
 
-## Context
-
-- Requirement: .guild/requirements/REQ-NNN.md
-
-## Acceptance Criteria
-
-- [ ] Requirement document fully written with user stories
-- [ ] Acceptance criteria defined for each story
-- [ ] Edge cases identified
-- [ ] Technical considerations documented
-- [ ] Out of scope clearly defined
-
-## Work Log
-
-## Follow-up Tasks
-
+```
 - Plan {title} implementation | agent: architect | priority: high
 ```
 
-### 6. Update state.yaml
+The standard chain starts with an architect planning task once the product-owner has gathered
+the requirement.
 
-Using the Edit tool, increment counters in `.guild/state.yaml`:
-- `next-req` → increment by 1
-- `next-task` → increment by 1
-
-The new requirement and task are now discoverable by scanning their files — there is no board
-table to update.
-
-### 7. Confirm
+### 6. Confirm
 
 ```
 Requirement created!
 
-  Requirement: REQ-NNN — {title}
-  Task: TASK-NNN — Gather requirements for {title} (product-owner)
-  Status: Added to backlog
+  Requirement: {REQ} — {title}
+  Task: {TASK} — Gather requirements for {title} (product-owner)
+  Status: Added to backlog (tasks/todo/)
 
 The product-owner will gather full details during the next work cycle.
 Run /guild:check-in to start working.
@@ -173,9 +134,11 @@ Run /guild:check-in to start working.
 
 ## Rules
 
-- **Never overwrite** existing files — if REQ-NNN.md already exists, something went wrong with counters
-- **Always increment counters** — prevent ID collisions
-- **Keep the stub minimal** — the product-owner will flesh it out
-- **Pre-populate Follow-up Tasks** — the standard chain starts with an architect task
-
-- **No board tables** — requirements and tasks are discovered by scanning their files; `state.yaml` holds only counters
+- **IDs are derived by the CLI** — never hand-assign or zero-pad IDs yourself; `guild new`
+  computes the next ID from the filesystem.
+- **No `status` field** — status is the containing directory. `guild new req`/`guild new task`
+  place artifacts in `requirements/todo/` and `tasks/todo/` directly.
+- **Keep the stub minimal** — the product-owner will flesh it out.
+- **Pre-populate Follow-up Tasks** — the standard chain starts with an architect task.
+- **No counters** — `state.yaml` holds only `last-checkin`; there are no `next-req`/`next-task`
+  counters to read or increment.

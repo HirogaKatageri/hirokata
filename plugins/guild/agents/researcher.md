@@ -146,9 +146,9 @@ the architect's research gate), leave "Follow-up Tasks" empty.
 If no follow-up is needed (research was informational):
 Leave "Follow-up Tasks" empty.
 
-### 7. Mark Task Done
+### 7. Report Completion
 
-Update your task file's frontmatter `status` to `done`.
+Report completion (done) in your final message. Do NOT edit any status field or move your task file — the orchestrator moves it.
 
 ## What NOT to Do
 

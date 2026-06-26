@@ -5,7 +5,7 @@ description: >
   "show the board", "what's on the board", "project status", "show guild",
   "guild board", or "what's happening". Shows a quick read-only view of the guild
   board without starting the work cycle.
-version: 1.0.0
+version: 2.0.0
 user-invocable: true
 ---
 
@@ -17,7 +17,7 @@ Display the current state of the guild board without starting a work session.
 
 ### 1. Check for Guild
 
-Read `.guild/state.yaml`.
+Read `.guild/state.yaml` (it holds only `last-checkin`).
 
 If not found:
 ```
@@ -27,41 +27,46 @@ Stop here.
 
 ### 2. Render the Board Live
 
-There is no `BOARD.md`. Build the view by scanning files (see `check-in/references/state-format.md`):
-- Glob `.guild/tasks/*.md`, read each frontmatter, and group by `status`: In Progress
-  (`in-progress`), Backlog (`todo`), Recently Completed (`done`, newest IDs first), plus any `failed`.
-- Glob `.guild/requirements/*.md` for the Requirements list; compute each REQ's progress as
-  `done-tickets / total-tickets` by counting its tasks.
-- Read `last-checkin` from `.guild/state.yaml`.
+The board is a live view rendered by the CLI scanning the status directories — there is no stored
+board file. Bind the CLI and run `board`:
+
+```bash
+GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
+"$GUILD" board
+```
+
+`guild board` already groups **In Progress**, **Backlog**, **Recently Completed**, and any
+**Failed** tasks, lists **Requirements** with their `done/total` progress, and prints the
+**Last check-in** date. It does not modify anything.
 
 ### 3. Display Status
 
-Present a formatted summary:
+Present the `guild board` output to the user. A typical rendering:
 
 ```
 Guild Board
 ===========
 
 In Progress ({count}):
-  TASK-003: Implement auth service (developer) — since 2026-04-07
-  TASK-004: Review database schema (reviewer) — since 2026-04-07
+  TASK-003: Implement auth service (developer)
+  TASK-004: Review database schema (reviewer)
 
 Backlog ({count}):
-  TASK-005: Implement login endpoint (developer) — high
-  TASK-006: Plan payment feature (architect) — medium
+  TASK-005: Implement login endpoint (developer)
+  TASK-006: Plan payment feature (architect)
 
 Recently Completed ({count}):
-  TASK-002: Design auth architecture (architect) — 2026-04-07
-  TASK-001: Gather auth requirements (product-owner) — 2026-04-07
+  TASK-002: Design auth architecture (architect)
+  TASK-001: Gather auth requirements (product-owner)
 
 Requirements:
   REQ-001: User Authentication — in-progress (3/6 done)
-  REQ-002: Payment Integration — draft (0/1 done)
+  REQ-002: Payment Integration — todo (0/1 done)
 
 Last check-in: 2026-04-07
 ```
 
-If all sections are empty:
+If the board is empty:
 ```
 Guild Board
 ===========
@@ -71,6 +76,6 @@ The board is empty. Run /guild:check-in to start a work session.
 
 ## Rules
 
-- **Read-only** — do not modify `state.yaml` or any guild files
+- **Read-only** — `guild board` only scans directories; do not modify `state.yaml` or any guild files
 - **No work execution** — just display status and stop
 - **Keep it brief** — this is a quick glance, not a full check-in
