@@ -12,9 +12,9 @@ The **guild** plugin manages an ongoing development workflow through a queue of 
 - **Parallel development by default**: the architect designs plan slices with disjoint file sets and groups them into `parallel-group` waves; the orchestrator dispatches each wave concurrently in the shared working tree. Ungrouped (foundational) tickets run solo in ID order.
 - **Automatic Agent Chains**: a new requirement flows through product-owner → architect → parallel developers → test-planner → test-writer (unit & integration) → 4 parallel reviewers. The architect emits the test-planning + review tail as real tickets up front.
 - **Dedicated test planning**: after development, a test-planner inventories the diff and writes a test plan (`slice-test-plan.md`); the test-writer implements it and the reviewers reuse its Changed Files Inventory to scope their reading — the analysis is done once, not three times.
-- **Per-requirement review gate**: reviewers run once all of a requirement's other tickets are done, and fan out 4-wide in parallel.
-- **Session-Based Workflow**: each check-in resumes exactly where the last session ended; the work cycle flows continuously, pausing only on failures, escalations, or requirement completion.
-- **Stale Task Recovery**: tickets interrupted mid-session are detected and handled on the next check-in.
+- **Per-requirement review gate**: reviewers run once all of a requirement's other tickets have left todo/in-progress (done, or user-waived in `failed/`), and fan out 4-wide in parallel.
+- **Session-Based Workflow**: each check-in resumes exactly where the last session ended; the work cycle flows continuously, pausing only on failures, escalations, or requirement completion. A "let's get to work" trigger resumes with zero routing questions.
+- **Crash-Safe Resume**: agents log a start entry and milestones, so an interrupted ticket is triaged three ways on the next check-in — never-started tickets are re-queued, finished-but-unrecorded tickets are recorded without re-running the agent, and half-done tickets resume from their Work Log. Follow-ups are materialized (and annotated ` → TASK-NNN` for idempotence) *before* a ticket is moved to done, so a crash can never strand a requirement's pipeline.
 
 ## The Agent Chain
 
@@ -59,7 +59,7 @@ The main orchestrator skill. Starts or resumes a work session, reports status, g
 **What it does:**
 1. Initializes `.guild/` and `state.yaml` on first use, or loads existing state
 2. Reports in-progress tickets, recent completions, backlog, and requirement status (rendered live from a file scan)
-3. Gathers user input (continue / new requirement / review / adjust priorities)
+3. Routes the session — a work-intent trigger resumes immediately; otherwise asks (continue / new requirement / review / adjust the backlog)
 4. Walks the cursor: dispatch → complete → materialize follow-ups → advance → repeat
 5. Presents a session summary when the work cycle ends
 
@@ -193,7 +193,7 @@ running product with adversarial "what-if" inputs.
 2. Seeds a `qa-strategist` task for the requested scope (whole product or a named flow), in `full` or `cadence` mode
 3. The strategist resolves the oracle (internal specs → external board via MCP → code + running app → user), builds a risk map and coverage matrix, and declares `qa-tester` missions
 4. `qa-tester` agents run the app, apply the what-if catalog, author e2e specs (hybrid oracle: lock good behavior, flag suspect behavior as bugs, ask the user when ambiguous), and file developer fix tasks
-5. Bugs flow through the normal bug-fix chain; on fix, a re-verify qa-tester confirms and the spec joins the regression manifest
+5. Each bug files a developer fix ticket paired with a re-verify qa-tester ticket; the re-verify confirms the fix empirically and the spec joins the regression manifest
 
 QA artifacts (`charter`, `missions`, `sessions`, `ledger`, `regression` manifest)
 live under `.guild/qa/` and are **evergreen** — they survive releases and board
@@ -248,10 +248,10 @@ last-checkin: 2026-06-23
 ```
 
 All deterministic board operations go through the **guild CLI** at `scripts/guild` (invoked as
-`${CLAUDE_PLUGIN_ROOT}/scripts/guild` — see `scripts/README.md`): `new req|task|plan`, `next`, `move`,
-`path`, `read`, `slice`, `list`, `board`, plus `migrate` for converting a pre-3.0 flat-file guild. The
-**orchestrator owns every status transition** (`guild move`); agents report completion and never move
-their own files.
+`${CLAUDE_PLUGIN_ROOT}/scripts/guild` — see `scripts/README.md`): `new req|task|plan`, `next`,
+`batch`, `move`, `path`, `read`, `meta`, `slice`, `list`, `board`, plus `migrate` for converting a
+pre-3.0 flat-file guild. The **orchestrator owns every status transition** (`guild move`); agents
+report completion and never move their own files.
 
 **`.guild/docs/`** is the guild's persistent knowledge base. The researcher writes findings here (not to task work logs), and the architect reads these docs during codebase analysis — so prior research informs new plans without re-dispatching the researcher. Docs are evergreen: they survive `guild:clear-board` and `guild:release`.
 

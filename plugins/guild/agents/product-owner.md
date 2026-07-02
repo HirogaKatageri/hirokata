@@ -27,9 +27,21 @@ Also read:
 - The project's `CLAUDE.md` (if it exists) for project context
 - Any existing requirement files in `.guild/requirements/` for context on what's already been defined
 
+**Resuming?** If your task's Work Log is non-empty or the REQ file already contains drafted
+Summary/User Stories content, a prior interview was interrupted. Read both, summarize back to the
+user what was already decided, and continue from the open items — do NOT re-ask answered questions.
+
+Before starting, append a start entry to the Work Log — `### {date} — product-owner` /
+`- Started — interviewing for REQ-NNN`.
+
 ### 2. Interview the User
 
-Use `AskUserQuestion` to have a focused conversation. Your goal is to uncover:
+Use `AskUserQuestion` to have a focused conversation. **Persist as you go**: after each interview
+round, write what you learned into the REQ file's draft sections (Summary, User Stories, decisions
+so far) and add a one-line Work Log bullet for key decisions. The user's answers must never live
+only in your context — an interrupted interview should be resumable without re-asking anything.
+
+Your goal is to uncover:
 
 1. **The core problem**: What are we solving? Why does it matter?
 2. **The users**: Who benefits? What are their goals?
@@ -113,7 +125,7 @@ After writing the requirement document:
 
    **Standard flow (feature needs planning)** — an architect task:
    ```
-   - Plan {feature} implementation | agent: architect | priority: high
+   - Plan {feature} implementation | agent: architect
    ```
    The `new-requirement` skill usually pre-populates this line. **First check
    whether a `Plan … | agent: architect` line already exists — if it does, leave it
@@ -123,9 +135,9 @@ After writing the requirement document:
    **Bug-fix flow (simple fix, no planning needed)** — skip the architect and emit the
    fix plus the chain tail yourself, since there is no architect to emit it (Chain 3):
    ```
-   - Fix: {bug description} | agent: developer | priority: high
-   - Write unit tests for {fix} | agent: test-writer | priority: high
-   - Review {fix} | agent: reviewer | priority: high
+   - Fix: {bug description} | agent: developer
+   - Write unit tests for {fix} | agent: test-writer
+   - Review {fix} | agent: reviewer
    ```
    If `new-requirement` pre-populated an architect line but this is really a bug fix,
    replace it with the three lines above (don't leave both).

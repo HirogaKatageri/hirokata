@@ -55,20 +55,21 @@ dev → test-plan → tests → review.
 
 **Follow-up declaration:**
 ```
-- Plan {feature} implementation | agent: architect | priority: high
+- Plan {feature} implementation | agent: architect
 ```
 
 ### Step 2: Architect
 
 **Input task title pattern:** "Plan {feature} implementation"
 
-**Follow-up declaration (dev tickets + the tail):**
+**Follow-up declaration (dev tickets + the tail — every line carries `plan:`, since the
+architect's own ticket predates the plan):**
 ```
-- Implement {component-1} | agent: developer | priority: high | plan-slice: {slug-1}
-- Implement {component-2} | agent: developer-svelte | priority: high | plan-slice: {slug-2} | parallel-group: A
-- Implement {component-3} | agent: developer | priority: medium | plan-slice: {slug-3} | parallel-group: A
-- Plan tests for {feature} | agent: test-planner | priority: high
-- Review {feature} implementation | agent: reviewer | priority: high
+- Implement {component-1} | agent: developer | plan: PLAN-NNN | plan-slice: {slug-1}
+- Implement {component-2} | agent: developer-svelte | plan: PLAN-NNN | plan-slice: {slug-2} | parallel-group: A
+- Implement {component-3} | agent: developer | plan: PLAN-NNN | plan-slice: {slug-3} | parallel-group: A
+- Plan tests for {feature} | agent: test-planner | plan: PLAN-NNN
+- Review {feature} implementation | agent: reviewer | plan: PLAN-NNN
 ```
 
 The `plan-slice` value is the slice **slug** (e.g. `signup`), not a path — agents resolve the
@@ -111,8 +112,8 @@ discover a genuine blocker mid-work.
 - Declare the test-writer ticket(s) — one combined, or one unit + one integration — each carrying
   `plan-slice: test-plan`:
   ```
-  - Write unit tests for {feature} | agent: test-writer | priority: high | plan-slice: test-plan
-  - Write integration tests for {feature} | agent: test-writer | priority: high | plan-slice: test-plan
+  - Write unit tests for {feature} | agent: test-writer | plan-slice: test-plan
+  - Write integration tests for {feature} | agent: test-writer | plan-slice: test-plan
   ```
 
 ### Step 5: Test Writer
@@ -160,14 +161,14 @@ Two entry points:
 
 **2a. Product owner declares research upfront:**
 ```
-- Research {technology/approach} for {feature} | agent: researcher | priority: high
-- Plan {feature} implementation | agent: architect | priority: high
+- Research {technology/approach} for {feature} | agent: researcher
+- Plan {feature} implementation | agent: architect
 ```
 
 **2b. Architect triggers the research gate** (discovers mid-analysis it cannot plan responsibly):
 ```
-- Research {specific topic} for {feature} | agent: researcher | priority: high
-- Plan {feature} implementation (post-research) | agent: architect | priority: high
+- Research {specific topic} for {feature} | agent: researcher
+- Plan {feature} implementation (post-research) | agent: architect
 ```
 
 In both cases the researcher ticket is created **before** the post-research architect ticket, so it
@@ -191,9 +192,9 @@ product-owner → developer → test-writer → reviewer
 
 **Product owner declares:**
 ```
-- Fix: {bug description} | agent: developer | priority: high
-- Write unit tests for {fix} | agent: test-writer | priority: high
-- Review {fix} | agent: reviewer | priority: high
+- Fix: {bug description} | agent: developer
+- Write unit tests for {fix} | agent: test-writer
+- Review {fix} | agent: reviewer
 ```
 
 With no `plan-slice`, the test-writer falls back to deriving scope from the developer's Work Log,
@@ -245,7 +246,8 @@ E2E Regression" umbrella requirement. QA is never auto-spawned after a developer
 ```
 qa-strategist (charter + risk map + coverage matrix)
   └→ qa-tester ×N, run SEQUENTIALLY (run the product, explore, author Playwright specs)
-      ├→ bugs → developer fix tickets (Chain 3 bug-fix flow) → re-verify qa-tester
+      ├→ bugs → developer fix tickets, each paired with a re-verify qa-tester ticket
+      │         (the re-verify IS the verification tail — no test-writer/reviewer)
       └→ confirmed-good high-risk paths → committed e2e specs + regression manifest
 ```
 

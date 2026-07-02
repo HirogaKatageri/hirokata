@@ -19,16 +19,23 @@ Orchestrates five specialized review agents in parallel to provide a complete, m
 
 ### Step 1: Identify Review Scope
 
-1. **Find requirements documents** — look in `requirements/`, `docs/`, `planning/`, or phase plan files (`phase-1.md` through `phase-8.md`). If none found, ask the user.
+1. **Find requirements documents** — check the guild board first: if `.guild/` exists, read the
+   relevant `REQ-NNN.md` under `.guild/requirements/{in-progress,done}/` and the linked plan
+   (`.guild/plans/<status>/PLAN-NNN.md` plus its slices) for the feature being reviewed. Otherwise
+   fall back to `requirements/`, `docs/`, `planning/`, or phase plan files. If none found, ask the
+   user.
 2. **Identify recent changes** — use `git log` and `git diff` to understand scope
 3. **Confirm scope** — if unclear which requirements or commits to include, ask
+
+> Board-driven review of a guild requirement is normally handled by the check-in pipeline's
+> `reviewer` gate; this skill is the read-only, on-demand surface for ad-hoc "am I ready?" checks.
 
 ### Step 2: Launch All Five Agents in Parallel
 
 Launch all agents in a **single message** using multiple Task tool calls. Include specific file paths and context in each prompt so agents don't waste time on discovery.
 
 **product-reviewer:**
-> "Review recent changes against [requirements-file]. Map each requirement to its implementation. Flag anything missing or partially implemented. The project uses an 8-phase clean architecture structure."
+> "Review recent changes against [requirements-file]. Map each requirement to its implementation. Flag anything missing or partially implemented. [State the project's architecture conventions only if a plan or phase document actually defines them.]"
 
 **reviewer-business-logic:**
 > "Review recent changes for business logic testability and unit test coverage. Focus on services, use cases, and domain logic. Flag untestable patterns (hard-coded dependencies, global state, non-determinism) and missing unit tests."
@@ -37,7 +44,7 @@ Launch all agents in a **single message** using multiple Task tool calls. Includ
 > "Review recent changes for unhandled edge cases: null/undefined access, empty collections, boundary values, error scenarios (network timeout, DB failure, API errors), date/time issues, and concurrency problems."
 
 **reviewer-architecture:**
-> "Review recent changes for clean architecture compliance. Check dependency direction (inner layers must not depend on outer), layer separation (business logic out of UI), and correct phase placement using the 8-phase structure: Phase 1 Foundational → Phase 2 Models → Phase 3 Services → Phase 4 Data → Phase 5 Rules → Phase 6 State → Phase 7 UI → Phase 8 Tests."
+> "Review recent changes for architecture compliance. Check dependency direction (inner layers must not depend on outer), layer separation (business logic out of UI), and consistency with the project's established structure. [Cite the plan's architectural decisions or the project's documented conventions — do not assume a phase methodology unless a plan document defines one.]"
 
 **reviewer-security:**
 > "Review recent changes for security vulnerabilities: injection flaws (SQL, command, template), authentication/authorization issues, sensitive data exposure, hardcoded secrets, weak cryptography (MD5/SHA1/DES), XSS, CSRF, and missing input validation. Reference OWASP Top 10."

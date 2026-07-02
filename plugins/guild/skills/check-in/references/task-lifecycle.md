@@ -92,7 +92,7 @@ tasks/todo/  → tasks/in-progress/  → tasks/done/
 | `tasks/todo/` | Ready to be picked up (waiting in the queue) |
 | `tasks/in-progress/` | An agent is actively working on it |
 | `tasks/done/` | Successfully completed |
-| `tasks/failed/` | Agent could not complete — needs user intervention |
+| `tasks/failed/` | User-adjudicated: the agent failed and the user chose not to retry (waived). Does not block the review gate or requirement completion; waived tickets are reported in the completion summary. |
 
 (There is no `blocked` status — without a dependency graph there is nothing to block on.)
 
@@ -103,22 +103,28 @@ and the orchestrator moves the task.
 
 ## Work Log Convention
 
-Agents append to the Work Log section as they work. Each entry includes the date and agent name:
+Agents append to the Work Log section **as they work** — a start entry before substantive work
+begins, a bullet per milestone, and a final completion/failure report. Each entry includes the date
+and agent name:
 
 ```markdown
 ## Work Log
 
 ### 2026-04-07 — architect
+- Started — analyzing REQ-001
 - Analyzed REQ-001 requirements (5 user stories, 3 edge cases)
 - Explored codebase: found existing auth patterns in src/middleware/
 - Created PLAN-001 with 4 implementation tasks
 - Work complete — reporting to orchestrator
 ```
 
-The Work Log provides continuity across context resets. When a task is resumed, the new agent reads
-the Work Log to understand what was already done. On check-in, a task left in `tasks/in-progress/`
-with an **empty** Work Log is moved back to `tasks/todo/` (never started); one with content stays
-`in-progress` (resume).
+The start entry is not optional politeness — it is what the recovery triage keys on. On check-in,
+each task in `tasks/in-progress/` is triaged three ways:
+- **Empty Work Log** → never started → back to `tasks/todo/`.
+- **Final entry reports completion/failure** → the session died before the orchestrator recorded
+  it → the orchestrator records the outcome now (follow-ups, then move) without re-dispatching.
+- **Started but unfinished** → stays `in-progress`; the resumed agent reads the Work Log and
+  continues from the last entry.
 
 ## Follow-up Tasks Section
 
@@ -126,21 +132,25 @@ When an agent completes its work, it declares follow-up tasks in this section. E
 format:
 
 ```
-- {title} | agent: {agent-name} | priority: {high|medium|low}
+- {title} | agent: {agent-name}
 ```
 
 Optional modifiers (combine freely, pipe-separated):
 ```
-- {title} | agent: developer | priority: {priority} | plan-slice: {slice-slug} | parallel-group: A
+- {title} | agent: developer | plan: PLAN-NNN | plan-slice: {slice-slug} | parallel-group: A
 ```
 
-The `plan-slice` modifier is emitted by the architect for each developer task as a slice **slug**;
-the orchestrator passes it to `guild new task --plan-slice {slug}`, which records it in the new
-task's frontmatter. The `parallel-group` modifier is also emitted by the architect, only on
-`developer`/`developer-svelte` tickets it has verified touch disjoint files; the orchestrator passes
-it to `guild new task --parallel-group {label}` and uses it to batch the dispatch (see "Parallel
-developer batching" below). `priority` is advisory metadata only — it does **not** affect ordering
-(the cursor runs in ID order). There are no `depends-on` modifiers and no magic tokens.
+The `plan:` modifier carries the PLAN ID the new ticket links to; **when absent, the ticket
+inherits the parent ticket's `plan` frontmatter**. Only the architect emits it — its own ticket was
+created before the plan existed (`plan: null`), so without the modifier the plan ID would never
+reach downstream tickets. The `plan-slice` modifier is emitted by the architect for each developer
+task as a slice **slug**; the orchestrator passes it to `guild new task --plan-slice {slug}`, which
+records it in the new task's frontmatter. The `parallel-group` modifier is also emitted by the
+architect, only on `developer`/`developer-svelte` tickets it has verified touch disjoint files; the
+orchestrator passes it to `guild new task --parallel-group {label}` and uses it to batch the
+dispatch (see "Parallel developer batching" below). There is no `priority` modifier (ordering is
+strictly ID order; ignore a legacy `priority:` field on old tickets), no `depends-on`, and no magic
+tokens.
 
 ### Parallel developer batching
 
@@ -187,18 +197,18 @@ those are done, even though they have higher IDs). Who emits what:
 ```markdown
 ## Follow-up Tasks
 
-- Plan authentication implementation | agent: architect | priority: high
+- Plan authentication implementation | agent: architect
 ```
 
-**Architect completing a plan (emits dev tickets + the tail):**
+**Architect completing a plan (emits dev tickets + the tail, every line carrying `plan:`):**
 ```markdown
 ## Follow-up Tasks
 
-- Implement user model and migration | agent: developer | priority: high | plan-slice: user-model
-- Implement signup endpoint | agent: developer | priority: high | plan-slice: signup | parallel-group: A
-- Implement login endpoint | agent: developer | priority: medium | plan-slice: login | parallel-group: A
-- Plan tests for authentication | agent: test-planner | priority: high
-- Review authentication implementation | agent: reviewer | priority: high
+- Implement user model and migration | agent: developer | plan: PLAN-001 | plan-slice: user-model
+- Implement signup endpoint | agent: developer | plan: PLAN-001 | plan-slice: signup | parallel-group: A
+- Implement login endpoint | agent: developer | plan: PLAN-001 | plan-slice: login | parallel-group: A
+- Plan tests for authentication | agent: test-planner | plan: PLAN-001
+- Review authentication implementation | agent: reviewer | plan: PLAN-001
 ```
 
 Here the user-model ticket is left ungrouped (the signup and login slices both build on it, so it
@@ -209,29 +219,24 @@ the orchestrator dispatches them together after the model is `done`.
 ```markdown
 ## Follow-up Tasks
 
-- Write unit tests for authentication | agent: test-writer | priority: high | plan-slice: test-plan
-- Write integration tests for authentication | agent: test-writer | priority: high | plan-slice: test-plan
+- Write unit tests for authentication | agent: test-writer | plan-slice: test-plan
+- Write integration tests for authentication | agent: test-writer | plan-slice: test-plan
 ```
 
 **Reviewer finding issues (declares fixes only — orchestrator appends the tail):**
 ```markdown
 ## Follow-up Tasks
 
-- Fix: Missing input validation on signup endpoint | agent: developer | priority: high
-- Fix: SQL injection risk in login query | agent: developer | priority: high
+- Fix: Missing input validation on signup endpoint | agent: developer
+- Fix: SQL injection risk in login query | agent: developer
 ```
 
 ### How the Orchestrator Processes Follow-ups
 
-1. Read the completed task's "Follow-up Tasks" section.
-2. For each line:
-   a. Parse title, agent, priority, and optional `plan-slice` / `parallel-group`.
-   b. Create the task with `guild new task --title "{title}" --agent {agent} --req {REQ}
-      [--plan {PLAN}] [--plan-slice {slug}] [--parallel-group {label}]`. The CLI derives the next ID
-      and writes the file into `tasks/todo/`. New tasks inherit the parent's requirement.
-3. **Fix-loop tail:** if the completed ticket was a `reviewer` ticket and any `Fix:` tickets were
-   declared, after creating the fix tickets append one `test-writer` ticket and one `Re-review …`
-   ticket (only if a 2nd review round hasn't already run — see the round cap in `agent-chains.md`).
+The operative procedure lives in the check-in skill, **Step 3.4** (parse → skip annotated lines →
+`guild new task` → annotate ` → TASK-NNN`), and Step 3.3 orders it **before** the parent's terminal
+`guild move done` so a crash never strands unmaterialized follow-ups. This file owns only the line
+grammar above; do not duplicate the procedure here.
 
 ## Requirement File Format
 

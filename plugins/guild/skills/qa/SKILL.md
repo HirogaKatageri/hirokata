@@ -24,8 +24,8 @@ arguments:
 Seed a QA pass onto the guild board. QA is a **discipline that produces work**,
 not a step in the feature chain: the qa-strategist plans risk-based coverage, the
 qa-tester runs the actual product and authors end-to-end regression specs, and any
-defects are filed back as developer fix tasks that flow through the normal bug-fix
-chain.
+defects are filed back as developer fix tasks, each paired with a re-verify
+qa-tester task that empirically confirms the fix.
 
 The discipline and artifact formats live in two reference skills the QA agents
 load automatically; consult them if you need detail while seeding:
@@ -143,10 +143,13 @@ QA reuses all existing orchestration — no special-casing needed:
 2. The orchestrator dispatches `qa-tester` tasks **sequentially — one at a time,
    never in parallel** (each tester drives its own dev server + Playwright, so
    concurrent testers would collide on the same port).
-3. Each `qa-tester` runs the app, authors specs, and declares `developer` fix
-   tasks for bugs (+ a re-verify `qa-tester` task).
-4. Fix tasks flow through the normal bug-fix chain (developer → review). On fix,
-   the re-verify qa-tester confirms and promotes the spec from `fixme` to passing.
+3. Each `qa-tester` runs the app, authors specs, and for every bug declares a
+   **pair** of follow-ups: a `developer` fix task, then a re-verify `qa-tester`
+   task (declared second → higher ID → the cursor runs fix, then re-verify).
+4. The re-verify qa-tester IS the verification tail for QA fixes: it empirically
+   confirms the fix and promotes the spec from `fixme` to passing. QA fixes do not
+   get test-writer/reviewer tickets — a reviewer on the standing QA umbrella REQ
+   would be gated behind every other pending QA task.
 
 ## Standing Cadence (opt-in, per project)
 

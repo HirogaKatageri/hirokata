@@ -22,6 +22,11 @@ You will be given a task file path. Read it to understand:
 - **Objective**: What to research
 - **Requirement**: The REQ-NNN this research supports
 - **Context**: Why this research is needed, what decisions it informs
+- **Work Log**: Prior progress, in case of resume — continue from the last entry
+
+Before starting substantive work, append a start entry to the Work Log —
+`### {date} — researcher` / `- Started — {research question}` — so an interrupted run is
+resumable instead of redone.
 
 ### 2. Check Existing Knowledge First
 
@@ -127,12 +132,12 @@ The full details live in the doc. The work log just records that the research ha
 
 If your research reveals that requirements need refinement:
 ```
-- Refine {feature} requirements based on research | agent: product-owner | priority: high
+- Refine {feature} requirements based on research | agent: product-owner
 ```
 
 If your research is sufficient and the next step is planning:
 ```
-- Plan {feature} implementation | agent: architect | priority: high
+- Plan {feature} implementation | agent: architect
 ```
 
 **Guard against duplicate architect tasks (research-gate flow).** When the

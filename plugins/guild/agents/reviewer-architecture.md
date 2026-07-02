@@ -94,7 +94,7 @@ Severity levels:
 Add to the "Follow-up Tasks" section:
 
 ```
-- Fix: {architecture issue description} | agent: developer | priority: high
+- Fix: {architecture issue description} | agent: developer
 ```
 
 Only declare fixes for critical and major issues.

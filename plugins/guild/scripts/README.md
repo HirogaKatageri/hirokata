@@ -40,16 +40,20 @@ There is **no `status` frontmatter field**. An artifact's status is the subdirec
 | Command | Purpose |
 |---------|---------|
 | `guild init [DATE]` | Create the status-dir layout + `state.yaml` (idempotent) |
+| `guild is-legacy` | Exit 0 if the guild uses the pre-3.0 flat-file format |
+| `guild migrate` | Convert a legacy flat-file guild to status directories |
 | `guild new req --title T [--desc D] [--date D]` | Create a requirement stub in `requirements/todo/`; prints `<ID> <path>` |
-| `guild new task --title T --agent A --req REQ-NNN [--plan PLAN-NNN] [--plan-slice slug] [--objective O] [--date D]` | Create a task in `tasks/todo/`; prints `<ID> <path>` |
+| `guild new task --title T --agent A --req REQ-NNN [--plan PLAN-NNN] [--plan-slice slug] [--parallel-group LABEL] [--objective O] [--date D]` | Create a task in `tasks/todo/`; prints `<ID> <path>` |
 | `guild new plan --title T --req REQ-NNN [--task TASK-NNN] [--date D]` | Create a plan in `plans/todo/` (+ slice dir); prints `<ID> <path>` |
 | `guild path <ID>` | Print the file path, searching all statuses then `archive/` |
 | `guild read <ID>` | Print the file contents |
+| `guild meta <ID> [field]` | Print the frontmatter block (or one field) — cheaper than `read` when only metadata is needed |
 | `guild status <ID>` | Print the artifact's status (its directory); `archived` if released |
 | `guild slice <PLAN-ID> <slug>` | Print the path to a plan slice wherever the plan lives |
 | `guild move <ID> <status>` | Move the artifact (and a plan's slice dir) into a status subdir |
-| `guild list <req\|task\|plan> [status]` | List `<ID> <status>` lines, sorted |
+| `guild list <req\|task\|plan> [status]` | List `<ID> <status>` lines, sorted; task lines add `<agent> <requirement>` columns for awk filtering |
 | `guild next` | Print the next actionable task `<TASK-ID> <path>`, or `none` |
+| `guild batch <TASK-ID>` | Print all `todo`/`in-progress` task IDs sharing the task's `parallel-group` and `requirement`; a task with no group is a batch of one |
 | `guild next-id <req\|task\|plan>` | Print the next available ID number (`NNN`) |
 | `guild board` | Render the live board by scanning the directories |
 
@@ -86,7 +90,7 @@ read REQ _   < <("$GUILD" new req  --title "User Authentication" --desc "Login &
 "$GUILD" new task --title "Gather requirements for $REQ" --agent product-owner --req "$REQ" --date 2026-06-25
 
 # Drive the cursor
-read TASK PATH < <("$GUILD" next)          # e.g. TASK-001 .guild/tasks/todo/TASK-001.md
+read TASK TASK_PATH < <("$GUILD" next)     # e.g. TASK-001 .guild/tasks/todo/TASK-001.md
 "$GUILD" move "$TASK" in-progress           # dispatch
 # ... agent runs ...
 "$GUILD" move "$TASK" done                  # complete

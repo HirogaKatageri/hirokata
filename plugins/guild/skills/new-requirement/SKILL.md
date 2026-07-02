@@ -113,7 +113,7 @@ read TASK TASK_PATH < <("$GUILD" new task \
 Edit the new task file at `$TASK_PATH` and add this line under its `## Follow-up Tasks` section:
 
 ```
-- Plan {title} implementation | agent: architect | priority: high
+- Plan {title} implementation | agent: architect
 ```
 
 The standard chain starts with an architect planning task once the product-owner has gathered

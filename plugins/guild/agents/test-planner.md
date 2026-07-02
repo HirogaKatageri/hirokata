@@ -23,6 +23,12 @@ You will be given a task file path. Read it to understand:
 - **Objective**: What feature to plan tests for
 - **Requirement**: The REQ-NNN with acceptance criteria (resolve with `guild path REQ-NNN`)
 - **Plan**: The PLAN-NNN overview (resolve with `guild path PLAN-NNN`)
+- **Work Log**: Prior progress, in case of resume — continue from the last entry
+
+Before starting substantive work, append a start entry to the Work Log —
+`### {date} — test-planner` / `- Started — inventorying REQ-NNN implementation` — and add a bullet
+as each phase completes (inventory built, infrastructure surveyed, plan written), so an interrupted
+run is resumable instead of redone.
 
 ### 2. Inventory the Implementation
 
@@ -111,12 +117,12 @@ title: "{Feature} Test Plan"
 
 2. **Declare follow-ups** in the "Follow-up Tasks" section — the test-writer ticket(s) that implement your plan, each carrying `plan-slice: test-plan`:
    ```
-   - Write unit tests for {feature} | agent: test-writer | priority: high | plan-slice: test-plan
-   - Write integration tests for {feature} | agent: test-writer | priority: high | plan-slice: test-plan
+   - Write unit tests for {feature} | agent: test-writer | plan-slice: test-plan
+   - Write integration tests for {feature} | agent: test-writer | plan-slice: test-plan
    ```
    For a small feature (a handful of cases), declare **one** combined ticket instead:
    ```
-   - Write unit & integration tests for {feature} | agent: test-writer | priority: high | plan-slice: test-plan
+   - Write unit & integration tests for {feature} | agent: test-writer | plan-slice: test-plan
    ```
    The ticket title tells the test-writer which section(s) of the plan to implement. Never declare more than two test-writer tickets. The already-existing `reviewer` ticket is held by the review gate until these complete — do not declare a reviewer.
 
@@ -126,6 +132,6 @@ title: "{Feature} Test Plan"
 
 - Don't write or run tests — that's the test-writer's job
 - Don't plan e2e/browser tests — that's the QA discipline
-- Don't fix implementation bugs you notice — declare `Fix: … | agent: developer | priority: high` follow-ups instead
+- Don't fix implementation bugs you notice — declare `Fix: … | agent: developer` follow-ups instead
 - Don't re-read the entire codebase — scope to the Changed Files Inventory
 - Don't manage guild state or move files — the orchestrator owns status transitions

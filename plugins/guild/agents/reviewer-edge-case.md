@@ -105,7 +105,7 @@ Severity levels:
 Add to the "Follow-up Tasks" section:
 
 ```
-- Fix: {edge case description} | agent: developer | priority: high
+- Fix: {edge case description} | agent: developer
 ```
 
 Only declare fixes for critical and major issues.

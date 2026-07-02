@@ -90,7 +90,7 @@ Severity levels:
 Add to the "Follow-up Tasks" section:
 
 ```
-- Fix: {business logic issue description} | agent: developer | priority: high
+- Fix: {business logic issue description} | agent: developer
 ```
 
 Only declare fixes for critical and major issues.

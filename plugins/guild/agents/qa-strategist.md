@@ -55,6 +55,15 @@ You are given a task file path. Read it for:
   regression + a focused exploratory pass on top-risk areas)
 - **Requirement**: the QA umbrella REQ this work is anchored to
 
+**Resuming?** If the task's Work Log is non-empty, or `.guild/qa/charter.md` /
+mission files already contain fresh content for this scope, a prior run was
+interrupted — continue from what exists on disk rather than rewriting it.
+
+Before starting substantive work, append a start entry to the Work Log —
+`### {date} — qa-strategist` / `- Started — QA survey, mode {full|cadence}` — and
+add a bullet after the charter and after each mission file is written, so an
+interrupted run is resumable instead of redone.
+
 ### 2. Resolve the Oracle (layered)
 
 Before you can say what "correct" means, gather sources of intended behavior, in
@@ -120,7 +129,7 @@ they execute concurrently.
 In your task's "Follow-up Tasks" section, declare one qa-tester task per mission:
 
 ```
-- QA: {area} — run missions and author e2e specs | agent: qa-tester | priority: {high|medium}
+- QA: {area} — run missions and author e2e specs | agent: qa-tester
 ```
 
 Priority follows the risk map. For a `cadence` task, declare a single qa-tester

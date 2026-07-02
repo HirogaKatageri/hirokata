@@ -41,8 +41,14 @@ You will be given a task file path. Read it to understand:
 - **Objective**: What to implement
 - **Plan slice**: The `plan-slice` field in frontmatter — your scoped brief
 - **Plan**: The PLAN-NNN (only read if your slice references something it doesn't fully cover)
-- **Requirement**: The REQ-NNN for acceptance criteria
-- **Work Log**: Any prior progress on this task (in case of resume)
+- **Requirement**: The REQ-NNN (only read if the slice doesn't cover your acceptance criteria)
+- **Work Log**: Any prior progress on this task (in case of resume — continue from the last entry,
+  don't redo logged work)
+
+Before writing any code, append a start entry to the Work Log — `### {date} — developer-svelte` /
+`- Started — {slice slug or one-line plan}` — and add a bullet as each file lands. An interrupted
+task with an empty log gets reset and redone from scratch; your log entries are what make it
+resumable.
 
 ### 2. Read the Plan Slice and Requirement
 
@@ -53,7 +59,7 @@ You will be given a task file path. Read it to understand:
   ```
   This is your primary brief — objective, files to touch, approach, interface contract with sibling tasks, and acceptance criteria.
 - **Full plan**: resolve with `guild path PLAN-NNN`. Read ONLY if your slice references a cross-cutting decision you can't resolve from the slice alone.
-- **Requirement**: resolve with `guild path REQ-NNN`. Understand the acceptance criteria your work must satisfy.
+- **Requirement**: resolve with `guild path REQ-NNN`. Read ONLY if your slice's acceptance criteria or approach reference user stories or constraints you cannot resolve from the slice alone — the slice restates your scoped criteria.
 
 If the task file has no `plan-slice` field, fall back to reading the full PLAN-NNN.
 
@@ -61,7 +67,7 @@ If the task file has no `plan-slice` field, fall back to reading the full PLAN-N
 
 Before writing code:
 
-1. Read project documentation (`CLAUDE.md`, `README.md`)
+1. Read the project `README.md` if unfamiliar with the project (`CLAUDE.md` is already in your context — don't re-read it)
 2. Check `package.json` to confirm Svelte/SvelteKit versions and the configured adapter
 3. Read `svelte.config.js` and `vite.config.*` to understand build setup
 4. Find similar features already implemented — follow their patterns
@@ -132,12 +138,12 @@ After implementing:
 
 Exception: if during implementation you discover something that must be addressed (a bug, a missing dependency, an unclear requirement), declare it:
 ```
-- Fix: {issue description} | agent: developer-svelte | priority: high
+- Fix: {issue description} | agent: developer-svelte
 ```
 
 If you need user clarification and AskUserQuestion isn't sufficient:
 ```
-- Clarify: {question} | agent: product-owner | priority: high
+- Clarify: {question} | agent: product-owner
 ```
 
 ## Co-Maintaining E2e Specs
@@ -151,7 +157,7 @@ new intended behavior as part of your task — don't leave it red.
   because the behavior legitimately changed, update the spec.
 - Note the spec update in your Work Log and flag it for QA to review:
   ```
-  - QA: review e2e spec update for {feature} | agent: qa-tester | priority: medium
+  - QA: review e2e spec update for {feature} | agent: qa-tester
   ```
 - If a spec breaks and you're *not* sure the change was intended, don't silence it
   — declare a `Fix:` follow-up or ask the user. A failing e2e spec may be catching

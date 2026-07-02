@@ -210,7 +210,11 @@ cmd_move() {
 }
 
 # list <kind> [status] — list IDs of a kind, optionally filtered to one status.
-# Output: "<ID> <status>" per line, sorted by ID.
+# Output per line, sorted by ID:
+#   tasks:            "<ID> <status> <agent> <requirement>"
+#   requirements/plans: "<ID> <status>"
+# The extra task columns let the orchestrator filter deterministically with awk,
+# e.g.  guild list task | awk '$3=="reviewer" && $4=="REQ-001"'
 cmd_list() {
   local kind="$1" filter="${2:-}" dir prefix statuses st p id
   dir="$(kind_dir "$kind")"
@@ -222,9 +226,26 @@ cmd_list() {
     for p in "$GUILD_DIR/$dir/$st/$prefix-"*.md; do
       [ -f "$p" ] || continue
       id="$(basename "$p" .md)"
-      echo "$id $st"
+      if [ "$prefix" = "TASK" ]; then
+        echo "$id $st $(fm "$p" agent) $(fm "$p" requirement)"
+      else
+        echo "$id $st"
+      fi
     done
   done | sort
+}
+
+# meta <ID> [field] — print an artifact's frontmatter. With a field name, print just
+# that value; with no field, print the whole frontmatter block (without the fences).
+# Cheaper than `guild read` when only metadata is needed (e.g. at dispatch).
+cmd_meta() {
+  local p
+  p="$(find_path "$1")" || { echo "guild: $1 not found" >&2; return 1; }
+  if [ -n "${2:-}" ]; then
+    fm "$p" "$2"
+  else
+    awk '/^---[ \t]*$/ { n++; next } n == 1 { print } n >= 2 { exit }' "$p"
+  fi
 }
 
 # batch <TASK-ID> — echo the task IDs that must dispatch together with this one: all
@@ -238,7 +259,8 @@ cmd_batch() {
   req="$(fm "$p" requirement)"
   if [ -z "$grp" ]; then echo "$id"; return 0; fi
   local q qid qgrp qreq
-  for q in $(ls "$GUILD_DIR/tasks/todo/"TASK-*.md "$GUILD_DIR/tasks/in-progress/"TASK-*.md 2>/dev/null); do
+  for q in "$GUILD_DIR/tasks/todo/"TASK-*.md "$GUILD_DIR/tasks/in-progress/"TASK-*.md; do
+    [ -f "$q" ] || continue
     qid="$(basename "$q" .md)"
     qgrp="$(fm "$q" parallel-group)"; qreq="$(fm "$q" requirement)"
     [ "$qgrp" = "$grp" ] && [ "$qreq" = "$req" ] && echo "$qid"
@@ -251,19 +273,22 @@ cmd_batch() {
 # todo/ or in-progress/ (the per-REQ N/N review gate).
 cmd_next() {
   local p id
-  # 1. resume in-progress (lowest ID)
-  for p in $(ls "$GUILD_DIR/tasks/in-progress/"TASK-*.md 2>/dev/null | sort); do
+  # 1. resume in-progress (lowest ID; glob order is ID order for zero-padded IDs)
+  for p in "$GUILD_DIR/tasks/in-progress/"TASK-*.md; do
+    [ -f "$p" ] || continue
     id="$(basename "$p" .md)"; echo "$id $p"; return 0
   done
   # 2. lowest-ID todo, honoring the review gate
-  for p in $(ls "$GUILD_DIR/tasks/todo/"TASK-*.md 2>/dev/null | sort); do
+  for p in "$GUILD_DIR/tasks/todo/"TASK-*.md; do
+    [ -f "$p" ] || continue
     id="$(basename "$p" .md)"
     local agent req other_open=0 q qid qreq
     agent="$(fm "$p" agent)"
     if [ "$agent" = "reviewer" ]; then
       req="$(fm "$p" requirement)"
       # any OTHER task for this REQ still in todo/ or in-progress/ ?
-      for q in $(ls "$GUILD_DIR/tasks/todo/"TASK-*.md "$GUILD_DIR/tasks/in-progress/"TASK-*.md 2>/dev/null); do
+      for q in "$GUILD_DIR/tasks/todo/"TASK-*.md "$GUILD_DIR/tasks/in-progress/"TASK-*.md; do
+        [ -f "$q" ] || continue
         qid="$(basename "$q" .md)"; [ "$qid" = "$id" ] && continue
         qreq="$(fm "$q" requirement)"
         [ "$qreq" = "$req" ] && { other_open=1; break; }
@@ -292,39 +317,56 @@ cmd_board() {
 
   echo "In Progress:"
   any=0
-  for p in $(ls "$GUILD_DIR/tasks/in-progress/"TASK-*.md 2>/dev/null | sort); do _task_line "$p"; any=1; done
+  for p in "$GUILD_DIR/tasks/in-progress/"TASK-*.md; do
+    [ -f "$p" ] || continue; _task_line "$p"; any=1
+  done
   [ "$any" = 0 ] && echo "  (none)"
   echo
 
   echo "Backlog:"
   any=0
-  for p in $(ls "$GUILD_DIR/tasks/todo/"TASK-*.md 2>/dev/null | sort); do _task_line "$p"; any=1; done
+  for p in "$GUILD_DIR/tasks/todo/"TASK-*.md; do
+    [ -f "$p" ] || continue; _task_line "$p"; any=1
+  done
   [ "$any" = 0 ] && echo "  (none)"
   echo
 
   echo "Recently Completed:"
   any=0
-  for p in $(ls "$GUILD_DIR/tasks/done/"TASK-*.md 2>/dev/null | sort -r | head -n 20); do _task_line "$p"; any=1; done
+  local done_files i count
+  done_files=( "$GUILD_DIR/tasks/done/"TASK-*.md )
+  count=0
+  for (( i=${#done_files[@]}-1; i>=0; i-- )); do
+    p="${done_files[i]}"
+    [ -f "$p" ] || continue
+    _task_line "$p"; any=1
+    count=$((count + 1)); [ "$count" -ge 20 ] && break
+  done
   [ "$any" = 0 ] && echo "  (none)"
 
-  if ls "$GUILD_DIR/tasks/failed/"TASK-*.md >/dev/null 2>&1; then
-    echo
-    echo "Failed:"
-    for p in $(ls "$GUILD_DIR/tasks/failed/"TASK-*.md 2>/dev/null | sort); do _task_line "$p"; done
-  fi
+  local fany=0
+  for p in "$GUILD_DIR/tasks/failed/"TASK-*.md; do
+    [ -f "$p" ] || continue
+    [ "$fany" = 0 ] && { echo; echo "Failed:"; fany=1; }
+    _task_line "$p"
+  done
   echo
 
   echo "Requirements:"
   any=0
   local rp rid rtitle rstatus total done q qreq qst
   for rstatus in todo in-progress done; do
-    for rp in $(ls "$GUILD_DIR/requirements/$rstatus/"REQ-*.md 2>/dev/null | sort); do
+    for rp in "$GUILD_DIR/requirements/$rstatus/"REQ-*.md; do
+      [ -f "$rp" ] || continue
       rid="$(basename "$rp" .md)"; rtitle="$(fm "$rp" title)"
       total=0; done=0
-      for q in $(find "$GUILD_DIR/tasks" -type f -name 'TASK-*.md' 2>/dev/null); do
-        qreq="$(fm "$q" requirement)"; [ "$qreq" = "$rid" ] || continue
-        total=$((total + 1))
-        qst="$(basename "$(dirname "$q")")"; [ "$qst" = "done" ] && done=$((done + 1))
+      for qst in todo in-progress done failed; do
+        for q in "$GUILD_DIR/tasks/$qst/"TASK-*.md; do
+          [ -f "$q" ] || continue
+          qreq="$(fm "$q" requirement)"; [ "$qreq" = "$rid" ] || continue
+          total=$((total + 1))
+          [ "$qst" = "done" ] && done=$((done + 1))
+        done
       done
       printf '  %s: %s — %s (%s/%s done)\n' "$rid" "$rtitle" "$rstatus" "$done" "$total"
       any=1
@@ -563,6 +605,7 @@ Create (templates, auto-derived IDs):
 Resolve / read:
   guild path  <ID>              Print the file path (searches all statuses + archive)
   guild read  <ID>              Print the file contents
+  guild meta  <ID> [field]      Print the frontmatter (or one field) — cheaper than read
   guild status <ID>             Print the status (directory) the artifact is in
   guild slice <PLAN-ID> <slug>  Print the path to a plan slice
   guild next-id <req|task|plan> Print the next available ID number (NNN)
@@ -572,7 +615,8 @@ Status transitions (status = which directory the file lives in):
                                 (plans carry their slice dir along)
 
 Query:
-  guild list <req|task|plan> [status]   List "<ID> <status>" lines
+  guild list <req|task|plan> [status]   List "<ID> <status>" lines (tasks add "<agent> <req>"
+                                        columns — filter with awk, e.g. $3=="reviewer" && $4=="REQ-001")
   guild next                            Print next actionable task "<TASK-ID> <path>" or "none"
   guild batch <TASK-ID>                 Print the dev tickets that dispatch together (parallel-group)
   guild board                           Render the live board
@@ -594,6 +638,7 @@ main() {
     new)      cmd_new "$@" ;;
     path)     cmd_path "$@" ;;
     read)     cmd_read "$@" ;;
+    meta)     cmd_meta "$@" ;;
     status)   cmd_status "$@" ;;
     slice)    cmd_slice "$@" ;;
     move)     cmd_move "$@" ;;

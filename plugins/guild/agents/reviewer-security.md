@@ -89,7 +89,7 @@ Severity levels:
 Add to the "Follow-up Tasks" section:
 
 ```
-- Fix: {security issue description} | agent: developer | priority: high
+- Fix: {security issue description} | agent: developer
 ```
 
 Only declare fixes for critical and major issues. Minor issues are noted in the Work Log only.

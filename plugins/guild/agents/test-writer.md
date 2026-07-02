@@ -24,6 +24,12 @@ You will be given a task file path. Read it to understand:
   (unit, integration, or both)
 - **Plan slice**: `plan-slice: test-plan` in frontmatter — your primary brief
 - **Requirement**: The REQ-NNN with acceptance criteria
+- **Work Log**: Prior progress, in case of resume — continue from the last entry;
+  the test plan's ticked checkboxes show which cases are already implemented
+
+Before writing any tests, append a start entry to the Work Log —
+`### {date} — test-writer` / `- Started — {scope} per test plan` — and add a bullet as each test
+file lands, so an interrupted run is resumable instead of redone.
 
 ### 2. Read the Test Plan
 
@@ -80,7 +86,7 @@ Run the suite with the runner command from the test plan (or detect it: `npm tes
 
 2. **Declare follow-ups** (only if bugs found in implementation):
    ```
-   - Fix: {bug description found during testing} | agent: developer | priority: high
+   - Fix: {bug description found during testing} | agent: developer
    ```
 
 3. **Report completion** in your final message — done, or failed if you declared fix tickets. Do NOT edit any status field or move your task file — the orchestrator moves it.
