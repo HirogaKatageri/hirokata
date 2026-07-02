@@ -23,7 +23,11 @@ You will be given:
 - A **plan file** — this is your primary reference for intended architecture
 - A **requirement file** — understand constraints
 
-Also read the completed developer task files to know which files were changed.
+**Scope your reading to the diff.** Resolve the test plan with
+`"${CLAUDE_PLUGIN_ROOT}/scripts/guild" slice PLAN-NNN test-plan` and use its
+**Changed Files Inventory** as the definitive list of changed files — read those files plus the
+plan overview, not the whole codebase or the per-developer slices. If no test plan exists
+(bug-fix flow), fall back to the completed developer task Work Logs for the changed-file list.
 
 ### 2. Review for Architecture
 

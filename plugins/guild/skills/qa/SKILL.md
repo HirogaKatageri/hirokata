@@ -78,8 +78,9 @@ REQ=$("$GUILD" new req --title "Product QA & E2E Regression" \
 
 Then Edit the umbrella REQ file (`"$GUILD" path "$REQ"`) to flesh out the User
 Stories / Technical Considerations / Out of Scope sections as needed (e2e specs
-live in the project's real test dir and run in CI; unit tests stay out of scope —
-owned by test-writer). There is no `status` field — its directory is its status.
+live in the project's real test dir and run in CI; unit and integration tests stay
+out of scope — owned by test-writer). There is no `status` field — its directory is
+its status.
 
 ## Step 5: Seed the QA Strategist Task
 

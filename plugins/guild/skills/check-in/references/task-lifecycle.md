@@ -67,11 +67,11 @@ the current path with `guild path <ID>` / `guild read <ID>` (locations move as s
 > graph. The research-first flow works because the researcher ticket is created before (lower ID
 > than) the post-research architect ticket.
 
-**`agent` enum:** `product-owner`, `architect`, `developer`, `developer-svelte`, `test-writer`,
-`researcher`, `reviewer`, `qa-strategist`, `qa-tester`. `reviewer` is a **trigger alias**, not a
-real agent — when dispatched it spawns the 4 specialized reviewers (`reviewer-security`,
-`reviewer-architecture`, `reviewer-business-logic`, `reviewer-edge-case`) in parallel on the same
-ticket.
+**`agent` enum:** `product-owner`, `architect`, `developer`, `developer-svelte`, `test-planner`,
+`test-writer`, `researcher`, `reviewer`, `qa-strategist`, `qa-tester`. `reviewer` is a **trigger
+alias**, not a real agent — when dispatched it spawns the 4 specialized reviewers
+(`reviewer-security`, `reviewer-architecture`, `reviewer-business-logic`, `reviewer-edge-case`)
+in parallel on the same ticket.
 
 > **`parallel-group` is not a dependency graph either.** It is a pure safety assertion by the
 > architect: "these dev tickets touch disjoint files and share no ordering, so the shared working
@@ -144,36 +144,42 @@ developer batching" below). `priority` is advisory metadata only — it does **n
 
 ### Parallel developer batching
 
-Development is sequential **by default** — one ticket at a time, in ID order. The single escape
-hatch is `parallel-group`: when the architect marks two or more `developer`/`developer-svelte`
-tickets with the **same** group label, it has asserted their "Files to Touch" sets are disjoint and
-neither depends on the other's output. The orchestrator expands the batch deterministically with
-`guild batch TASK-NNN` (which lists every `todo`/`in-progress` task sharing that ticket's
-`parallel-group` and `requirement`), then dispatches the whole group concurrently in one message
-(multiple Agent calls in the shared working tree — no worktrees, no merge step, because the file
-sets don't overlap).
+Development runs **in parallel by default**: the architect designs slices for disjoint file sets
+and marks each wave of `developer`/`developer-svelte` tickets with the **same** `parallel-group`
+label, asserting their "Files to Touch" sets are disjoint and neither depends on the other's
+output. The orchestrator expands the batch deterministically with `guild batch TASK-NNN` (which
+lists every `todo`/`in-progress` task sharing that ticket's `parallel-group` and `requirement`),
+then dispatches the whole group concurrently in one message (multiple Agent calls in the shared
+working tree — no worktrees, no merge step, because the file sets don't overlap). An ungrouped
+ticket runs solo — the exception, for foundational work or unboundable file sets.
 
 Rules:
-- Only `developer`/`developer-svelte` tickets carry a group. Tail tickets (`test-writer`,
-  `reviewer`) and all other agents never do.
+- Only `developer`/`developer-svelte` tickets carry a group. Tail tickets (`test-planner`,
+  `test-writer`, `reviewer`) and all other agents never do.
 - A group is scoped to one plan. Reuse simple labels (`A`, `B`, …) per plan.
 - A ticket with **no** `parallel-group` runs solo, exactly as before.
 - The batch is dispatched together and the cursor only advances past it once **every** member is
   `done` — so the test-writer/reviewer tail still waits for all dev work, just as in the sequential
   case.
 
-### The chain tail (test → review)
+### The chain tail (test planning → tests → review)
 
-The tail is a `test-writer` ticket followed by a `reviewer` ticket. Who emits it:
+The tail is a `test-planner` ticket followed by a `reviewer` ticket; the test-planner then declares
+the `test-writer` ticket(s) that sit between them (the reviewer's N/N gate holds the review until
+those are done, even though they have higher IDs). Who emits what:
 
 - **Initial chain — the architect emits the tail.** After its developer follow-ups, the architect
-  declares the `test-writer` and `reviewer` tickets explicitly, so the full pipeline is visible as
-  real tickets up front.
-- **Bug-fix flow (no architect) — the product-owner emits the tail** behind the fix ticket.
+  declares the `test-planner` and `reviewer` tickets explicitly, so the full pipeline is visible as
+  real tickets up front. It never declares `test-writer` tickets — that's the test-planner's call.
+- **Test planning — the test-planner emits the test-writer ticket(s)** (one combined, or one unit +
+  one integration), each carrying `plan-slice: test-plan`.
+- **Bug-fix flow (no architect, no test-planner) — the product-owner emits the tail** behind the
+  fix ticket: a `test-writer` ticket and a `reviewer` ticket directly.
 - **Fix loop — the orchestrator appends the tail.** The 4 reviewers declare only `Fix: …` tickets;
   after a review round that produced fixes, the orchestrator creates the fix tickets, then one
-  `test-writer` ticket and one `Re-review …` ticket behind them (deduped — reviewers never each
-  emit the tail).
+  `test-writer` ticket (with `plan-slice: test-plan` when a plan exists) and one `Re-review …`
+  ticket behind them (deduped — reviewers never each emit the tail). The test-planner is not
+  re-run in the fix loop.
 
 ### Examples
 
@@ -191,13 +197,21 @@ The tail is a `test-writer` ticket followed by a `reviewer` ticket. Who emits it
 - Implement user model and migration | agent: developer | priority: high | plan-slice: user-model
 - Implement signup endpoint | agent: developer | priority: high | plan-slice: signup | parallel-group: A
 - Implement login endpoint | agent: developer | priority: medium | plan-slice: login | parallel-group: A
-- Write unit tests for authentication | agent: test-writer | priority: high
+- Plan tests for authentication | agent: test-planner | priority: high
 - Review authentication implementation | agent: reviewer | priority: high
 ```
 
 Here the user-model ticket is left ungrouped (the signup and login slices both build on it, so it
 runs solo first). The signup and login slices touch disjoint files and share `parallel-group: A`, so
 the orchestrator dispatches them together after the model is `done`.
+
+**Test-planner completing the test plan (emits the test-writer tickets):**
+```markdown
+## Follow-up Tasks
+
+- Write unit tests for authentication | agent: test-writer | priority: high | plan-slice: test-plan
+- Write integration tests for authentication | agent: test-writer | priority: high | plan-slice: test-plan
+```
 
 **Reviewer finding issues (declares fixes only — orchestrator appends the tail):**
 ```markdown
@@ -300,6 +314,12 @@ slice path with `guild slice PLAN-NNN {slug}` rather than hardcoding it. Each sl
 self-contained: a developer reads only its slice (not the overview, not sibling slices) to do its
 work. The slice's "Interface Contract" section documents what the task exposes to or consumes from
 sibling tasks.
+
+**Test plan** at `.guild/plans/<status>/PLAN-NNN/slice-test-plan.md` — written later by the
+test-planner (not the architect), after all development for the requirement is done. Resolved with
+`guild slice PLAN-NNN test-plan`. It carries the Changed Files Inventory, the test infrastructure
+survey, and the unit/integration case lists; the test-writer implements it and the reviewers reuse
+its inventory to scope their reading.
 
 Overview format:
 

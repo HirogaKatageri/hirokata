@@ -9,29 +9,32 @@ The **guild** plugin manages an ongoing development workflow through a queue of 
 ### Key Features
 
 - **Single source of truth**: status is the directory a ticket lives in; `state.yaml` holds only `last-checkin`. IDs and the cursor are derived from the filesystem — no counters, no duplicated board state to reconcile.
-- **Cursor-driven sequencing**: tickets run in creation (ID) order. Development is **sequential by default** — one developer ticket at a time — except when the architect tags dev tickets with a shared `parallel-group` (verified disjoint files), which the orchestrator dispatches concurrently.
-- **Automatic Agent Chains**: a new requirement flows through product-owner → architect → developers → test-writer → 4 parallel reviewers. The architect emits the test + review tail as real tickets up front.
-- **Per-requirement review gate**: reviewers run once all of a requirement's implementation tickets are done, and fan out 4-wide in parallel. Together with `parallel-group` dev batches, these are the system's two parallel cases.
-- **Session-Based Workflow**: each check-in resumes exactly where the last session ended.
+- **Parallel development by default**: the architect designs plan slices with disjoint file sets and groups them into `parallel-group` waves; the orchestrator dispatches each wave concurrently in the shared working tree. Ungrouped (foundational) tickets run solo in ID order.
+- **Automatic Agent Chains**: a new requirement flows through product-owner → architect → parallel developers → test-planner → test-writer (unit & integration) → 4 parallel reviewers. The architect emits the test-planning + review tail as real tickets up front.
+- **Dedicated test planning**: after development, a test-planner inventories the diff and writes a test plan (`slice-test-plan.md`); the test-writer implements it and the reviewers reuse its Changed Files Inventory to scope their reading — the analysis is done once, not three times.
+- **Per-requirement review gate**: reviewers run once all of a requirement's other tickets are done, and fan out 4-wide in parallel.
+- **Session-Based Workflow**: each check-in resumes exactly where the last session ended; the work cycle flows continuously, pausing only on failures, escalations, or requirement completion.
 - **Stale Task Recovery**: tickets interrupted mid-session are detected and handled on the next check-in.
 
 ## The Agent Chain
 
 ```
 User provides input
-  └→ product-owner: gathers details, writes REQ document
+  └→ product-owner: discusses & refines requirements, writes REQ document
       └→ architect: reads REQ, explores codebase, writes PLAN,
-         declares dev tickets + the test-writer + reviewer tail
-          └→ developer ×N: implement code per plan (sequential, or
-             parallel-group batches when slices touch disjoint files)
-              └→ test-writer: writes and runs unit tests
-                  └→ 4 reviewers in parallel:
-                      ├── reviewer-security
-                      ├── reviewer-architecture
-                      ├── reviewer-business-logic
-                      └── reviewer-edge-case
-                          ├→ [all approved] requirement complete
-                          └→ [any issues] developer fixes → test-writer → reviewers again (max 2 rounds)
+         declares dev tickets + the test-planner + reviewer tail
+          └→ developer ×N: implement code per plan, in parallel-group
+             waves (disjoint files); foundational tickets run solo first
+              └→ test-planner: inventories the diff, writes the test plan,
+                 declares the test-writer ticket(s)
+                  └→ test-writer: writes and runs unit & integration tests
+                      └→ 4 reviewers in parallel:
+                          ├── reviewer-security
+                          ├── reviewer-architecture
+                          ├── reviewer-business-logic
+                          └── reviewer-edge-case
+                              ├→ [all approved] requirement complete → done
+                              └→ [any issues] developer fixes → test-writer → reviewers again (max 2 rounds)
 ```
 
 ## Skills
@@ -206,7 +209,8 @@ cadence** via `/schedule` or `/loop` (opt-in per project).
 | `guild:architect` | Opus | Reads REQ, explores codebase, writes implementation PLAN, declares dev tasks; routes Svelte tasks to `developer-svelte` |
 | `guild:developer` | Sonnet | Implements code per plan and requirement |
 | `guild:developer-svelte` | Sonnet | Svelte 5 / SvelteKit specialist — pre-loaded with four reference skills; used when tasks touch `.svelte`, `+page.*`, `+layout.*`, `+server.*`, hooks, or `svelte.config.js` |
-| `guild:test-writer` | Sonnet | Writes and runs unit tests after all dev tasks complete |
+| `guild:test-planner` | Sonnet | Inventories the implemented diff, writes the test plan (`slice-test-plan.md`), declares the test-writer tickets |
+| `guild:test-writer` | Sonnet | Implements the test plan — writes and runs unit & integration tests |
 | `guild:product-reviewer` | Haiku | Verifies implementation satisfies plan requirements |
 | `guild:reviewer-security` | Haiku | Security vulnerabilities, OWASP Top 10 |
 | `guild:reviewer-architecture` | Haiku | Plan alignment, patterns, separation of concerns |
@@ -301,6 +305,7 @@ guild/
 │   ├── reviewer-business-logic.md
 │   ├── reviewer-edge-case.md
 │   ├── reviewer-security.md
+│   ├── test-planner.md
 │   └── test-writer.md
 └── skills/
     ├── check-in/

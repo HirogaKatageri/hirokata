@@ -2,26 +2,29 @@
 
 This document defines the standard chains that drive the guild's continuous cycle:
 **Requirements → Tasks → Plans → Tasks**. Tickets are walked by a single cursor in **ID order**
-(see `state-format.md`); development is **sequential by default**, with two parallel cases: a
-`parallel-group` developer batch (architect-verified disjoint files) and the 4-reviewer fan-out.
+(see `state-format.md`); development runs **in parallel by default** — the architect groups dev
+tickets into `parallel-group` waves (verified disjoint files) that dispatch concurrently — and
+reviews fan out 4-wide.
 
 ## The Core Cycle
 
 ```
 User provides input
-  └→ product-owner: gathers details, writes REQ document
+  └→ product-owner: discusses & refines requirements, writes REQ document
       └→ architect: reads REQ, explores codebase, writes PLAN,
-         declares dev tickets + the test-writer + reviewer tail
-          └→ developer ×N: implement code per plan (sequential, or
-             in parallel-group batches when slices touch disjoint files)
-              └→ test-writer: writes and runs unit tests
-                  └→ 4 reviewers in parallel:
-                      ├── reviewer-security
-                      ├── reviewer-architecture
-                      ├── reviewer-business-logic
-                      └── reviewer-edge-case
-                          ├→ [all approved] requirement complete
-                          └→ [any issues] developer fixes → test-writer → reviewers again
+         declares dev tickets + the test-planner + reviewer tail
+          └→ developer ×N: implement code per plan, in parallel-group
+             waves (disjoint files); foundational tickets run solo first
+              └→ test-planner: inventories the diff, writes the test plan,
+                 declares the test-writer ticket(s)
+                  └→ test-writer: writes and runs unit & integration tests
+                      └→ 4 reviewers in parallel:
+                          ├── reviewer-security
+                          ├── reviewer-architecture
+                          ├── reviewer-business-logic
+                          └── reviewer-edge-case
+                              ├→ [all approved] requirement complete → done
+                              └→ [any issues] developer fixes → test-writer → reviewers again
 ```
 
 ## Chain 1: Standard Requirement Flow
@@ -31,17 +34,20 @@ The most common chain. A new requirement flows through all roles.
 | Step | Agent | Input | Output | Follow-up |
 |------|-------|-------|--------|-----------|
 | 1 | product-owner | User conversation | REQ document | architect ticket |
-| 2 | architect | REQ document + codebase | PLAN document | developer tickets **+ test-writer ticket + reviewer ticket** |
-| 3 | developer (×N, sequential or parallel-group batches) | PLAN + REQ + codebase | Code changes | (none) |
-| 4 | test-writer | Code changes + REQ + PLAN | Unit tests | fix tickets if bugs found |
-| 5 | 4 reviewers (parallel) | Code + tests + REQ + PLAN | Review report | fix tickets OR approval |
+| 2 | architect | REQ document + codebase | PLAN document | developer tickets **+ test-planner ticket + reviewer ticket** |
+| 3 | developer (×N, parallel-group waves) | PLAN slice + REQ + codebase | Code changes | (none) |
+| 4 | test-planner | Dev work logs + REQ + PLAN | Test plan (`slice-test-plan.md`) | test-writer ticket(s) |
+| 5 | test-writer (×1–2) | Test plan + changed files | Unit & integration tests | fix tickets if bugs found |
+| 6 | 4 reviewers (parallel) | Changed files + tests + REQ + PLAN | Review report | fix tickets OR approval |
 
-The developer tickets, the test-writer ticket, and the reviewer ticket are all created at once
-from the architect's follow-ups. Because the cursor runs in ID order, the test-writer ticket is
-reached only after every developer ticket is `done`, and the reviewer ticket only after the
-test-writer is `done` — whether the dev tickets ran one at a time or in `parallel-group` batches.
-The reviewer ticket is additionally **gated**: the orchestrator dispatches it only when every
-non-tail ticket for the requirement is `done` (the N/N gate) — a cheap safety belt on top of ordering.
+The developer tickets, the test-planner ticket, and the reviewer ticket are all created at once
+from the architect's follow-ups. Because the cursor runs in ID order, the test-planner is reached
+only after every developer ticket is `done`. The test-writer ticket(s) are created later by the
+test-planner and get **higher IDs than the reviewer ticket — that's fine**: the reviewer ticket is
+**gated** (the orchestrator dispatches it only when every other ticket for its requirement is
+`done`, the N/N gate), so the review always runs last, after the planner-declared test-writer
+tickets complete. The gate is what turns ID order into the pipeline
+dev → test-plan → tests → review.
 
 ### Step 1: Product Owner
 
@@ -61,18 +67,20 @@ non-tail ticket for the requirement is `done` (the N/N gate) — a cheap safety 
 - Implement {component-1} | agent: developer | priority: high | plan-slice: {slug-1}
 - Implement {component-2} | agent: developer-svelte | priority: high | plan-slice: {slug-2} | parallel-group: A
 - Implement {component-3} | agent: developer | priority: medium | plan-slice: {slug-3} | parallel-group: A
-- Write unit tests for {feature} | agent: test-writer | priority: high
+- Plan tests for {feature} | agent: test-planner | priority: high
 - Review {feature} implementation | agent: reviewer | priority: high
 ```
 
 The `plan-slice` value is the slice **slug** (e.g. `signup`), not a path — agents resolve the
 current file with `guild slice PLAN-NNN {slug}`, since slice locations move with the plan's status.
 
-The architect emits the `test-writer` and `reviewer` tail explicitly. The orchestrator does not
+The architect emits the `test-planner` and `reviewer` tail explicitly. The orchestrator does not
 auto-create them in the initial chain. Listing dev tickets first keeps their IDs lower, so they run
-before the tail. The architect adds a `parallel-group` label to dev tickets it has verified touch
-disjoint files (components 2 and 3 above) — the orchestrator dispatches those concurrently; the tail
-tickets never carry a group.
+before the tail. **Parallel is the default**: the architect designs slices for disjoint file sets
+and puts every dev ticket it can into a `parallel-group` wave (components 2 and 3 above) — the
+orchestrator dispatches each wave concurrently. A ticket stays ungrouped only when it is
+foundational (others build on it) or its file set can't be bounded; the tail tickets never carry
+a group.
 
 The architect picks the developer agent per slice. `developer-svelte` (sonnet, pre-loaded with
 Svelte 5 / SvelteKit knowledge via the `guild:svelte-*` skills) handles work touching Svelte
@@ -83,21 +91,40 @@ else. Both honor the `plan-slice` modifier.
 
 **Input task title pattern:** "Implement {component}"
 
-Developers run **one at a time** in ID order, **except** when the architect has tagged a set of dev
-tickets with a shared `parallel-group` — those are dispatched concurrently (the architect verified
-their slices touch disjoint files, so they safely share the working tree). Each developer reads its
-slice, implements, appends to the Work Log, and marks itself `done`. **Developers declare no
+Developers run in **parallel-group waves**: the orchestrator dispatches every dev ticket sharing a
+group concurrently (the architect verified their slices touch disjoint files, so they safely share
+the working tree). Ungrouped tickets (foundational work) run solo in ID order. Each developer reads
+its slice, implements, appends to the Work Log, and reports done. **Developers declare no
 follow-ups** (the architect already emitted the tail), except a `Fix:`/`Clarify:` ticket if they
 discover a genuine blocker mid-work.
 
-### Step 4: Test Writer
+### Step 4: Test Planner
 
-**Input task title pattern:** "Write unit tests for {feature}"
+**Input task title pattern:** "Plan tests for {feature}"
 
-- Read all implemented code, map acceptance criteria to test cases, write and run tests.
+- Inventory what development produced (dev Work Logs + `git diff`) into a **Changed Files
+  Inventory**, survey the test infrastructure, and map every acceptance criterion to unit and
+  integration test cases.
+- Write the plan as a plan slice: `PLAN-NNN/slice-test-plan.md` (resolve with
+  `guild slice PLAN-NNN test-plan`). Downstream, the test-writer implements it and the reviewers
+  reuse its inventory to scope their reading — nobody re-derives the analysis.
+- Declare the test-writer ticket(s) — one combined, or one unit + one integration — each carrying
+  `plan-slice: test-plan`:
+  ```
+  - Write unit tests for {feature} | agent: test-writer | priority: high | plan-slice: test-plan
+  - Write integration tests for {feature} | agent: test-writer | priority: high | plan-slice: test-plan
+  ```
+
+### Step 5: Test Writer
+
+**Input task title pattern:** "Write unit tests for {feature}" / "Write integration tests for
+{feature}" / "Write unit & integration tests for {feature}"
+
+- Read the test plan slice, implement the section(s) the ticket title names, and run the suite.
+- E2e tests are out of scope (QA discipline).
 - If tests reveal implementation bugs, declare `Fix: … | agent: developer` tickets.
 
-### Step 5: Reviewers (4 in parallel)
+### Step 6: Reviewers (4 in parallel)
 
 **Input task title pattern:** "Review {feature} implementation" (`agent: reviewer`)
 
@@ -111,8 +138,10 @@ specialized reviewers in parallel on the same ticket:
 | `reviewer-business-logic` | Acceptance criteria, business rules, testability |
 | `reviewer-edge-case` | Boundary conditions, null handling, error scenarios |
 
-Each reviewer reads the ticket, requirement, and plan; reviews through its lens; appends findings
-to the shared Work Log under its own heading; and independently declares `Fix:` tickets if needed.
+Each reviewer reads the ticket, requirement, and plan overview, then scopes its code reading to the
+test plan's **Changed Files Inventory** (`guild slice PLAN-NNN test-plan`) rather than re-scanning
+the codebase; reviews through its lens; appends findings to the shared Work Log under its own
+heading; and independently declares `Fix:` tickets if needed.
 
 **After all 4 return:**
 - ANY `Fix:` tickets declared → the orchestrator creates the developer fix tickets, then appends
@@ -124,7 +153,7 @@ to the shared Work Log under its own heading; and independently declares `Fix:` 
 When a requirement needs technology research before planning.
 
 ```
-product-owner → researcher → architect → developer ×N → test-writer → reviewer
+product-owner → researcher → architect → developer ×N → test-planner → test-writer → reviewer
 ```
 
 Two entry points:
@@ -153,8 +182,8 @@ architect checks existing docs and may skip the research gate entirely.
 
 ## Chain 3: Bug Fix Flow
 
-Simplified chain for bug fixes — skip the architect. Because there is no architect to emit the
-tail, the **product-owner emits it**:
+Simplified chain for bug fixes — skip the architect **and the test-planner** (a scoped fix doesn't
+need a test plan). Because there is no architect to emit the tail, the **product-owner emits it**:
 
 ```
 product-owner → developer → test-writer → reviewer
@@ -166,6 +195,9 @@ product-owner → developer → test-writer → reviewer
 - Write unit tests for {fix} | agent: test-writer | priority: high
 - Review {fix} | agent: reviewer | priority: high
 ```
+
+With no `plan-slice`, the test-writer falls back to deriving scope from the developer's Work Log,
+and reviewers scope their reading the same way.
 
 ## Chain 4: Review Fix Loop
 
@@ -179,7 +211,9 @@ The loop is driven by **declaration + one orchestrator-appended tail per round**
 arithmetic:
 - Reviewers declare only `Fix: … | agent: developer` tickets.
 - After a review round that produced fixes, the orchestrator creates the fix tickets, then appends
-  **one** `test-writer` ticket and **one** `Re-review …` ticket behind them.
+  **one** `test-writer` ticket and **one** `Re-review …` ticket behind them. The fix-loop
+  test-writer ticket carries `plan-slice: test-plan` when the requirement has a plan — the round-1
+  test plan still governs; the test-planner is never re-run in the fix loop.
 - The cursor walks fixes → test → re-review in ID order; the re-review's N/N gate holds it until the
   fixes and tests are `done`.
 
@@ -224,9 +258,10 @@ qa-strategist (charter + risk map + coverage matrix)
 | 1 | qa-strategist | scope + oracle sources + running app | charter, risk map, missions | qa-tester ticket per mission |
 | 2 | qa-tester (×N) | mission + running app | e2e specs (in repo) + bug ledger | developer fix tickets + re-verify qa-tester |
 
-**Ownership boundary:** `test-writer` owns **unit** tests (inside the feature chain); `qa-tester`
-owns **e2e/integration** tests (the QA discipline). E2e specs live in the project's real e2e dir and
-run in CI; `developer`/`developer-svelte` **co-maintain** them when a feature change alters asserted
+**Ownership boundary:** `test-writer` owns **unit and integration** tests (inside the feature
+chain, per the test-planner's plan); `qa-tester` owns **e2e** tests against the running product
+(the QA discipline). E2e specs live in the project's real e2e dir and run in CI;
+`developer`/`developer-svelte` **co-maintain** them when a feature change alters asserted
 behavior, and QA reviews the update.
 
 **Persistence:** QA artifacts live under `.guild/qa/` and are evergreen — they survive releases and
@@ -251,16 +286,19 @@ All of these run through the guild CLI (`${CLAUDE_PLUGIN_ROOT}/scripts/guild`):
 7. **Handling escalation**: when a reviewer writes `ESCALATE` or round 2 still has fixes, prompt the
    user.
 
-## Sequential Execution & the Two Exceptions
+## Execution Model — Parallel by Default
 
-- **Development is sequential by default** — one developer ticket at a time, in ID order.
-- **Exception 1 — `parallel-group` dev batches.** When the architect tags dev tickets with a shared
-  `parallel-group` (verified disjoint "Files to Touch", no ordering dependency), the orchestrator
-  dispatches the whole group concurrently in the shared working tree — no worktrees, no merge step,
-  because the file sets don't overlap. The cursor advances past the group only when all members are
-  `done`. The orchestrator never invents groups; it only honors the architect's labels.
-- **Exception 2 — the 4-reviewer fan-out.** All 4 run at once on the same review ticket (safe
-  because reviewers are read-only); only the orchestrator materializes their follow-ups afterward.
+- **Development runs in `parallel-group` waves.** The architect designs slices for disjoint file
+  sets and labels every wave (verified disjoint "Files to Touch", no ordering dependency); the
+  orchestrator dispatches a whole wave concurrently in the shared working tree — no worktrees, no
+  merge step, because the file sets don't overlap. The cursor advances past a wave only when all
+  members are `done`. The orchestrator never invents groups; it only honors the architect's labels.
+- **Ungrouped dev tickets run solo, in ID order** — the exception, reserved for foundational work
+  other slices build on, or slices whose file set the architect couldn't bound.
+- **The 4-reviewer fan-out.** All 4 run at once on the same review ticket (safe because reviewers
+  are read-only); only the orchestrator materializes their follow-ups afterward.
+- **The tail is sequential by design** — test-planner, then test-writer ticket(s), then review;
+  each stage consumes the previous one's artifact.
 - **`qa-tester` tickets are strictly sequential** — one at a time even when several are pending,
   because each drives its own dev server + Playwright and would otherwise collide on ports. They are
   never given a `parallel-group`.

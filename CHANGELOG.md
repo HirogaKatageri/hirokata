@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Guild Plugin v3.1.0 — Pipeline refinement: parallel-by-default development, dedicated test planning, integration tests, diff-scoped reviews**
+  - The per-requirement pipeline is now: requirements discussion & refinement (product-owner) → architecture & planning (architect) → **parallel development** (developer waves) → **test planning** (new `test-planner` agent) → **unit & integration test writing** (test-writer) → review (4 parallel reviewers) → done.
+  - **Parallel development is the default, not the escape hatch.** The architect designs plan slices for disjoint file sets and organizes dev tickets into `parallel-group` waves (foundation solo first, then concurrent waves); ungrouped tickets are the exception, reserved for foundational or unboundable work. Mechanics are unchanged (`guild batch`, shared working tree, no worktrees) — only the planning posture flipped.
+  - **New `guild:test-planner` agent** (Sonnet) runs after all dev work: inventories the implemented diff into a Changed Files Inventory, surveys the test infrastructure, maps acceptance criteria to unit and integration cases, writes the plan as `PLAN-NNN/slice-test-plan.md` (rides the existing slice mechanism — resolve with `guild slice PLAN-NNN test-plan`; zero CLI changes), and declares the test-writer ticket(s). The architect's tail is now `test-planner` + `reviewer`; the reviewer's N/N gate keeps the review last even though test-writer tickets get higher IDs.
+  - **test-writer now owns unit AND integration tests**, implementing the test plan instead of re-deriving scope; it falls back to self-derived scope in the plan-less bug-fix flow. The QA discipline's `qa-tester` now owns e2e only.
+  - **Token-efficiency:** the diff analysis happens once (test-planner) and is reused three times — the test-writer implements from it and all 4 reviewers scope their reading to its Changed Files Inventory instead of re-scanning the codebase; the check-in work cycle now flows continuously by default (one-line updates between tickets; pauses only on failure, escalation, collision, or requirement completion) instead of prompting after every ticket.
+  - Fix loop unchanged (max 2 rounds), but the fix-loop test-writer ticket now carries `plan-slice: test-plan` when a plan exists; the test-planner is never re-run in the fix loop. Bug-fix flow (Chain 3) intentionally skips the test-planner.
+
 ### Added
 - **Research Plugin v1.0.0** — PhD-level multi-perspective research inspired by Stanford's STORM method
   - `research:storm-research` — orchestrates the full four-phase pipeline: parallel five-persona fan-out, contradiction mapping, synthesis into a cited briefing, and an adversarial peer review with an optional revision loop; each phase delegated to a dedicated sub-agent to keep the main context lean

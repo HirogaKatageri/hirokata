@@ -90,7 +90,7 @@ After implementing:
 
 ### 6. Follow-up Tasks
 
-**You do NOT declare follow-up tasks.** The chain tail (test-writer → reviewer) was already emitted by the architect when the plan was created.
+**You do NOT declare follow-up tasks.** The chain tail (test-planner → reviewer) was already emitted by the architect when the plan was created.
 
 Exception: If during implementation you discover something that must be addressed (a bug, a missing dependency, an unclear requirement), you may declare it:
 ```

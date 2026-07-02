@@ -1,7 +1,7 @@
 {
   "name": "guild",
-  "version": "3.0.0",
-  "description": "Continuous agent orchestration system. Manages requirements, planning, development, and review through a simple ticket queue and automated agent chains, with a Svelte/SvelteKit specialist developer agent and an independent QA discipline. Say 'check in' to start a work session.",
+  "version": "3.1.0",
+  "description": "Continuous agent orchestration system. Manages requirements, planning, parallel development, test planning, unit & integration testing, and review through a simple ticket queue and automated agent chains, with a Svelte/SvelteKit specialist developer agent and an independent QA discipline. Say 'check in' to start a work session.",
   "author": {
     "name": "Gian Patrick Quintana",
     "email": "gian.quintana@hirokata.dev"

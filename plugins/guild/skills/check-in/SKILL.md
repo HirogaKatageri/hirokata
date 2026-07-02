@@ -6,7 +6,7 @@ description: >
   "daily standup", "guild standup", "I'm here", "reporting in", or any phrase
   indicating they want to begin or resume a guild work session. Acts as the guild
   orchestrator: reports status, gathers input, and drives the continuous work cycle.
-version: 3.0.0
+version: 3.1.0
 user-invocable: true
 ---
 
@@ -23,8 +23,11 @@ Read the reference documents before proceeding:
 **Core model:** there is **no `BOARD.md`** and **no `status` frontmatter field**. A ticket's status
 is the **subdirectory it lives in** (`tasks/{todo,in-progress,done,failed}/`). `.guild/state.yaml`
 holds only `last-checkin`. IDs and the cursor are **derived from the filesystem**. The board is
-rendered live. Development is **sequential by default**, with two parallel cases: a `parallel-group`
-developer batch (architect-verified disjoint files) and the 4-reviewer fan-out.
+rendered live. **Development runs in parallel by default**: the architect groups dev tickets into
+`parallel-group` waves (verified disjoint files) that dispatch concurrently; an ungrouped ticket
+runs solo. Reviews fan out 4-wide. The pipeline per requirement is: requirements (product-owner) →
+plan (architect) → parallel development (developers) → test planning (test-planner) → unit &
+integration tests (test-writer) → review (4 reviewers) → done.
 
 ## The guild CLI — use it for every deterministic operation
 
@@ -181,13 +184,14 @@ If it prints `none`: report "All caught up!" and go to **Step 4**.
    )
    ```
 
-**Development is sequential by default — `parallel-group` is the one escape hatch.** Dispatch one
-developer ticket at a time unless the ticket carries a `parallel-group`: then dispatch the whole
-group (computed in 3.2 via `"$GUILD" batch`) concurrently in one message. The architect guarantees
-grouped tickets touch disjoint files, so they share the working tree without a worktree or merge step.
-Never group tickets yourself — only honor the architect's `parallel-group` labels. If two tickets in a
-dispatched group turn out to write the same file (the architect mis-scoped), treat it as a failure:
-finish the batch, then surface the collision to the user in 3.3.
+**Development runs in parallel-group waves — parallel is the default.** The architect groups dev
+tickets into `parallel-group` waves; when the ticket carries one, dispatch the whole group (computed
+in 3.2 via `"$GUILD" batch`) concurrently in one message. The architect guarantees grouped tickets
+touch disjoint files, so they share the working tree without a worktree or merge step. An ungrouped
+dev ticket (foundational work, or an unboundable file set) runs solo. Never group tickets yourself —
+only honor the architect's `parallel-group` labels. If two tickets in a dispatched group turn out to
+write the same file (the architect mis-scoped), treat it as a failure: finish the batch, then surface
+the collision to the user in 3.3.
 
 **Review fan-out (the other parallel case).** When the ticket's `agent` is `reviewer`, do NOT spawn a
 single reviewer. Spawn all 4 specialized reviewers in parallel (multiple Agent calls in one message),
@@ -219,7 +223,7 @@ For **each** ticket in the dispatched batch:
 
 **Parallel-batch checks** (only when the batch had more than one ticket):
 - Do not move on until **every** member has reached `done` (or been resolved). A `failed` member
-  leaves the group incomplete — handle it first, since the tail (test-writer/reviewer) gates on all
+  leaves the group incomplete — handle it first, since the tail (test-planner/reviewer) gates on all
   dev work being `done`.
 - Scan the batch's Work Logs for any file written by more than one ticket. If found, the architect
   mis-scoped the disjoint-file assertion — surface it: "Parallel tickets TASK-X and TASK-Y both
@@ -254,15 +258,19 @@ state rule — no ID arithmetic (the CLI handles IDs).
 3. Otherwise, after creating the fix tickets (3.4), create the tail behind them (higher IDs, so the
    cursor reaches them after the fixes):
    ```bash
-   "$GUILD" new task --title "Write/update unit tests for {feature}" --agent test-writer --req REQ-NNN --date {today}
+   "$GUILD" new task --title "Update unit & integration tests for {feature} fixes" --agent test-writer --req REQ-NNN [--plan PLAN-NNN --plan-slice test-plan] --date {today}
    "$GUILD" new task --title "Re-review {feature}" --agent reviewer --req REQ-NNN --date {today}
    ```
+   Pass `--plan PLAN-NNN --plan-slice test-plan` when the requirement has a plan (the test-writer
+   then updates tests against the existing test plan); omit both in the plan-less bug-fix flow. Do
+   NOT create a new `test-planner` ticket in the fix loop — the round-1 test plan still governs.
 
 **ESCALATE.** After any `reviewer` ticket completes (3.3), scan each reviewer's Work Log for the
 token `ESCALATE`. If present, stop the loop and ask the user the same question.
 
-The initial-chain tail (round 1 test-writer + reviewer) is **not** created here — the architect emits
-it (or the product-owner, in the bug-fix flow). This step only handles fix-loop rounds.
+The initial-chain tail (round 1 test-planner + reviewer) is **not** created here — the architect
+emits it (or the product-owner, in the bug-fix flow). The round-1 test-writer tickets come from the
+test-planner. This step only handles fix-loop rounds.
 
 ### 3.6 Requirement Completion
 
@@ -277,24 +285,27 @@ stored.
 
 ### 3.7 Continue or Pause
 
-Present to the user (when a parallel-group batch completed, list every ticket in it):
-```
-TASK-NNN complete: {title}
-  {brief summary from Work Log}
-  Follow-ups created: {count} new tickets
+**Flow continuously by default.** After each completed ticket (or batch), show a one-line update and
+loop straight back to 3.1 — do NOT ask "continue?" between tickets (each pause costs a user
+round-trip and re-renders context for nothing):
 
-Continue to next task? (yes / no / details / continue all)
-```
-
-- **"yes"** → go to 3.1
-- **"no"** → go to Step 4
-- **"details"** → show full Work Log, then ask again
-- **"continue all"** → set auto-continue, go to 3.1 without asking again
-
-If auto-continue is active, skip the prompt and loop to 3.1, showing a one-line update:
 ```
 TASK-NNN done: {title} → {N} follow-ups created
 ```
+
+(For a parallel-group batch, one line per member.)
+
+**Pause and ask the user only at these checkpoints:**
+
+- **A ticket failed** (3.3 already asks retry/skip)
+- **Escalation or round-2 issues** (3.5 already asks)
+- **A parallel-batch file collision** (3.3 already asks)
+- **A requirement just completed** (3.6) → summarize the requirement and ask: continue with the next
+  backlog item, or wrap up?
+- **The user interrupts** at any time → go to Step 4
+
+If the user explicitly asked to be consulted per-ticket ("step through", "ask me each time"), honor
+that instead: after each ticket ask `Continue to next task? (yes / no / details)`.
 
 ### 3.8 CHANGELOG Maintenance
 
@@ -353,13 +364,15 @@ When the work cycle ends (user stops, or nothing actionable):
    the cursor are derived by the CLI.
 4. **Use the CLI for every deterministic op** — `next`, `batch`, `move`, `new task`, `path`, `read`,
    `slice`, `board`, `list`. No hand-rolled `find`/`mv`/ID math.
-5. **Sequential development by default** — one developer ticket at a time, in ID order. The sole
-   exception is a `parallel-group`: expand it with `"$GUILD" batch` and dispatch all dev tickets
-   sharing the group concurrently (the architect verified they touch disjoint files). Never group
-   tickets yourself.
-6. **Two parallel cases** — a `parallel-group` dev batch (disjoint files, shared tree) and the
-   4-reviewer fan-out (read-only, gated by `"$GUILD" next`'s review gate). Everything else is sequential.
+5. **Parallel development by default** — the architect groups dev tickets into `parallel-group`
+   waves; expand with `"$GUILD" batch` and dispatch each wave concurrently (the architect verified
+   disjoint files). Ungrouped tickets run solo, in ID order. Never group tickets yourself.
+6. **Two parallel cases** — `parallel-group` dev waves (disjoint files, shared tree) and the
+   4-reviewer fan-out (read-only, gated by `"$GUILD" next`'s review gate). The tail
+   (test-planner → test-writer → reviewer) is sequential.
 7. **Always read ticket files after agent completion** — don't assume what happened.
 8. **The orchestrator creates tickets only for the fix-loop tail** — everything else is agent-declared.
 9. **Max 2 review rounds** — count `reviewer` tickets per REQ; on round-2 issues or `ESCALATE`, ask.
 10. **Stale task recovery** — on check-in, move empty-Work-Log `in-progress` tickets back to `todo`.
+11. **Flow continuously** — one-line updates between tickets, no per-ticket "continue?" prompts;
+    pause only at the 3.7 checkpoints (failure, escalation, collision, requirement completion).

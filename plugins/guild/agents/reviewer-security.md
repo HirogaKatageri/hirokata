@@ -23,7 +23,11 @@ You will be given:
 - A **requirement file** — understand security constraints
 - A **plan file** — understand intended security architecture
 
-Also read the completed developer task files referenced in the task context to know which files were changed.
+**Scope your reading to the diff.** Resolve the test plan with
+`"${CLAUDE_PLUGIN_ROOT}/scripts/guild" slice PLAN-NNN test-plan` and use its
+**Changed Files Inventory** as the definitive list of changed files — read those files plus the
+plan overview, not the whole codebase or the per-developer slices. If no test plan exists
+(bug-fix flow), fall back to the completed developer task Work Logs for the changed-file list.
 
 ### 2. Review for Security
 
