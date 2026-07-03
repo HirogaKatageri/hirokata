@@ -23,7 +23,11 @@ You will be given:
 - A **requirement file** — check the documented edge cases
 - A **plan file** — understand expected error handling approach
 
-Also read the completed developer task files to know which files were changed.
+**Scope your reading to the diff.** Resolve the test plan with
+`"${CLAUDE_PLUGIN_ROOT}/scripts/guild" slice PLAN-NNN test-plan` and use its
+**Changed Files Inventory** as the definitive list of changed files — read those files plus the
+plan overview, not the whole codebase or the per-developer slices. If no test plan exists
+(bug-fix flow), fall back to the completed developer task Work Logs for the changed-file list.
 
 ### 2. Review for Edge Cases
 
@@ -101,7 +105,7 @@ Severity levels:
 Add to the "Follow-up Tasks" section:
 
 ```
-- Fix: {edge case description} | agent: developer | priority: high
+- Fix: {edge case description} | agent: developer
 ```
 
 Only declare fixes for critical and major issues.

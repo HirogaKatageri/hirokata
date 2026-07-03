@@ -91,6 +91,9 @@ The output shape is unchanged from the old board view — only the source change
 
 ## Stale `in-progress` recovery
 
-On check-in, a task left in `tasks/in-progress/` with an **empty** Work Log was never really
-started — move it back with `guild move TASK-NNN todo`. One with Work Log content stays
-`in-progress` (resume it).
+On check-in, each task left in `tasks/in-progress/` is triaged three ways (procedure: check-in
+skill Step 1.3):
+- **Empty Work Log** → never started → `guild move TASK-NNN todo`.
+- **Final Work Log entry reports completion/failure** → the session died before the orchestrator
+  recorded it → record the outcome now (materialize follow-ups, then move) without re-dispatching.
+- **Otherwise** → stays `in-progress`; it is resumed with the RESUMED-TASK dispatch variant.

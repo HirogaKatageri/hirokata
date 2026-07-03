@@ -58,17 +58,27 @@ No completed requirements to release since the last release.
 
 ### 3. Pre-release Gate
 
-A task's status is the subdirectory it lives in (`tasks/{todo,in-progress,done,failed}/`), not a frontmatter field. The CLI does not filter tasks by requirement, so to find a REQ's tasks, glob `.guild/tasks/*/TASK-*.md` and read each file's `requirement:` frontmatter (resolve a task's status with `"$GUILD" status TASK-NNN`, which returns its directory). For per-status sweeps use `"$GUILD" list task <status>`.
+A task's status is the subdirectory it lives in (`tasks/{todo,in-progress,done,failed}/`), not a frontmatter field. `guild list task` prints `<ID> <status> <agent> <requirement>`, so a REQ's tasks come from one awk filter:
+
+```bash
+"$GUILD" list task | awk '$4=="REQ-NNN"'
+```
 
 For each requirement in scope:
 
-1. Find all its tasks — glob `.guild/tasks/*/TASK-*.md` and keep those whose `requirement:` frontmatter matches the REQ.
+1. Find all its tasks with the awk filter above.
 
-2. **Block release** if ANY task for an included requirement is:
-   - in `.guild/tasks/failed/` (status `failed`) → report which task and stop
+2. **Block release** if ANY task for an included requirement:
    - has a Work Log entry containing the literal token `ESCALATE` that has not been resolved → report and stop
 
 3. **Warn (do not block)** if ANY task for an included requirement is:
+   - in `.guild/tasks/failed/` — these are **user-waived** (the user chose "skip" when the task
+     failed; the waiver is noted in the ticket's Work Log). List them and ask:
+     ```
+     These tasks for included requirements were waived (failed, user chose not to retry):
+       TASK-NNN: {title}
+     The release will note them. Continue? (yes / no)
+     ```
    - in `.guild/tasks/in-progress/` or `.guild/tasks/todo/` → list them and ask:
      ```
      These tasks for included requirements are not yet done:
@@ -282,6 +292,6 @@ Do not create files, move anything, or run any git commands.
 - **Never delete files** — archive (move) only
 - **CHANGELOG.md lives at repo root** — not inside `.guild/`
 - **`.guild/docs/` is evergreen** — never archive or touch the knowledge base during a release
-- **Pre-release gate blocks on failed / unresolved ESCALATE** — these must be handled before release
+- **Pre-release gate blocks only on unresolved ESCALATE** — user-waived (`failed/`) tasks warn and ask, they don't block
 - **In-progress tasks stay on the board** — they are not included in the archive
 - **One commit, one tag** — both are created atomically at step 10

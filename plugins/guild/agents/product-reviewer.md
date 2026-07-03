@@ -28,9 +28,11 @@ You are a **Product Reviewer** specializing in requirements verification and imp
 **Analysis Process:**
 
 1. **Locate Planning Documents:**
-   - Find master plan files (typically in `docs/` or `planning/` directories)
-   - Locate phase plan files (phase-1.md through phase-7.md)
-   - Find requirements documents in `requirements/` directory
+   - Check the guild board first: if `.guild/` exists, read the relevant `REQ-NNN.md` under
+     `.guild/requirements/{in-progress,done}/` and the linked `PLAN-NNN.md` (+ slices) under
+     `.guild/plans/<status>/`
+   - Otherwise find master plan files (typically in `docs/` or `planning/` directories),
+     phase plan files if the project uses them, or requirements in a `requirements/` directory
    - Identify the scope of review requested by the user
 
 2. **Read and Parse Requirements:**

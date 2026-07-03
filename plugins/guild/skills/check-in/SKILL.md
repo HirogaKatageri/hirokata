@@ -6,7 +6,7 @@ description: >
   "daily standup", "guild standup", "I'm here", "reporting in", or any phrase
   indicating they want to begin or resume a guild work session. Acts as the guild
   orchestrator: reports status, gathers input, and drives the continuous work cycle.
-version: 3.0.0
+version: 3.2.0
 user-invocable: true
 ---
 
@@ -15,16 +15,23 @@ user-invocable: true
 You are now the **Guild Orchestrator**. You manage guild state, report status, gather user input,
 dispatch tasks to agents, materialize follow-ups, and drive the continuous work cycle.
 
-Read the reference documents before proceeding:
-- `references/state-format.md` — `state.yaml`, **directory-encoded status**, the live board, the cursor
-- `references/task-lifecycle.md` — task file format, status (= directory) transitions, follow-up syntax
-- `references/agent-chains.md` — agent chain patterns and orchestrator responsibilities
+**Reference documents — load on demand, not upfront.** This skill is self-sufficient for the hot
+path (Steps 1–4). Read a reference only when its trigger fires:
+- `references/state-format.md` — when `"$GUILD" is-legacy` exits 0, or the `.guild/` layout itself
+  is in question
+- `references/task-lifecycle.md` — when a follow-up line carries an unrecognized modifier, or a
+  ticket/requirement/plan file must be scaffolded or repaired by hand (the CLI normally does this)
+- `references/agent-chains.md` — when routing a flow Step 3 doesn't cover (research-first,
+  bug-fix, QA seeding) or you need chain rationale
 
 **Core model:** there is **no `BOARD.md`** and **no `status` frontmatter field**. A ticket's status
 is the **subdirectory it lives in** (`tasks/{todo,in-progress,done,failed}/`). `.guild/state.yaml`
 holds only `last-checkin`. IDs and the cursor are **derived from the filesystem**. The board is
-rendered live. Development is **sequential by default**, with two parallel cases: a `parallel-group`
-developer batch (architect-verified disjoint files) and the 4-reviewer fan-out.
+rendered live. **Development runs in parallel by default**: the architect groups dev tickets into
+`parallel-group` waves (verified disjoint files) that dispatch concurrently; an ungrouped ticket
+runs solo. Reviews fan out 4-wide. The pipeline per requirement is: requirements (product-owner) →
+plan (architect) → parallel development (developers) → test planning (test-planner) → unit &
+integration tests (test-writer) → review (4 reviewers) → done.
 
 ## The guild CLI — use it for every deterministic operation
 
@@ -43,9 +50,10 @@ GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
 | Dispatch / complete / fail / retry | `"$GUILD" move TASK-NNN in-progress\|done\|failed\|todo` |
 | Create a follow-up task | `"$GUILD" new task --title "…" --agent A --req REQ-NNN [--plan PLAN-NNN] [--plan-slice slug] [--parallel-group L]` |
 | Resolve a ticket / plan slice | `"$GUILD" path ID` · `"$GUILD" read ID` · `"$GUILD" slice PLAN-NNN slug` |
+| Ticket metadata only (dispatch) | `"$GUILD" meta ID [field]` — frontmatter without the body |
 | Mark a requirement done | `"$GUILD" move REQ-NNN done` |
 | Render the board | `"$GUILD" board` |
-| List tickets (e.g. count reviewers) | `"$GUILD" list task [status]` |
+| List tickets (awk-filterable) | `"$GUILD" list task [status]` → `<ID> <status> <agent> <req>` |
 
 Never hand-roll `find`/`mv`/ID arithmetic, and **never write a `status:` field** — moving the file
 is the only way to change status.
@@ -82,9 +90,22 @@ Run `"$GUILD" is-legacy` and check for `.guild/state.yaml`.
    field, removes any `BOARD.md`, reduces `state.yaml`). On "no": stop — the new skill cannot drive
    the old layout.
 2. Update the check-in date: set `last-checkin` to today's date in `.guild/state.yaml` (Edit).
-3. **Stale `in-progress` recovery:** for each task under `tasks/in-progress/`, read its Work Log. If
-   the Work Log is **empty**, it was never started → `"$GUILD" move TASK-NNN todo`. Non-empty → leave
-   it (it will be resumed).
+3. **Stale `in-progress` triage:** for each task under `tasks/in-progress/`, read its Work Log and
+   pick one of three cases:
+   - **Empty Work Log** → never started → `"$GUILD" move TASK-NNN todo`.
+   - **Final entry reports completion or failure** (agents end their log with a done/failed report)
+     → the session died between the agent finishing and the orchestrator recording it. Do NOT
+     re-dispatch: run the **full completion pipeline (3.3 → 3.6)** for this ticket now — materialize
+     unannotated follow-ups (3.4), move it (`done`/`failed`), then apply 3.5 if it was a `reviewer`
+     ticket (fix-loop tail, ESCALATE scan), the 3.3 collision scan if it was a parallel-batch
+     member, and the 3.6 requirement-completion check. Recovery duplicate-guard: before creating a
+     ticket for an unannotated follow-up line, check `"$GUILD" list task todo` for an existing
+     ticket with the same title and requirement (created but not yet annotated in the interrupted
+     pass) — if found, annotate the line with that ID instead of creating a new one. For a
+     `reviewer` ticket, treat it as complete only if all 4 reviewer entries are present; otherwise
+     leave it for resume.
+   - **Anything else** (log started, no completion report) → leave it in-progress; Step 3 will
+     resume it with the RESUMED-TASK dispatch variant (3.2).
 4. Proceed to **Step 2**.
 
 ## Step 2: Report & Route
@@ -116,13 +137,20 @@ Last check-in: 2026-04-07
 **Empty board** (board shows no tasks and no requirements): skip the route question. Tell the user
 the board is empty and invoke `guild:new-requirement` to get started, then proceed to **Step 3**.
 
-**Otherwise**, immediately call **AskUserQuestion** to route the session. Use a single question with
-these options (the tool always adds an "Other" choice for free-form input):
+**Work intent — resume without asking.** If the invoking phrase expresses work intent ("let's get
+to work", "start working", "continue", or the user otherwise asked to work) AND the board has any
+in-progress or todo task, do NOT ask a routing question. Print the board plus one line —
+`Resuming: {output of "$GUILD" next} — say 'stop' or give new direction anytime.` — and go
+straight to **Step 3**. This is the "continue where we left off" path: zero round-trips.
+
+**Otherwise** (ambiguous/status triggers like "check in", "standup", "what's the status", "I'm
+here", or nothing is actionable), call **AskUserQuestion** to route the session. Use a single
+question with these options (the tool always adds an "Other" choice for free-form input):
 
 - **Continue working** — pick up the next ticket and run the work cycle
 - **New requirement** — add something new to build
 - **Review completed work** — walk through recently completed tickets in detail
-- **Adjust priorities** — retitle, drop, or reprioritize backlog tickets
+- **Adjust the backlog** — retitle or drop backlog tickets
 
 Route on the selection:
 
@@ -131,8 +159,10 @@ Route on the selection:
 - **Review completed work** → read recently completed ticket files (`"$GUILD" read TASK-NNN`), show
   Work Log summaries, ask if anything needs rework. If rework needed, create new tickets (Step 3.4).
   Then **Step 3**.
-- **Adjust priorities** → list the backlog (`"$GUILD" list task todo`). Let the user retitle, drop,
-  or reprioritize tickets by editing the ticket files. Then **Step 3**.
+- **Adjust the backlog** → list it (`"$GUILD" list task todo`). Retitle by editing the ticket
+  file's `title` field; drop with `"$GUILD" move TASK-NNN failed` (note the reason in the ticket's
+  Work Log). Ordering is fixed ID order — to run something sooner or later, drop the ticket and
+  recreate it with `"$GUILD" new task` (new IDs sort last). Then **Step 3**.
 - **Other** (user describes work directly, e.g., "fix the login bug") → invoke
   `guild:new-requirement` with the description as context, then **Step 3**.
 
@@ -156,11 +186,13 @@ If it prints `none`: report "All caught up!" and go to **Step 4**.
 2. Move every ticket in the batch to in-progress: `"$GUILD" move TASK-NNN in-progress` (one per
    member). If the requirement is still in `requirements/todo/` (`"$GUILD" status REQ-NNN` → `todo`),
    advance it too: `"$GUILD" move REQ-NNN in-progress`.
-3. Read each ticket (`"$GUILD" read TASK-NNN`). Determine each agent from its `agent` field, and
-   resolve linked paths to pass along: `"$GUILD" path REQ-NNN`, and for any `plan-slice`,
-   `"$GUILD" slice PLAN-NNN {slug}`.
+3. Get each ticket's metadata with `"$GUILD" meta TASK-NNN` (frontmatter only — do NOT `guild read`
+   the full ticket at dispatch; the agent reads its own ticket). From the `agent`, `requirement`,
+   `plan`, and `plan-slice` fields, resolve the paths to pass along: `"$GUILD" path REQ-NNN`, and
+   for any `plan-slice`, `"$GUILD" slice PLAN-NNN {slug}`.
 4. Spawn with the **Agent tool** — a single call for a solo ticket; for a parallel-group batch, **one
-   Agent call per ticket in the same message** so they run concurrently:
+   Agent call per ticket in the same message** so they run concurrently. Each agent's own definition
+   carries its close-out protocol; the prompt stays minimal:
 
    ```
    Agent(
@@ -172,22 +204,29 @@ If it prints `none`: report "All caught up!" and go to **Step 4**.
               Plan slice (if any): {resolved path from `guild slice PLAN-NNN slug`}
               Today's date: {today's date}
 
-              When done:
-              1. Append your progress to the Work Log section of the task file
-              2. Declare any follow-up tasks in the Follow-up Tasks section
-              3. Update acceptance criteria checkboxes
-              4. Report completion (done or failed) in your final message — DO NOT move
-                 the task file or edit any status; the orchestrator owns status transitions."
+              Report done or failed in your final message. Do NOT move your task file
+              or edit any status — the orchestrator owns all transitions."
    )
    ```
 
-**Development is sequential by default — `parallel-group` is the one escape hatch.** Dispatch one
-developer ticket at a time unless the ticket carries a `parallel-group`: then dispatch the whole
-group (computed in 3.2 via `"$GUILD" batch`) concurrently in one message. The architect guarantees
-grouped tickets touch disjoint files, so they share the working tree without a worktree or merge step.
-Never group tickets yourself — only honor the architect's `parallel-group` labels. If two tickets in a
-dispatched group turn out to write the same file (the architect mis-scoped), treat it as a failure:
-finish the batch, then surface the collision to the user in 3.3.
+   **Resumed ticket?** If the ticket was already in `tasks/in-progress/` with a non-empty Work Log
+   before this dispatch (Step 1.3 case three, or `guild next` returned an in-progress path), prepend
+   one line to the prompt:
+
+   ```
+   RESUMED TASK: a prior agent already worked on this ticket — read its Work Log first
+   and continue from the last entry; do not redo logged work or re-declare follow-ups
+   already listed.
+   ```
+
+**Development runs in parallel-group waves — parallel is the default.** The architect groups dev
+tickets into `parallel-group` waves; when the ticket carries one, dispatch the whole group (computed
+in 3.2 via `"$GUILD" batch`) concurrently in one message. The architect guarantees grouped tickets
+touch disjoint files, so they share the working tree without a worktree or merge step. An ungrouped
+dev ticket (foundational work, or an unboundable file set) runs solo. Never group tickets yourself —
+only honor the architect's `parallel-group` labels. If two tickets in a dispatched group turn out to
+write the same file (the architect mis-scoped), treat it as a failure: finish the batch, then surface
+the collision to the user in 3.3.
 
 **Review fan-out (the other parallel case).** When the ticket's `agent` is `reviewer`, do NOT spawn a
 single reviewer. Spawn all 4 specialized reviewers in parallel (multiple Agent calls in one message),
@@ -212,14 +251,20 @@ For **each** ticket in the dispatched batch:
 
 1. **Read the updated ticket** (`"$GUILD" read TASK-NNN`) — check the Work Log and Follow-up Tasks,
    and note whether the agent reported success or failure.
-2. **Move the ticket** to its terminal status — **the orchestrator is the only writer of status**:
-   - Reported done → `"$GUILD" move TASK-NNN done`, then process follow-ups (3.4)
-   - Reported failed → `"$GUILD" move TASK-NNN failed`, then ask the user (AskUserQuestion) whether
-     to **retry** (`"$GUILD" move TASK-NNN todo`) or **skip** (leave in `failed/`).
+2. **Record the outcome — follow-ups FIRST, then the move.** The orchestrator is the only writer of
+   status. Materializing before moving means a crash mid-processing leaves the ticket in
+   `in-progress/`, where Step 1.3 recovers it; a ticket in `done/` is never revisited.
+   - Reported done → process follow-ups (3.4), **then** `"$GUILD" move TASK-NNN done`
+   - Reported failed → `"$GUILD" move TASK-NNN failed` (no follow-up processing), then ask the user
+     (AskUserQuestion) whether to **retry** (`"$GUILD" move TASK-NNN todo`) or **skip** (leave in
+     `failed/`). On **skip**, append a waiver line to the ticket's Work Log — `Skipped by user on
+     {date} — excluded from REQ scope` — so downstream agents and the completion summary have the
+     fact on record. A ticket in `failed/` is **user-adjudicated**: it no longer blocks the review
+     gate or requirement completion (3.6), it just gets reported.
 
 **Parallel-batch checks** (only when the batch had more than one ticket):
 - Do not move on until **every** member has reached `done` (or been resolved). A `failed` member
-  leaves the group incomplete — handle it first, since the tail (test-writer/reviewer) gates on all
+  leaves the group incomplete — handle it first, since the tail (test-planner/reviewer) gates on all
   dev work being `done`.
 - Scan the batch's Work Logs for any file written by more than one ticket. If found, the architect
   mis-scoped the disjoint-file assertion — surface it: "Parallel tickets TASK-X and TASK-Y both
@@ -229,72 +274,101 @@ For **each** ticket in the dispatched batch:
 
 Read the completed ticket's "Follow-up Tasks" section. For each line:
 
-1. **Parse**: title, agent, priority, optional `plan-slice` slug. (No `depends-on`, no magic tokens.)
-2. **Create the ticket** with the CLI — it derives the next ID and writes into `tasks/todo/`:
+1. **Parse**: title, agent, and the optional modifiers `plan: PLAN-NNN`, `plan-slice: {slug}`,
+   `parallel-group: {label}`. (No `depends-on`, no magic tokens; ignore a legacy `priority:` field
+   if one appears.) The `plan:` modifier is emitted by the architect — the one agent whose own
+   ticket predates the plan; when absent, the new ticket inherits the parent ticket's `plan`
+   frontmatter.
+2. **Skip already-materialized lines**: a line ending in ` → TASK-NNN` was created in a previous
+   pass — do not create it again. (The create→annotate pair is not atomic: when running this step
+   as crash recovery, also check `"$GUILD" list task todo` for an existing same-title, same-REQ
+   ticket before creating — if found, just annotate the line with that ID.)
+3. **Create the ticket** with the CLI — it derives the next ID and writes into `tasks/todo/`:
    ```bash
    "$GUILD" new task --title "{title}" --agent {agent} --req {parent REQ} \
-     [--plan {parent PLAN}] [--plan-slice {slug}] --date {today}
+     [--plan {plan modifier, or parent's plan}] [--plan-slice {slug}] \
+     [--parallel-group {label}] --date {today}
    ```
-   The new task inherits the parent's requirement (and plan, if any). Pass `--plan-slice` only when
-   the modifier was present.
+   The new task inherits the parent's requirement. Pass `--plan-slice` / `--parallel-group` only
+   when the corresponding modifier was present.
+4. **Annotate**: append ` → TASK-NNN` (the ID just printed) to the follow-up line in the parent
+   ticket (Edit). This makes materialization idempotent — if the session dies partway, the Step 1.3
+   triage re-runs 3.4 and only the unannotated lines are created.
 
 **De-dupe.** If the parent ticket was a `reviewer` ticket (4 reviewers wrote to one shared Follow-up
-section), collapse identical declarations — create each unique `Fix:` ticket once.
+section), collapse identical declarations — create each unique `Fix:` ticket once (annotate every
+copy of the line).
 
 ### 3.5 Fix-Loop Tail (the only orchestrator-created tickets)
 
 This runs **only** after a `reviewer` ticket completes and produced `Fix:` tickets. It is a plain
 state rule — no ID arithmetic (the CLI handles IDs).
 
-1. Count existing `reviewer` tickets for this requirement: `"$GUILD" list task | grep ...` for tasks
-   whose `agent` is `reviewer` and `requirement` matches (the just-completed one is included). Call
-   it `V`.
+1. Count existing `reviewer` tickets for this requirement (the just-completed one is included) —
+   `guild list task` prints `<ID> <status> <agent> <requirement>`, so:
+   ```bash
+   V=$("$GUILD" list task | awk '$3=="reviewer" && $4=="REQ-NNN"' | wc -l)
+   ```
 2. If `V >= 2` (a 2nd-round `Re-review …` already ran) AND fixes were still declared → **stop the
    loop**. Ask the user: "Round 2 review still has open issues — keep fixing, or accept as-is?"
 3. Otherwise, after creating the fix tickets (3.4), create the tail behind them (higher IDs, so the
    cursor reaches them after the fixes):
    ```bash
-   "$GUILD" new task --title "Write/update unit tests for {feature}" --agent test-writer --req REQ-NNN --date {today}
+   "$GUILD" new task --title "Update unit & integration tests for {feature} fixes" --agent test-writer --req REQ-NNN [--plan PLAN-NNN --plan-slice test-plan] --date {today}
    "$GUILD" new task --title "Re-review {feature}" --agent reviewer --req REQ-NNN --date {today}
    ```
+   Pass `--plan PLAN-NNN --plan-slice test-plan` when the requirement has a plan (the test-writer
+   then updates tests against the existing test plan); omit both in the plan-less bug-fix flow. Do
+   NOT create a new `test-planner` ticket in the fix loop — the round-1 test plan still governs.
 
 **ESCALATE.** After any `reviewer` ticket completes (3.3), scan each reviewer's Work Log for the
 token `ESCALATE`. If present, stop the loop and ask the user the same question.
 
-The initial-chain tail (round 1 test-writer + reviewer) is **not** created here — the architect emits
-it (or the product-owner, in the bug-fix flow). This step only handles fix-loop rounds.
+The initial-chain tail (round 1 test-planner + reviewer) is **not** created here — the architect
+emits it (or the product-owner, in the bug-fix flow). The round-1 test-writer tickets come from the
+test-planner. This step only handles fix-loop rounds.
 
 ### 3.6 Requirement Completion
 
-After materializing follow-ups, for the parent ticket's requirement: if every task for that REQ is
-`done` (check `"$GUILD" list task` — none remain in `todo/`, `in-progress/`, or `failed/` for that
-REQ) AND its latest `reviewer` ticket is done with no open `Fix:` tickets:
+After materializing follow-ups, for the parent ticket's requirement: if no task for that REQ
+remains **open** — check with
+```bash
+"$GUILD" list task | awk '$4=="REQ-NNN" && $2!="done" && $2!="failed"'
+```
+(empty output = nothing open; this matches the CLI's review gate exactly) — AND its latest
+`reviewer` ticket is done with no open `Fix:` tickets:
 - `"$GUILD" move REQ-NNN done`.
-- Append a bullet to `CHANGELOG.md` under `## [Unreleased]` (see 3.8).
+- If any tasks for the REQ sit in `failed/` (`awk '$4=="REQ-NNN" && $2=="failed"'`), they were
+  **user-waived** (3.3 skip) — list them in the completion summary rather than blocking completion.
+- Append a bullet to `CHANGELOG.md` under `## [Unreleased]` (see 3.8) — with waived tasks, use
+  `- REQ-NNN: {title} (TASK-NNN skipped)`.
 
 Requirement progress is always computed live by `"$GUILD" board` (done tasks / total tasks) — never
 stored.
 
 ### 3.7 Continue or Pause
 
-Present to the user (when a parallel-group batch completed, list every ticket in it):
-```
-TASK-NNN complete: {title}
-  {brief summary from Work Log}
-  Follow-ups created: {count} new tickets
+**Flow continuously by default.** After each completed ticket (or batch), show a one-line update and
+loop straight back to 3.1 — do NOT ask "continue?" between tickets (each pause costs a user
+round-trip and re-renders context for nothing):
 
-Continue to next task? (yes / no / details / continue all)
-```
-
-- **"yes"** → go to 3.1
-- **"no"** → go to Step 4
-- **"details"** → show full Work Log, then ask again
-- **"continue all"** → set auto-continue, go to 3.1 without asking again
-
-If auto-continue is active, skip the prompt and loop to 3.1, showing a one-line update:
 ```
 TASK-NNN done: {title} → {N} follow-ups created
 ```
+
+(For a parallel-group batch, one line per member.)
+
+**Pause and ask the user only at these checkpoints:**
+
+- **A ticket failed** (3.3 already asks retry/skip)
+- **Escalation or round-2 issues** (3.5 already asks)
+- **A parallel-batch file collision** (3.3 already asks)
+- **A requirement just completed** (3.6) → summarize the requirement and ask: continue with the next
+  backlog item, or wrap up?
+- **The user interrupts** at any time → go to Step 4
+
+If the user explicitly asked to be consulted per-ticket ("step through", "ask me each time"), honor
+that instead: after each ticket ask `Continue to next task? (yes / no / details)`.
 
 ### 3.8 CHANGELOG Maintenance
 
@@ -328,8 +402,8 @@ Skip if a bullet starting with `- REQ-NNN:` already exists under `## [Unreleased
 
 When the work cycle ends (user stops, or nothing actionable):
 
-1. Update `state.yaml` `last-checkin` to today's date (Edit).
-2. Present a session summary (render with `"$GUILD" board`):
+1. Present a session summary (render with `"$GUILD" board`; `last-checkin` was already stamped at
+   Step 1 — do not write it again):
    ```
    Session Summary
    ===============
@@ -352,14 +426,20 @@ When the work cycle ends (user stops, or nothing actionable):
 3. **No `BOARD.md`, no counters, no cursor field** — render the board live (`"$GUILD" board`); IDs and
    the cursor are derived by the CLI.
 4. **Use the CLI for every deterministic op** — `next`, `batch`, `move`, `new task`, `path`, `read`,
-   `slice`, `board`, `list`. No hand-rolled `find`/`mv`/ID math.
-5. **Sequential development by default** — one developer ticket at a time, in ID order. The sole
-   exception is a `parallel-group`: expand it with `"$GUILD" batch` and dispatch all dev tickets
-   sharing the group concurrently (the architect verified they touch disjoint files). Never group
-   tickets yourself.
-6. **Two parallel cases** — a `parallel-group` dev batch (disjoint files, shared tree) and the
-   4-reviewer fan-out (read-only, gated by `"$GUILD" next`'s review gate). Everything else is sequential.
+   `meta`, `slice`, `board`, `list`. No hand-rolled `find`/`mv`/ID math.
+5. **Parallel development by default** — the architect groups dev tickets into `parallel-group`
+   waves; expand with `"$GUILD" batch` and dispatch each wave concurrently (the architect verified
+   disjoint files). Ungrouped tickets run solo, in ID order. Never group tickets yourself.
+6. **Two parallel cases** — `parallel-group` dev waves (disjoint files, shared tree) and the
+   4-reviewer fan-out (read-only, gated by `"$GUILD" next`'s review gate). The tail
+   (test-planner → test-writer → reviewer) is sequential.
 7. **Always read ticket files after agent completion** — don't assume what happened.
 8. **The orchestrator creates tickets only for the fix-loop tail** — everything else is agent-declared.
 9. **Max 2 review rounds** — count `reviewer` tickets per REQ; on round-2 issues or `ESCALATE`, ask.
-10. **Stale task recovery** — on check-in, move empty-Work-Log `in-progress` tickets back to `todo`.
+10. **Three-case stale triage on check-in** — empty Work Log → back to `todo`; completion/failure
+    reported in the log → run the full completion pipeline (3.3 → 3.6) without re-dispatching;
+    otherwise resume with the RESUMED-TASK prompt variant.
+11. **Flow continuously** — one-line updates between tickets, no per-ticket "continue?" prompts;
+    pause only at the 3.7 checkpoints (failure, escalation, collision, requirement completion).
+12. **Follow-ups before the terminal move** — materialize (and annotate ` → TASK-NNN`) first, then
+    `guild move done`; a crash then lands in a recoverable state, never a silent dead-end.
