@@ -341,6 +341,41 @@ PhD-level, multi-perspective research inspired by Stanford's **STORM** method. I
 
 ---
 
+### Storytelling Plugin (v1.0.0)
+
+Turn any idea, pitch, update, or decision into a message that **lands** — using six proven storytelling frameworks. Most communication fails because it's delivered in the wrong shape: a board wants the answer first, a team wants a reason to care, a customer wants to be the hero. The plugin diagnoses the situation, picks the framework that fits, drafts the message in it, and — when the framing is uncertain — drafts it several ways in parallel so you can pick the version that lands. Inspired by Eric Partaker's rundown of six CEO storytelling frameworks.
+
+**How it works:**
+
+1. Say `help me tell the story of <X>` (or invoke a framework skill directly)
+2. It captures your message, audience, desired outcome, and medium
+3. It recommends the framework that fits the job and drafts the message
+4. **Panel mode:** when the frame is uncertain, it drafts 2–3 frameworks in parallel via the `story-drafter` agent for side-by-side comparison
+5. **Sharpening:** for high-stakes messages, the `story-critic` agent scores and tightens the draft
+
+**Skills:**
+
+| Skill | What it does | Trigger Phrases |
+|-------|-------------|----------------|
+| `storytelling:storytelling` | Diagnoses audience/goal, recommends a framework, drafts the message (single or panel mode) | "help me tell the story of <X>", "how should I pitch <X>", "make this message land", "which storytelling framework fits <X>" |
+| `storytelling:golden-circle` | Simon Sinek's Why → How → What — for vision and rallying | "golden circle", "start with why", "frame our mission" |
+| `storytelling:pyramid-principle` | Minto's answer-first, MECE-supported structure — for decision-makers | "pyramid principle", "bottom line up front", "structure this exec summary" |
+| `storytelling:pixar-pitch` | Emma Coats' story spine — for transformation & journey narratives | "pixar pitch", "tell this as a journey", "before and after story" |
+| `storytelling:storybrand` | Donald Miller's SB7 (customer as hero) — for marketing & sales | "storybrand", "make the customer the hero", "write a landing page" |
+| `storytelling:what-so-what-now-what` | Fact → impact → action — for post-mortems & status | "what so what now what", "structure this post-mortem", "help me debrief" |
+| `storytelling:abt` | And, But, Therefore — for elevator pitches & one-liners | "abt", "elevator pitch", "make this punchy", "give me a hook" |
+
+**Agents:**
+
+| Agent | Role |
+|-------|------|
+| `storytelling:story-drafter` | Drafts a message in one framework; spawned in parallel for panel-mode comparison (Sonnet) |
+| `storytelling:story-critic` | Audits a draft against its framework and audience, scores it, returns a tightened rewrite (Opus) |
+
+[View Storytelling Plugin Documentation](plugins/storytelling/README.md)
+
+---
+
 ## License
 
 MIT License — see [LICENSE](LICENSE) for details.

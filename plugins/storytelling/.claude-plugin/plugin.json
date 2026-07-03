@@ -1,0 +1,13 @@
+{
+  "name": "storytelling",
+  "version": "1.0.0",
+  "description": "Turn any idea, pitch, update, or decision into a message that lands — using six proven storytelling frameworks (Simon Sinek's Golden Circle, Minto's Pyramid Principle, the Pixar Pitch, StoryBrand, What/So What/Now What, and ABT). The 'storytelling' skill diagnoses your audience and goal, recommends the right framework, drafts the message, and can draft it several ways in parallel so you pick the one that lands. Each framework is also a standalone skill. Say 'help me tell the story of <X>' to start.",
+  "author": {
+    "name": "Gian Patrick Quintana",
+    "email": "gian.quintana@hirokata.dev"
+  },
+  "homepage": "https://github.com/HirogaKatageri/hirokata/tree/main/plugins/storytelling",
+  "repository": "https://github.com/HirogaKatageri/hirokata",
+  "license": "MIT",
+  "keywords": ["storytelling", "communication", "narrative", "pitch", "messaging", "golden-circle", "pyramid-principle", "pixar-pitch", "storybrand", "abt", "framework"]
+}
