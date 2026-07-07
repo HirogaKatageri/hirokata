@@ -34,9 +34,6 @@ Once the marketplace is added, install individual plugins by name. The marketpla
 
 # Install the Software plugin
 /plugin install software@hirokata
-
-# Install the Project Management plugin
-/plugin install project-management@hirokata
 ```
 
 **Step 3 — Keep plugins up to date**
@@ -246,59 +243,6 @@ Trigger phrases: "create a conventional commit", "generate conventional commits"
 **`software:categorize-task`** — Reference guide for classifying development tasks into the 8-phase clean architecture structure.
 
 [View Software Plugin Documentation](plugins/software-project/README.md)
-
----
-
-### Project Management Plugin (v1.0.0)
-
-A file-based request queue that lets you drop work items into a folder and have the orchestrator pick them up and delegate them automatically.
-
-**How it works:**
-
-1. Initialize the project structure with `initialize project`
-2. Create request files with `create a request`
-3. Process all pending requests with `process requests` or start hourly auto-processing
-
-**Skills:**
-
-| Skill | What it does | Trigger Phrases |
-|-------|-------------|----------------|
-| `project-management:initialize-project` | Creates `requirements/`, `tasks/`, `requests/todo/`, `requests/done/` directories | "initialize project", "set up project", "init project" |
-| `project-management:create-request` | Writes a structured request file to `requests/todo/` | "create a request", "queue a request", "new request" |
-| `project-management:start-request-monitoring` | Schedules the orchestrator to run every hour against `requests/todo/` | "start request monitoring", "monitor requests", "watch requests" |
-| `project-management:stop-request-monitoring` | Cancels the scheduled monitoring job | "stop request monitoring", "stop watching requests" |
-| `project-management:list-request-monitoring` | Lists active monitoring jobs | "list request monitoring", "show monitoring jobs" |
-
-**Agent:**
-
-`project-management:project-orchestrator` — Scans `requests/todo/` for pending request files, delegates each to the appropriate agent or skill, then moves completed files to `requests/done/`.
-
----
-
-### Session Tracker Plugin (v1.1.0)
-
-Automatically logs and summarizes Claude Code work sessions using Claude Haiku sub-agents. Say "end session" to record what you worked on, or "daily summary" to get a cross-project report.
-
-**How it works:**
-
-- On "end session", the `logger` agent (Haiku) queries committed and uncommitted git changes for the past 28 hours, synthesizes a summary, and appends it to `.logs/YYYY-MM-DD-log.md` in the project root
-- On "daily summary", the `summarizer` agent (Haiku) finds every `.logs/YYYY-MM-DD-log.md` across all subdirectories, groups sessions by project, and writes a unified report to `.logs/YYYY-MM-DD-daily-summary.md`
-
-**Skills:**
-
-| Skill | What it does | Trigger Phrases |
-|-------|-------------|----------------|
-| `session-tracker:end-session` | Logs git activity for the current session to `.logs/YYYY-MM-DD-log.md` | "end session", "wrap up", "I'm done for today", "calling it a day" |
-| `session-tracker:daily-summary` | Generates a cross-project daily report to `.logs/YYYY-MM-DD-daily-summary.md` | "daily summary", "summarize today", "what did I do today" |
-
-**Agents:**
-
-| Agent | Role |
-|-------|------|
-| `session-tracker:logger` | Queries git changes (28h window), synthesizes session summary, appends to daily log |
-| `session-tracker:summarizer` | Finds all project log files for today, groups by project, writes daily summary |
-
-[View Session Tracker Documentation](plugins/session-tracker/README.md)
 
 ---
 

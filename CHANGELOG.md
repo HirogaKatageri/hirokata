@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **Project Management Plugin** — removed `plugins/project-management` and its marketplace/README entries
+- **Session Tracker Plugin** — removed `plugins/session-tracker` and its marketplace/README entries
+
 ### Changed
 - **Guild Plugin v3.2.0 — Crash-safe resume, execution hardening, leaner token budget** (27 adversarially-verified audit findings fixed)
   - **"Continue where we left off" hardened end to end.** Follow-ups are now materialized *before* a ticket's terminal `guild move done` and each created line is annotated ` → TASK-NNN` (idempotent re-processing) — a crash can no longer strand a requirement with un-created chain tickets. Check-in stale triage is now three-case: empty Work Log → re-queue; completion/failure recorded in the log → record the outcome without re-dispatching the agent; otherwise resume with a new RESUMED-TASK dispatch variant. All worker agents now log a start entry + milestones (an interrupted agent is no longer indistinguishable from a never-started one), the product-owner persists interview answers into the REQ draft as it goes, and the architect logs its scaffolded PLAN-NNN immediately so a rerun resumes instead of orphaning a duplicate plan. A work-intent trigger ("let's get to work") resumes with zero routing questions.
