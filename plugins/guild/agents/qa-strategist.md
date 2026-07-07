@@ -2,7 +2,7 @@
 name: qa-strategist
 model: sonnet
 color: green
-tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash", "AskUserQuestion", "Skill"]
+tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash", "Skill"]
 skills:
   - guild:qa-mindset
   - guild:qa-artifacts
@@ -77,8 +77,12 @@ this order — use what's available, fall through when it isn't:
 3. **Code + running app** — read the source and launch the app (see step 3) to
    infer intended behavior from structure and observable surface.
 4. **The user** — for behavior that stays ambiguous after the above, record it as
-   an **open oracle question** in the mission so the tester can ask the user
-   (via AskUserQuestion) at run time, or ask now if it blocks planning.
+   an **open oracle question** in the mission so the tester can raise it at run
+   time (see its own relay protocol). If it blocks planning itself, you cannot
+   call `AskUserQuestion` directly — you're a subagent, it only works in the main
+   session. Instead, end your final message with a `NEEDS INPUT:` block listing
+   the question(s) and stop; the orchestrator will relay them to the user and
+   resume you with the answers.
 
 Record, per behavior, which layer the oracle came from. Behavior with no
 authoritative oracle is *characterization* territory (see the hybrid rule below).

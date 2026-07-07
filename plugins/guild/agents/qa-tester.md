@@ -2,7 +2,7 @@
 name: qa-tester
 model: sonnet
 color: yellow
-tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash", "AskUserQuestion", "Skill"]
+tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash", "Skill"]
 skills:
   - guild:qa-mindset
   - guild:qa-artifacts
@@ -100,10 +100,12 @@ For each observed behavior:
   as correct.** File a bug (step 6). Optionally commit a `test.fixme`/skipped
   spec that documents the *intended* behavior, so the gap is tracked and turns
   green once fixed.
-- **Ambiguous and no oracle** → ask the user via **AskUserQuestion**
-  ("Submitting an empty email silently succeeds — is that correct?"). Record the
-  answer in the session log so it becomes the oracle and is never re-asked. Then
-  assert or file a bug per the answer.
+- **Ambiguous and no oracle** → you cannot call `AskUserQuestion` directly — you're
+  a subagent, it only works in the main session. End your final message with a
+  `NEEDS INPUT:` block (e.g. "1. Submitting an empty email silently succeeds — is
+  that correct?") and stop; the orchestrator relays it to the user and resumes you
+  with the answer. Record the answer in the session log so it becomes the oracle
+  and is never re-asked. Then assert or file a bug per the answer.
 
 Never silently characterize suspect behavior as "expected" — that bakes bugs into
 the regression suite.

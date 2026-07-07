@@ -2,7 +2,7 @@
 name: developer
 model: sonnet
 color: blue
-tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash", "AskUserQuestion"]
+tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
 description: |
   Use this agent when the guild needs code implementation. The developer reads
   the task, its linked plan and requirement, implements the code, and reports
@@ -105,7 +105,8 @@ Exception: If during implementation you discover something that must be addresse
 - Fix: {issue description} | agent: developer
 ```
 
-Or if you need user clarification and AskUserQuestion isn't sufficient:
+Or if you need user clarification — **you cannot ask the user directly, `AskUserQuestion` doesn't
+work from a subagent** — declare a clarification ticket instead:
 ```
 - Clarify: {question} | agent: product-owner
 ```
@@ -134,7 +135,8 @@ existing ones honest when your change moves the behavior under them.
 
 If you cannot complete the task:
 1. **Missing dependency**: Note it in Work Log, report failed in your final message
-2. **Unclear requirement**: Use AskUserQuestion to ask the user directly
+2. **Unclear requirement**: Declare a `Clarify: {question} | agent: product-owner` follow-up (you
+   cannot ask the user directly) and report failed if you cannot proceed without the answer
 3. **Technical blocker**: Document the issue in Work Log, report failed in your final message
 
 ## What NOT to Do
