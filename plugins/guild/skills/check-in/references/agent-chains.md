@@ -1,87 +1,65 @@
 # Agent Chains — Follow-up Patterns
 
-This document defines the standard chains that drive the guild's continuous cycle:
-**Requirements → Tasks → Plans → Tasks**. Tickets are walked by a single cursor in **ID order**
-(see `state-format.md`); development runs **in parallel by default** — the architect groups dev
-tickets into `parallel-group` waves (verified disjoint files) that dispatch concurrently — and
-reviews fan out 4-wide.
+This document defines the standard chains that drive the guild's continuous cycle. **Requirements
+and planning happen up front, outside the ticket board**, inside the `guild:new-requirement`
+skill: the product-owner and architect run a live 3-way interview with the user, and the
+architect creates every developer/test-planner/reviewer ticket directly (via the CLI) before that
+skill returns. Everything below this point runs through the ticket board, walked by a single
+cursor in **ID order** (see `state-format.md`); development runs **in parallel by default** — the
+architect groups dev tickets into `parallel-group` waves (verified disjoint files) that dispatch
+concurrently — and reviews fan out 4-wide.
 
 ## The Core Cycle
 
 ```
-User provides input
-  └→ product-owner: discusses & refines requirements, writes REQ document
-      └→ architect: reads REQ, explores codebase, writes PLAN,
-         declares dev tickets + the test-planner + reviewer tail
-          └→ developer ×N: implement code per plan, in parallel-group
-             waves (disjoint files); foundational tickets run solo first
-              └→ test-planner: inventories the diff, writes the test plan,
-                 declares the test-writer ticket(s)
-                  └→ test-writer: writes and runs unit & integration tests
-                      └→ 4 reviewers in parallel:
-                          ├── reviewer-security
-                          ├── reviewer-architecture
-                          ├── reviewer-business-logic
-                          └── reviewer-edge-case
-                              ├→ [all approved] requirement complete → done
-                              └→ [any issues] developer fixes → test-writer → reviewers again
+guild:new-requirement (live interview, not ticket-dispatched)
+  ├→ product-owner: interviews the user, writes REQ document
+  └→ architect: explores codebase (may run guild:researcher inline), writes PLAN,
+     creates dev tickets + the test-planner + reviewer tail directly via the CLI
+      │
+      ▼  (tickets now exist — check-in drives the rest)
+developer ×N: implement code per plan, in parallel-group
+waves (disjoint files); foundational tickets run solo first
+  └→ test-planner: inventories the diff, writes the test plan,
+     declares the test-writer ticket(s)
+      └→ test-writer: writes and runs unit & integration tests
+          └→ 4 reviewers in parallel:
+              ├── reviewer-security
+              ├── reviewer-architecture
+              ├── reviewer-business-logic
+              └── reviewer-edge-case
+                  └→ orchestrator compiles a review report, asks the user which
+                     findings (if any) become fix tickets — no automatic re-review
 ```
 
 ## Chain 1: Standard Requirement Flow
 
 The most common chain. A new requirement flows through all roles.
 
-| Step | Agent | Input | Output | Follow-up |
+| Step | Agent | Input | Output | Where it runs |
 |------|-------|-------|--------|-----------|
-| 1 | product-owner | User conversation | REQ document | architect ticket |
-| 2 | architect | REQ document + codebase | PLAN document | developer tickets **+ test-planner ticket + reviewer ticket** |
-| 3 | developer (×N, parallel-group waves) | PLAN slice + REQ + codebase | Code changes | (none) |
-| 4 | test-planner | Dev work logs + REQ + PLAN | Test plan (`slice-test-plan.md`) | test-writer ticket(s) |
-| 5 | test-writer (×1–2) | Test plan + changed files | Unit & integration tests | fix tickets if bugs found |
-| 6 | 4 reviewers (parallel) | Changed files + tests + REQ + PLAN | Review report | fix tickets OR approval |
+| 1 | product-owner | User conversation (live, 3-way with architect) | REQ document | `guild:new-requirement` (not ticket-dispatched) |
+| 2 | architect | REQ document + codebase (+ inline `guild:researcher` calls as needed) | PLAN document + developer tickets **+ test-planner ticket + reviewer ticket**, created directly via the CLI | `guild:new-requirement` (not ticket-dispatched) |
+| 3 | developer (×N, parallel-group waves) | PLAN slice + REQ + codebase | Code changes | check-in ticket board |
+| 4 | test-planner | Dev work logs + REQ + PLAN | Test plan (`slice-test-plan.md`) | check-in ticket board |
+| 5 | test-writer (×1–2) | Test plan + changed files | Unit & integration tests | check-in ticket board |
+| 6 | 4 reviewers (parallel) | Changed files + tests + REQ + PLAN | Review report | check-in ticket board |
 
-The developer tickets, the test-planner ticket, and the reviewer ticket are all created at once
-from the architect's follow-ups. Because the cursor runs in ID order, the test-planner is reached
-only after every developer ticket is `done`. The test-writer ticket(s) are created later by the
-test-planner and get **higher IDs than the reviewer ticket — that's fine**: the reviewer ticket is
-**gated** (the orchestrator dispatches it only when every other ticket for its requirement is
-`done`, the N/N gate), so the review always runs last, after the planner-declared test-writer
-tickets complete. The gate is what turns ID order into the pipeline
-dev → test-plan → tests → review.
+Steps 1 and 2 happen **before any ticket exists** — see `product-owner.md` and `architect.md` for
+their workflow, and the `new-requirement` skill for how the orchestrator spawns and moderates
+them. The architect creates the developer tickets, the test-planner ticket, and the reviewer
+ticket directly with `guild new task`, in that order (developers first for lower IDs). Because the
+cursor runs in ID order, the test-planner is reached only after every developer ticket is `done`.
+The test-writer ticket(s) are created later by the test-planner and get **higher IDs than the
+reviewer ticket — that's fine**: the reviewer ticket is **gated** (the orchestrator dispatches it
+only when every other ticket for its requirement is `done`, the N/N gate), so the review always
+runs last, after the planner-declared test-writer tickets complete. The gate is what turns ID order
+into the pipeline dev → test-plan → tests → review.
 
-### Step 1: Product Owner
-
-**Input task title pattern:** "Gather requirements for {feature}"
-
-**Follow-up declaration:**
-```
-- Plan {feature} implementation | agent: architect
-```
-
-### Step 2: Architect
-
-**Input task title pattern:** "Plan {feature} implementation"
-
-**Follow-up declaration (dev tickets + the tail — every line carries `plan:`, since the
-architect's own ticket predates the plan):**
-```
-- Implement {component-1} | agent: developer | plan: PLAN-NNN | plan-slice: {slug-1}
-- Implement {component-2} | agent: developer-svelte | plan: PLAN-NNN | plan-slice: {slug-2} | parallel-group: A
-- Implement {component-3} | agent: developer | plan: PLAN-NNN | plan-slice: {slug-3} | parallel-group: A
-- Plan tests for {feature} | agent: test-planner | plan: PLAN-NNN
-- Review {feature} implementation | agent: reviewer | plan: PLAN-NNN
-```
-
-The `plan-slice` value is the slice **slug** (e.g. `signup`), not a path — agents resolve the
-current file with `guild slice PLAN-NNN {slug}`, since slice locations move with the plan's status.
-
-The architect emits the `test-planner` and `reviewer` tail explicitly. The orchestrator does not
-auto-create them in the initial chain. Listing dev tickets first keeps their IDs lower, so they run
-before the tail. **Parallel is the default**: the architect designs slices for disjoint file sets
-and puts every dev ticket it can into a `parallel-group` wave (components 2 and 3 above) — the
-orchestrator dispatches each wave concurrently. A ticket stays ungrouped only when it is
-foundational (others build on it) or its file set can't be bounded; the tail tickets never carry
-a group.
+**Parallel is the default**: the architect designs slices for disjoint file sets and puts every
+dev ticket it can into a `parallel-group` wave — the orchestrator dispatches each wave
+concurrently. A ticket stays ungrouped only when it is foundational (others build on it) or its
+file set can't be bounded; the tail tickets never carry a group.
 
 The architect picks the developer agent per slice. `developer-svelte` (sonnet, pre-loaded with
 Svelte 5 / SvelteKit knowledge via the `guild:svelte-*` skills) handles work touching Svelte
@@ -141,90 +119,80 @@ specialized reviewers in parallel on the same ticket:
 
 Each reviewer reads the ticket, requirement, and plan overview, then scopes its code reading to the
 test plan's **Changed Files Inventory** (`guild slice PLAN-NNN test-plan`) rather than re-scanning
-the codebase; reviews through its lens; appends findings to the shared Work Log under its own
-heading; and independently declares `Fix:` tickets if needed.
+the codebase; reviews through its lens; and appends findings to the shared Work Log under its own
+heading. Reviewers no longer declare `Fix:` tickets themselves.
 
-**After all 4 return:**
-- ANY `Fix:` tickets declared → the orchestrator creates the developer fix tickets, then appends
-  one round-2 `test-writer` ticket and one round-2 `Re-review …` ticket behind them (see Chain 4).
-- ALL 4 wrote PASS → the requirement is marked `done`.
+**After all 4 return:** the orchestrator compiles their findings into `.guild/reviews/REQ-NNN.md`
+and, if there are critical/major findings, asks the user which (if any) become fix tickets — see
+Chain 4. There is no automatic fix loop and no re-review; if all 4 wrote PASS, the requirement
+completes with nothing further to decide.
 
 ## Chain 2: Research-First Flow
 
-When a requirement needs technology research before planning.
+When a requirement needs technology research before planning, the architect (or product-owner)
+just calls `guild:researcher` directly with the **Agent** tool, mid-session, and keeps going once
+it returns — there is no separate ticket, no second architect pass, and no async handoff:
 
 ```
-product-owner → researcher → architect → developer ×N → test-planner → test-writer → reviewer
+new-requirement session: product-owner + architect (architect calls guild:researcher inline
+as needed) → developer ×N → test-planner → test-writer → reviewer
 ```
 
-Two entry points:
+`guild:researcher` is spawned directly (not via a ticket) with a specific question and reports
+back a short answer for immediate use, in addition to writing full findings to
+`.guild/docs/{topic-slug}.md` as it always has.
 
-**2a. Product owner declares research upfront:**
-```
-- Research {technology/approach} for {feature} | agent: researcher
-- Plan {feature} implementation | agent: architect
-```
+**Research knowledge still persists:** the researcher writes findings to
+`.guild/docs/{topic-slug}.md`, not a task work log. These docs are evergreen — they survive release
+archiving and board clears. Before researching, the researcher checks existing docs and reuses
+them; before designing, the architect checks existing docs and may skip the research call
+entirely.
 
-**2b. Architect triggers the research gate** (discovers mid-analysis it cannot plan responsibly):
-```
-- Research {specific topic} for {feature} | agent: researcher
-- Plan {feature} implementation (post-research) | agent: architect
-```
-
-In both cases the researcher ticket is created **before** the post-research architect ticket, so it
-gets a lower ID and the cursor runs it first — no `depends-on` needed. The architect marks its own
-gate-decision ticket `done`; the new architect ticket produces the plan after the researcher
-finishes, with findings available in `.guild/docs/`.
-
-**Research knowledge persists:** the researcher writes findings to `.guild/docs/{topic-slug}.md`,
-not the task work log. These docs are evergreen — they survive release archiving and board clears.
-Before researching, the researcher checks existing docs and reuses them; before designing, the
-architect checks existing docs and may skip the research gate entirely.
+(A `researcher` ticket type still exists for the rare case someone manually queues one on the
+board — `researcher.md` documents both invocation modes — but the standard flow no longer produces
+one.)
 
 ## Chain 3: Bug Fix Flow
 
 Simplified chain for bug fixes — skip the architect **and the test-planner** (a scoped fix doesn't
-need a test plan). Because there is no architect to emit the tail, the **product-owner emits it**:
+need a test plan). Recognized by the product-owner during the interview; since it has no ticket of
+its own to declare follow-ups on, it **creates the tail directly** with the CLI (it has Bash):
 
 ```
-product-owner → developer → test-writer → reviewer
+new-requirement session: product-owner only → developer → test-writer → reviewer
 ```
 
-**Product owner declares:**
-```
-- Fix: {bug description} | agent: developer
-- Write unit tests for {fix} | agent: test-writer
-- Review {fix} | agent: reviewer
+**Product owner runs:**
+```bash
+"$GUILD" new task --title "Fix: {bug description}" --agent developer --req REQ-NNN --date {today}
+"$GUILD" new task --title "Write unit tests for {fix}" --agent test-writer --req REQ-NNN --date {today}
+"$GUILD" new task --title "Review {fix}" --agent reviewer --req REQ-NNN --date {today}
 ```
 
 With no `plan-slice`, the test-writer falls back to deriving scope from the developer's Work Log,
-and reviewers scope their reading the same way.
+and reviewers scope their reading the same way. `new-requirement` tells the architect to stop
+(no plan needed) when the product-owner takes this path.
 
-## Chain 4: Review Fix Loop
+## Chain 4: Review Report & Fix Approval
 
-When any reviewer finds issues, a fix loop starts. **Maximum 2 review rounds.**
+When reviewers find issues, there is **no automatic fix loop** — the orchestrator compiles a
+report and the user decides what happens next:
 
 ```
-4 reviewers → developer ×N (fixes) → test-writer (round 2) → 4 reviewers (round 2) → done or escalate
+4 reviewers → orchestrator compiles .guild/reviews/REQ-NNN.md → user approves 0+ findings as
+fix tickets → developer ×N (fixes, plain tickets, no forced tail) → done (no automatic re-review)
 ```
 
-The loop is driven by **declaration + one orchestrator-appended tail per round** — no ID
-arithmetic:
-- Reviewers declare only `Fix: … | agent: developer` tickets.
-- After a review round that produced fixes, the orchestrator creates the fix tickets, then appends
-  **one** `test-writer` ticket and **one** `Re-review …` ticket behind them. The fix-loop
-  test-writer ticket carries `plan-slice: test-plan` when the requirement has a plan — the round-1
-  test plan still governs; the test-planner is never re-run in the fix loop.
-- The cursor walks fixes → test → re-review in ID order; the re-review's N/N gate holds it until the
-  fixes and tests are `done`.
-
-**Round cap (count `reviewer` tickets for the requirement):**
-- If a `Re-review …` ticket (the 2nd review) completes and still has `Fix:` declarations, do NOT
-  append a 3rd round. Stop and ask the user: "Round 2 review still has open issues — keep fixing, or
-  accept as-is?"
-- Round-2 reviewers write `ESCALATE` in the Work Log when issues persist. After any review
-  completes, the orchestrator scans reviewer Work Logs for `ESCALATE` and stops the loop with the
-  same question if found.
+- Reviewers only write findings to the shared Work Log (Verdict + Findings per reviewer) — they no
+  longer declare `Fix:` follow-ups, and there is no round concept or `ESCALATE` token to scan for.
+- After all 4 return, the orchestrator appends a dated section to `.guild/reviews/REQ-NNN.md` with
+  each reviewer's verdict and findings (never overwriting a prior round's section).
+- If there are critical/major findings, the orchestrator lists them and asks the user (multi-select
+  `AskUserQuestion`) which should become fix tickets. Approved ones become plain `developer`
+  tickets — no `plan-slice`, no `parallel-group`, and no forced test-writer/re-review tail.
+- Once any approved fix tickets reach `done`, the requirement completes normally (3.6) — there is
+  no automatic re-review. If the user wants another pass, they ask for a fresh `reviewer` ticket
+  like any other.
 
 ## Chain 5: QA Discipline (peer, not a chain step)
 
@@ -274,19 +242,22 @@ behavior, and QA reviews the update.
 All of these run through the guild CLI (`${CLAUDE_PLUGIN_ROOT}/scripts/guild`):
 
 1. **Materializing follow-ups**: read the "Follow-up Tasks" section, create real task files with
-   `guild new task …` (the CLI derives the next ID and writes them into `tasks/todo/`).
+   `guild new task …` (the CLI derives the next ID and writes them into `tasks/todo/`). (The
+   architect and product-owner instead create their tickets directly, inside `new-requirement` —
+   this mechanism is for the tickets that run after planning: developer, test-planner, test-writer,
+   and reviewer follow-ups.)
 2. **Status transitions**: `guild move TASK-NNN in-progress` on dispatch, `… done` on completion,
    `… failed` on failure. Agents never move their own files.
-3. **Appending the fix-loop tail**: after a review round with fixes, append one test-writer and one
-   re-review ticket behind the fix tickets (the only orchestrator-created tickets).
+3. **Compiling the review report and creating user-approved fix tickets**: after a `reviewer`
+   ticket completes, append a dated section to `.guild/reviews/REQ-NNN.md`, then ask the user which
+   findings (if any) become fix tickets — the only orchestrator-created tickets outside of
+   `new-requirement`. No automatic re-review follows.
 4. **Enforcing the review gate**: `guild next` skips a `reviewer` ticket until its requirement's
    other tickets have left `todo/` and `in-progress/`.
 5. **Tracking requirement progress**: computed live by `guild board` (done tickets / total tickets
    per REQ, doneness read from the directory) — not stored.
-6. **Marking requirements done**: `guild move REQ-NNN done` when a requirement's reviewer ticket
-   completes with no open fixes.
-7. **Handling escalation**: when a reviewer writes `ESCALATE` or round 2 still has fixes, prompt the
-   user.
+6. **Marking requirements done**: `guild move REQ-NNN done` when no task for the requirement remains
+   open (including any user-approved fix tickets).
 
 ## Execution Model — Parallel by Default
 

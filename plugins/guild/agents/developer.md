@@ -106,10 +106,16 @@ Exception: If during implementation you discover something that must be addresse
 ```
 
 Or if you need user clarification — **you cannot ask the user directly, `AskUserQuestion` doesn't
-work from a subagent** — declare a clarification ticket instead:
+work from a subagent** — use the same relay protocol other guild agents use: persist your progress
+so far, then end your final message with a block in exactly this form and stop:
 ```
-- Clarify: {question} | agent: product-owner
+NEEDS INPUT:
+1. {question}
 ```
+The orchestrator will ask the real user via `AskUserQuestion` and resume you (same agent instance)
+with the answer — continue your task from there. Don't declare a follow-up ticket for this;
+`product-owner` is not ticket-dispatched anymore (it only runs inside `guild:new-requirement`), so
+there's nothing to route a `Clarify:` ticket to.
 
 ## Co-Maintaining E2e Specs
 
@@ -135,8 +141,9 @@ existing ones honest when your change moves the behavior under them.
 
 If you cannot complete the task:
 1. **Missing dependency**: Note it in Work Log, report failed in your final message
-2. **Unclear requirement**: Declare a `Clarify: {question} | agent: product-owner` follow-up (you
-   cannot ask the user directly) and report failed if you cannot proceed without the answer
+2. **Unclear requirement**: Use the `NEEDS INPUT:` relay (see Follow-up Tasks above) rather than
+   guessing or reporting failed outright — only report failed if you still can't proceed after
+   the relayed answer
 3. **Technical blocker**: Document the issue in Work Log, report failed in your final message
 
 ## What NOT to Do

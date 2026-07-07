@@ -16,7 +16,7 @@ All task creation, movement, and lookup go through the guild CLI at
 ---
 id: TASK-001
 title: "Short descriptive title"
-agent: product-owner
+agent: developer
 requirement: REQ-001
 plan: null
 created: 2026-04-07
@@ -67,11 +67,15 @@ the current path with `guild path <ID>` / `guild read <ID>` (locations move as s
 > graph. The research-first flow works because the researcher ticket is created before (lower ID
 > than) the post-research architect ticket.
 
-**`agent` enum:** `product-owner`, `architect`, `developer`, `developer-svelte`, `test-planner`,
-`test-writer`, `researcher`, `reviewer`, `qa-strategist`, `qa-tester`. `reviewer` is a **trigger
-alias**, not a real agent — when dispatched it spawns the 4 specialized reviewers
-(`reviewer-security`, `reviewer-architecture`, `reviewer-business-logic`, `reviewer-edge-case`)
-in parallel on the same ticket.
+**`agent` enum:** `developer`, `developer-svelte`, `test-planner`, `test-writer`, `researcher`,
+`reviewer`, `qa-strategist`, `qa-tester`. `reviewer` is a **trigger alias**, not a real agent — when
+dispatched it spawns the 4 specialized reviewers (`reviewer-security`, `reviewer-architecture`,
+`reviewer-business-logic`, `reviewer-edge-case`) in parallel on the same ticket.
+
+`product-owner` and `architect` are **not** ticket-dispatched agents — they're spawned directly by
+the `guild:new-requirement` skill for a live interview, and the architect creates every downstream
+ticket itself via the CLI before that skill returns. They never appear as a task's `agent:` value
+in normal operation.
 
 > **`parallel-group` is not a dependency graph either.** It is a pure safety assertion by the
 > architect: "these dev tickets touch disjoint files and share no ordering, so the shared working
@@ -176,46 +180,43 @@ Rules:
 
 The tail is a `test-planner` ticket followed by a `reviewer` ticket; the test-planner then declares
 the `test-writer` ticket(s) that sit between them (the reviewer's N/N gate holds the review until
-those are done, even though they have higher IDs). Who emits what:
+those are done, even though they have higher IDs). Who creates what:
 
-- **Initial chain — the architect emits the tail.** After its developer follow-ups, the architect
-  declares the `test-planner` and `reviewer` tickets explicitly, so the full pipeline is visible as
-  real tickets up front. It never declares `test-writer` tickets — that's the test-planner's call.
+- **Initial chain — the architect creates the tail directly.** It has Bash and the CLI; after
+  writing the plan, it runs `guild new task` for every developer ticket, then the `test-planner`
+  ticket, then the `reviewer` ticket — no "Follow-up Tasks" declaration involved, since the
+  architect has no ticket of its own for the orchestrator to materialize from. It never creates
+  `test-writer` tickets — that's the test-planner's call.
 - **Test planning — the test-planner emits the test-writer ticket(s)** (one combined, or one unit +
-  one integration), each carrying `plan-slice: test-plan`.
-- **Bug-fix flow (no architect, no test-planner) — the product-owner emits the tail** behind the
-  fix ticket: a `test-writer` ticket and a `reviewer` ticket directly.
-- **Fix loop — the orchestrator appends the tail.** The 4 reviewers declare only `Fix: …` tickets;
-  after a review round that produced fixes, the orchestrator creates the fix tickets, then one
-  `test-writer` ticket (with `plan-slice: test-plan` when a plan exists) and one `Re-review …`
-  ticket behind them (deduped — reviewers never each emit the tail). The test-planner is not
-  re-run in the fix loop.
+  one integration), each carrying `plan-slice: test-plan`. This is a normal Follow-up Tasks
+  declaration, materialized by the orchestrator as usual (the test-planner IS ticket-dispatched).
+- **Bug-fix flow (no architect, no test-planner) — the product-owner creates the tail directly**,
+  the same way the architect does: `guild new task` for a fix ticket, a `test-writer` ticket, and a
+  `reviewer` ticket, with no plan.
+- **Review findings — no automatic tail at all.** The 4 reviewers only write findings to the Work
+  Log now; they don't declare `Fix:` tickets. The orchestrator compiles a review report and asks
+  the user which findings (if any) should become fix tickets — see "Review Reports" below. Approved
+  fixes are plain `developer` tickets with no forced test-writer/re-review tail, and there is no
+  automatic re-review.
 
 ### Examples
 
-**Product owner completing requirements gathering (standard flow):**
-```markdown
-## Follow-up Tasks
-
-- Plan authentication implementation | agent: architect
-```
-
-**Architect completing a plan (emits dev tickets + the tail, every line carrying `plan:`):**
-```markdown
-## Follow-up Tasks
-
-- Implement user model and migration | agent: developer | plan: PLAN-001 | plan-slice: user-model
-- Implement signup endpoint | agent: developer | plan: PLAN-001 | plan-slice: signup | parallel-group: A
-- Implement login endpoint | agent: developer | plan: PLAN-001 | plan-slice: login | parallel-group: A
-- Plan tests for authentication | agent: test-planner | plan: PLAN-001
-- Review authentication implementation | agent: reviewer | plan: PLAN-001
+**Architect creating a plan's tickets (direct CLI calls, not a Follow-up Tasks declaration — the
+architect has no ticket of its own):**
+```bash
+"$GUILD" new task --title "Implement user model and migration" --agent developer --req REQ-001 --plan PLAN-001 --plan-slice user-model --date 2026-04-07
+"$GUILD" new task --title "Implement signup endpoint" --agent developer --req REQ-001 --plan PLAN-001 --plan-slice signup --parallel-group A --date 2026-04-07
+"$GUILD" new task --title "Implement login endpoint" --agent developer --req REQ-001 --plan PLAN-001 --plan-slice login --parallel-group A --date 2026-04-07
+"$GUILD" new task --title "Plan tests for authentication" --agent test-planner --req REQ-001 --plan PLAN-001 --date 2026-04-07
+"$GUILD" new task --title "Review authentication implementation" --agent reviewer --req REQ-001 --plan PLAN-001 --date 2026-04-07
 ```
 
 Here the user-model ticket is left ungrouped (the signup and login slices both build on it, so it
 runs solo first). The signup and login slices touch disjoint files and share `parallel-group: A`, so
 the orchestrator dispatches them together after the model is `done`.
 
-**Test-planner completing the test plan (emits the test-writer tickets):**
+**Test-planner completing the test plan (emits the test-writer tickets — a normal Follow-up Tasks
+declaration, since the test-planner IS ticket-dispatched):**
 ```markdown
 ## Follow-up Tasks
 
@@ -223,12 +224,16 @@ the orchestrator dispatches them together after the model is `done`.
 - Write integration tests for authentication | agent: test-writer | plan-slice: test-plan
 ```
 
-**Reviewer finding issues (declares fixes only — orchestrator appends the tail):**
+**Reviewer findings (Work Log only — no Follow-up Tasks declaration; see "Review Reports" below
+for how findings become fix tickets):**
 ```markdown
-## Follow-up Tasks
+### 2026-04-07 — reviewer-security
 
-- Fix: Missing input validation on signup endpoint | agent: developer
-- Fix: SQL injection risk in login query | agent: developer
+**Verdict:** ISSUES FOUND
+
+**Findings:**
+1. [critical] src/routes/signup.ts:42 — missing input validation on signup endpoint
+   Recommendation: validate email format and password length server-side before insert
 ```
 
 ### How the Orchestrator Processes Follow-ups
@@ -306,6 +311,35 @@ sources:
 
 Researcher task work logs contain only a short pointer (`See: .guild/docs/{slug}.md`) — the full
 findings live in the doc.
+
+## Review Reports: `.guild/reviews/`
+
+Compiled by the **orchestrator** (not an agent) after a `reviewer` ticket batch completes — see
+check-in Step 3.5. One file per requirement: `.guild/reviews/REQ-NNN.md`. Unlike `.guild/docs/`,
+this is not agent-maintained knowledge — it's the orchestrator's record of what each review round
+found, for the user to read and act on.
+
+**Append, never overwrite** — each round adds a new dated section:
+
+```markdown
+## 2026-04-07 — TASK-012
+
+### reviewer-security — ISSUES FOUND
+1. [critical] src/routes/signup.ts:42 — missing input validation on signup endpoint
+   Recommendation: validate email format and password length server-side before insert
+
+### reviewer-architecture — PASS
+
+### reviewer-business-logic — PASS
+
+### reviewer-edge-case — ISSUES FOUND
+1. [major] src/routes/signup.ts:58 — duplicate signup requests not idempotent
+   Recommendation: dedupe on email within a short window
+```
+
+Findings marked critical/major here are what the orchestrator lists when it asks the user
+(`AskUserQuestion`) which should become fix tickets. There is no automatic fix loop and no round
+cap — see check-in Step 3.5 and agent-chains.md Chain 4.
 
 ## Plan File Format
 

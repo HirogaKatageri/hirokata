@@ -53,11 +53,11 @@ In Progress ({count}):
 
 Backlog ({count}):
   TASK-005: Implement login endpoint (developer)
-  TASK-006: Plan payment feature (architect)
+  TASK-006: Plan tests for payment feature (test-planner)
 
 Recently Completed ({count}):
-  TASK-002: Design auth architecture (architect)
-  TASK-001: Gather auth requirements (product-owner)
+  TASK-002: Implement payment service (developer)
+  TASK-001: Implement payment webhook (developer)
 
 Requirements:
   REQ-001: User Authentication — in-progress (3/6 done)

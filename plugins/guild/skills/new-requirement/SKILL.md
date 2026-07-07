@@ -4,9 +4,11 @@ description: >
   This skill should be used when the user asks to "add a requirement",
   "new requirement", "I need a feature", "add to the guild", "create requirement",
   "queue a feature", "I want to build", or wants to add a new work item to the
-  guild board. Creates a requirement stub and a product-owner task to gather
-  the full details.
-version: 2.0.0
+  guild board. Runs a live 3-way interview between the product-owner, the
+  architect, and the user, then writes the requirement doc, the implementation
+  plan, and the developer/test-planner/reviewer tickets — all before this skill
+  returns.
+version: 3.0.0
 user-invocable: true
 arguments:
   - name: title
@@ -19,7 +21,11 @@ arguments:
 
 # New Requirement — Add Work to the Guild
 
-Create a new requirement stub and a task for the product-owner to gather full details.
+Run the product-owner and architect through a live interview with the user, then hand the board a
+fully-planned requirement: a requirement doc, an implementation plan, and every developer/
+test-planner/reviewer ticket needed to build it. Unlike the rest of the guild's pipeline, none of
+this is ticket-dispatched — you (the orchestrator) spawn both agents directly and moderate the
+conversation until the user says it's done.
 
 All deterministic state operations go through the guild CLI. Bind it once:
 
@@ -71,7 +77,7 @@ Clear the board before adding this new requirement? (yes / no)
 
 If all three lists are empty, skip this step.
 
-### 2. Gather Details
+### 2. Gather a Seed Title/Description
 
 If `title` is not provided, ask the user:
 ```
@@ -80,65 +86,129 @@ What's the title of this requirement? (e.g., "User Authentication", "Payment Int
 
 If `description` is not provided, ask the user:
 ```
-Briefly describe what you need. The product-owner will gather full details later.
+Briefly describe what you need. The product-owner will dig into full details in the interview.
 ```
 
-### 3. Create the Requirement Stub
+This is just a seed — the interview in Step 5 is where the real detail gets gathered.
 
-Run the CLI — it derives the next ID, scaffolds the template (Summary / User Stories /
-Technical Considerations / Out of Scope, no status field) in `requirements/todo/`, and prints
-`REQ-NNN <path>`. `--desc` populates the Summary section.
+### 3. Create the Requirement Stub
 
 ```bash
 read REQ _ < <("$GUILD" new req --title "{title}" --desc "{description}" --date {today})
 ```
 
-`$REQ` is now the requirement ID (e.g. `REQ-001`).
+`$REQ` is now the requirement ID (e.g. `REQ-001`). The CLI scaffolds the template (Summary / User
+Stories / Technical Considerations / Out of Scope) in `requirements/todo/`.
 
-### 4. Create the Product-Owner Task
-
-Run the CLI — it derives the next ID, scaffolds the task template in `tasks/todo/`, and prints
-`TASK-NNN <path>`. Capture both the ID and the path.
+### 4. Detect the Interview Mode
 
 ```bash
-read TASK TASK_PATH < <("$GUILD" new task \
-  --title "Gather requirements for {title}" \
-  --agent product-owner \
-  --req "$REQ" \
-  --date {today})
+if [ -n "${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS:-}" ] && [ "${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS}" != "0" ] && [ "${CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS}" != "false" ]; then
+  MODE=team
+else
+  MODE=relay
+fi
 ```
 
-### 5. Add the Follow-up
+Both modes run the same interview shape — product-owner and architect spawned concurrently, both
+still relaying user-facing questions through you via `NEEDS INPUT` (whether or not Agent Teams is
+active, `AskUserQuestion` is not confirmed to work for teammates, so never skip the relay for
+user-facing questions). The only difference is **how the two agents exchange context with each
+other**:
 
-Edit the new task file at `$TASK_PATH` and add this line under its `## Follow-up Tasks` section:
+- **`team`**: tell each agent it can `SendMessage` the other directly by name (`"product-owner"`,
+  `"architect"`) for cross-talk — a technical constraint, a scope clarification, a question one
+  should answer for the other.
+- **`relay`** (default, always safe): you manually forward short "FYI" summaries between them via
+  `SendMessage` to each agent's ID whenever one surfaces something the other should know.
+
+If anything about team mode misbehaves (a teammate send fails, an agent seems stuck expecting a
+teammate response that never arrives), fall back to `relay` for the rest of this session — don't
+let an experimental feature stall the interview.
+
+### 5. Spawn the Product-Owner and Architect
+
+Spawn both **in the same message** so they run concurrently:
 
 ```
-- Plan {title} implementation | agent: architect
+Agent(
+  subagent_type: "guild:product-owner",
+  prompt: "You're gathering requirements for {REQ} — \"{title}\". Requirement path:
+           {`guild path REQ-NNN`}. Seed description: {description}. Today's date: {today}.
+           Interview mode: {MODE}. {if team: 'The architect is running concurrently and you can
+           SendMessage it by name (\"architect\") for cross-talk.'} {if relay: 'The architect is
+           running concurrently; the orchestrator will relay relevant context between you.'}
+           Report done when the requirement doc is complete, or report the bug-fix short-circuit
+           per your own instructions if this turns out to be a simple fix."
+)
+Agent(
+  subagent_type: "guild:architect",
+  prompt: "You're planning for {REQ} — \"{title}\", currently being interviewed by the
+           product-owner (requirement path: {`guild path REQ-NNN`}, still a stub — it will fill in
+           as the interview proceeds). Interview mode: {MODE}. {if team: 'The product-owner is
+           running concurrently and you can SendMessage it by name (\"product-owner\") for
+           cross-talk.'} {if relay: 'The product-owner is running concurrently; the orchestrator
+           will relay relevant context between you.'} Start exploring the codebase now (your
+           workflow Steps 1-2) and raise any technical questions that should shape scope via
+           NEEDS INPUT. Do NOT write the plan yet — wait for the orchestrator to tell you the
+           requirement is finalized before your Design/Write-Plan steps. Today's date: {today}."
+)
 ```
 
-The standard chain starts with an architect planning task once the product-owner has gathered
-the requirement.
+### 6. Moderate the Interview Loop
 
-### 6. Confirm
+Both agents may pause with a `NEEDS INPUT:` block (same relay protocol as the rest of the guild) —
+this can happen from either one, in any order, since they run concurrently:
+
+1. Whichever agent's completion notification carries `NEEDS INPUT:`, call **AskUserQuestion**
+   yourself with exactly those questions.
+2. `SendMessage` the answers back to that same agent instance to resume it.
+3. **`relay` mode only**: if the answer (or the agent's own framing) reveals something the *other*
+   agent should know — a scope decision, a technical constraint — send a short FYI to the other
+   agent's instance too (not a question, just context: `"FYI: user decided X"` /
+   `"FYI: architect flagged Y — factor it into scope"`).
+4. Repeat until an agent reports done, or the user signals they're finished with the discussion.
+
+**The user decides when the interview ends — watch for it in any answer**, not just an explicit
+"done": phrases like "let's finalize", "that's enough for now", "go with what you have" mean stop
+asking. When you see this, `SendMessage` both agents to wrap up immediately — finalize their
+current draft without further questions — rather than continuing the round-robin.
+
+**Product-owner reports done:**
+- If it took the **bug-fix short-circuit** (created its own fix/test-writer/reviewer tickets via
+  Bash, per its own instructions), tell the architect to stop — this doesn't need a plan — and
+  `TaskStop` its session. Skip to Step 7.
+- Otherwise, once the product-owner is done, `SendMessage` the architect: "The requirement is
+  final at {path} — proceed to Design and Write the Plan." Keep relaying any further architect
+  `NEEDS INPUT` rounds until it reports done.
+
+**Architect reports done:** it will report PLAN-NNN's path and the ticket IDs it created
+(developer(s), test-planner, reviewer) — no further action needed from you; it created them
+directly via the CLI.
+
+### 7. Confirm
 
 ```
-Requirement created!
+Requirement planned!
 
   Requirement: {REQ} — {title}
-  Task: {TASK} — Gather requirements for {title} (product-owner)
-  Status: Added to backlog (tasks/todo/)
+  Plan: {PLAN-NNN} (or "none — simple fix, no plan needed")
+  Tickets created: {list of TASK-NNN — title (agent)}
 
-The product-owner will gather full details during the next work cycle.
-Run /guild:check-in to start working.
+Run /guild:check-in to start building.
 ```
 
 ## Rules
 
 - **IDs are derived by the CLI** — never hand-assign or zero-pad IDs yourself; `guild new`
   computes the next ID from the filesystem.
-- **No `status` field** — status is the containing directory. `guild new req`/`guild new task`
-  place artifacts in `requirements/todo/` and `tasks/todo/` directly.
-- **Keep the stub minimal** — the product-owner will flesh it out.
-- **Pre-populate Follow-up Tasks** — the standard chain starts with an architect task.
-- **No counters** — `state.yaml` holds only `last-checkin`; there are no `next-req`/`next-task`
-  counters to read or increment.
+- **No `status` field** — status is the containing directory. `guild new req` places the stub in
+  `requirements/todo/` directly; the architect's `guild new task` calls place tickets in
+  `tasks/todo/` directly.
+- **This skill does not return until planning is complete** — unlike the old flow, there is no
+  hand-off to a later check-in for requirement-gathering or planning. Both happen here, live.
+- **Never let a subagent try `AskUserQuestion` itself** — team mode or not, only you can ask the
+  real user. Both product-owner and architect always relay via `NEEDS INPUT`.
+- **`--parallel-group` and `--plan-slice` are the architect's to set** — it designs the developer
+  ticket waves itself; you only need to relay questions and forward context, not manage ticket
+  frontmatter.

@@ -100,36 +100,20 @@ Severity levels:
 - **major** — produces wrong results or poor UX
 - **minor** — unlikely scenario, minor impact
 
-### 4. Declare Fix Tasks (if critical/major found)
+### 4. Report Completion
 
-Add to the "Follow-up Tasks" section:
-
-```
-- Fix: {edge case description} | agent: developer
-```
-
-Only declare fixes for critical and major issues.
-
-### 5. Round 2 — Re-review and Escalation
-
-Your task title tells you the round. A task titled `Re-review …` is round 2 — the
-developers have applied fixes for round-1 findings.
-
-- On a re-review, re-check the previously-flagged issues plus anything the fixes
-  newly introduced.
-- If issues still remain after round 2, do NOT declare another round of fix tasks
-  (the loop is capped at 2 rounds). Instead write `ESCALATE` on its own line in
-  your Work Log, followed by a one-line reason. The orchestrator scans for
-  `ESCALATE` and asks the user how to proceed.
-
-### 6. Report Completion
+Do NOT declare `Fix:` follow-up tickets and do NOT manage review rounds yourself. The orchestrator
+compiles all 4 reviewers' findings into a single review report and, separately, asks the user
+which findings (if any) should become fix tickets — that never happens automatically. Your only
+job is an accurate, clearly-labeled Work Log entry.
 
 Report completion in your final message (e.g. PASS/FAIL or done). Do NOT edit any
 status field or move your task file — the orchestrator owns status transitions.
 
 ## What NOT to Do
 
-- Don't fix code — declare fix tasks
+- Don't fix code, and don't declare `Fix:` follow-up tickets — the orchestrator derives candidate
+  fixes from your findings and only creates tickets the user approves
 - Don't review security, architecture, or business logic (other reviewers handle those)
 - Don't flag edge cases that are genuinely impossible given the architecture
 - Don't modify source files
