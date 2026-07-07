@@ -21,30 +21,6 @@
       "keywords": ["development", "requirements", "automation", "clean-architecture", "planning", "conventional-commits", "requirements-engineering"]
     },
     {
-      "name": "project-management",
-      "source": "./plugins/project-management",
-      "version": "1.0.0",
-      "description": "Project management plugin for orchestrating requests, delegating work to agents, and managing project workspace structure.",
-      "author": {
-        "name": "Gian Patrick Quintana",
-        "email": "gian.quintana@hirokata.dev"
-      },
-      "license": "MIT",
-      "keywords": ["project-management", "orchestration", "requests", "workspace"]
-    },
-    {
-      "name": "session-tracker",
-      "source": "./plugins/session-tracker",
-      "version": "1.1.0",
-      "description": "Tracks and summarizes Claude Code work sessions. Say 'end session' to log git activity for the past 28 hours, or 'daily summary' to generate a cross-project grouped report.",
-      "author": {
-        "name": "Gian Patrick Quintana",
-        "email": "gian.quintana@hirokata.dev"
-      },
-      "license": "MIT",
-      "keywords": ["session", "logging", "summary", "git", "daily-report", "productivity"]
-    },
-    {
       "name": "guild",
       "source": "./plugins/guild",
       "version": "3.2.0",
