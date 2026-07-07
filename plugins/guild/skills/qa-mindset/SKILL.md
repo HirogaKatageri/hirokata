@@ -64,7 +64,9 @@ characterization while refusing to canonize defects.
 1. Internal specs — `.guild/requirements/`, `.guild/docs/`
 2. External board — Linear / Jira / etc. via an MCP connector, *if configured*
 3. Code + the running app — inferred intent
-4. The user — for what stays ambiguous (AskUserQuestion)
+4. The user — for what stays ambiguous. You can't call `AskUserQuestion` yourself
+   (subagent), so end your turn with a `NEEDS INPUT:` block and let the
+   orchestrator relay it and resume you with the answer.
 
 ## The What-If Catalog
 

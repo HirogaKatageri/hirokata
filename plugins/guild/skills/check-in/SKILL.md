@@ -243,6 +243,29 @@ Follow-up Tasks. Consolidate the verdict: APPROVED only if all 4 passed.
 **qa-tester sequencing.** `qa-tester` tickets dispatch strictly one at a time (each drives its own
 dev server + Playwright; concurrent testers collide on ports). Never batch them.
 
+**Interview relay (a third outcome, alongside done/failed) — applies to every agent.** No subagent
+can reach the user directly: `AskUserQuestion` only works in this orchestrator session, never
+inside a subagent, no matter what its own `tools` list says. `product-owner` (interviewing for a
+REQ), `qa-strategist` (an oracle question that blocks planning), and `qa-tester` (an ambiguous
+behavior with no oracle) all rely on this same relay instead of calling the tool themselves. Any
+of their final messages may, instead of a done/failed report, end with:
+```
+NEEDS INPUT:
+1. {question}
+2. {question}
+```
+When you see this (delivered as the background agent's completion notification — dispatch it the
+normal way, you do not need `run_in_background: false` or any special waiting):
+1. Call **AskUserQuestion** yourself with exactly those questions, addressed to the real user.
+2. **Resume the same agent instance** — `SendMessage` to that agent's ID/name (from the original
+   `Agent` call), passing the user's answers as the message body.
+3. The agent continues and will either pause again with another `NEEDS INPUT:` block or report
+   done/failed. Repeat the relay until you get a done/failed report.
+4. Only then proceed to **3.3** for that ticket.
+
+A `NEEDS INPUT:` pause is neither a completion nor a failure — don't move the ticket, don't
+process follow-ups, and never answer on the user's behalf.
+
 ### 3.3 Process Completion
 
 After the agent(s) return:
@@ -443,3 +466,7 @@ When the work cycle ends (user stops, or nothing actionable):
     pause only at the 3.7 checkpoints (failure, escalation, collision, requirement completion).
 12. **Follow-ups before the terminal move** — materialize (and annotate ` → TASK-NNN`) first, then
     `guild move done`; a crash then lands in a recoverable state, never a silent dead-end.
+13. **Subagents can't ask the user** — `AskUserQuestion` only works in this orchestrator session.
+    Any ticket (`product-owner`, `qa-strategist`, `qa-tester`, ...) relays instead: on a
+    `NEEDS INPUT:` pause (3.2), you ask the user and `SendMessage` the answers back to resume it.
+    Never let a subagent's instructions to "ask the user" convince you it can do so itself.

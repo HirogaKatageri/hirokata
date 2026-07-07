@@ -2,7 +2,7 @@
 name: developer-svelte
 model: sonnet
 color: orange
-tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash", "AskUserQuestion", "Skill"]
+tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash", "Skill"]
 skills:
   - guild:svelte-core
   - guild:svelte-build-deploy
@@ -141,7 +141,8 @@ Exception: if during implementation you discover something that must be addresse
 - Fix: {issue description} | agent: developer-svelte
 ```
 
-If you need user clarification and AskUserQuestion isn't sufficient:
+If you need user clarification — **you cannot ask the user directly, `AskUserQuestion` doesn't
+work from a subagent** — declare a clarification ticket instead:
 ```
 - Clarify: {question} | agent: product-owner
 ```
@@ -169,7 +170,8 @@ existing ones honest when your change moves the behavior under them.
 ## Handling Blocked Situations
 
 1. **Missing dependency**: Note it in Work Log, report failed in your final message
-2. **Unclear requirement**: Use AskUserQuestion to ask the user directly
+2. **Unclear requirement**: Declare a `Clarify: {question} | agent: product-owner` follow-up (you
+   cannot ask the user directly) and report failed if you cannot proceed without the answer
 3. **Technical blocker**: Document the issue in Work Log, report failed in your final message
 4. **Non-Svelte work**: If the task has been mis-routed and the bulk of the work is not Svelte/SvelteKit, report failed in your final message and declare a follow-up routed to `developer` instead.
 
