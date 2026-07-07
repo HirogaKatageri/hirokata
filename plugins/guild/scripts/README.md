@@ -85,9 +85,10 @@ append to the Work Log, and report completion; the orchestrator moves the file. 
 ```bash
 GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
 
-# Seed a requirement + its product-owner task
+# Seed a requirement stub (the guild:new-requirement skill does this, then runs
+# the product-owner + architect interview and creates the tickets below directly)
 read REQ _   < <("$GUILD" new req  --title "User Authentication" --desc "Login & signup" --date 2026-06-25)
-"$GUILD" new task --title "Gather requirements for $REQ" --agent product-owner --req "$REQ" --date 2026-06-25
+"$GUILD" new task --title "Implement login endpoint" --agent developer --req "$REQ" --date 2026-06-25
 
 # Drive the cursor
 read TASK TASK_PATH < <("$GUILD" next)     # e.g. TASK-001 .guild/tasks/todo/TASK-001.md

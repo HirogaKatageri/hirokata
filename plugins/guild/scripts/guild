@@ -154,7 +154,7 @@ cmd_init() {
     "$GUILD_DIR/requirements/todo" "$GUILD_DIR/requirements/in-progress" "$GUILD_DIR/requirements/done" \
     "$GUILD_DIR/tasks/todo" "$GUILD_DIR/tasks/in-progress" "$GUILD_DIR/tasks/done" "$GUILD_DIR/tasks/failed" \
     "$GUILD_DIR/plans/todo" "$GUILD_DIR/plans/in-progress" "$GUILD_DIR/plans/done" \
-    "$GUILD_DIR/docs" "$GUILD_DIR/qa"
+    "$GUILD_DIR/docs" "$GUILD_DIR/qa" "$GUILD_DIR/reviews"
   if [ ! -f "$GUILD_DIR/state.yaml" ]; then
     printf 'last-checkin: %s\n' "${1:-null}" > "$GUILD_DIR/state.yaml"
   fi

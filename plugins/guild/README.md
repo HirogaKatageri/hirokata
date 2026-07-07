@@ -10,7 +10,7 @@ The **guild** plugin manages an ongoing development workflow through a queue of 
 
 - **Single source of truth**: status is the directory a ticket lives in; `state.yaml` holds only `last-checkin`. IDs and the cursor are derived from the filesystem — no counters, no duplicated board state to reconcile.
 - **Parallel development by default**: the architect designs plan slices with disjoint file sets and groups them into `parallel-group` waves; the orchestrator dispatches each wave concurrently in the shared working tree. Ungrouped (foundational) tickets run solo in ID order.
-- **Automatic Agent Chains**: a new requirement flows through product-owner → architect → parallel developers → test-planner → test-writer (unit & integration) → 4 parallel reviewers. The architect emits the test-planning + review tail as real tickets up front.
+- **Live requirement planning, then automatic agent chains**: `guild:new-requirement` runs a live 3-way interview between the product-owner, the architect, and you — the architect creates every downstream ticket directly before the skill returns. From there it's automatic: parallel developers → test-planner → test-writer (unit & integration) → 4 parallel reviewers.
 - **Dedicated test planning**: after development, a test-planner inventories the diff and writes a test plan (`slice-test-plan.md`); the test-writer implements it and the reviewers reuse its Changed Files Inventory to scope their reading — the analysis is done once, not three times.
 - **Per-requirement review gate**: reviewers run once all of a requirement's other tickets have left todo/in-progress (done, or user-waived in `failed/`), and fan out 4-wide in parallel.
 - **Session-Based Workflow**: each check-in resumes exactly where the last session ended; the work cycle flows continuously, pausing only on failures, escalations, or requirement completion. A "let's get to work" trigger resumes with zero routing questions.
@@ -19,22 +19,25 @@ The **guild** plugin manages an ongoing development workflow through a queue of 
 ## The Agent Chain
 
 ```
-User provides input
-  └→ product-owner: discusses & refines requirements, writes REQ document
-      └→ architect: reads REQ, explores codebase, writes PLAN,
-         declares dev tickets + the test-planner + reviewer tail
-          └→ developer ×N: implement code per plan, in parallel-group
-             waves (disjoint files); foundational tickets run solo first
-              └→ test-planner: inventories the diff, writes the test plan,
-                 declares the test-writer ticket(s)
-                  └→ test-writer: writes and runs unit & integration tests
-                      └→ 4 reviewers in parallel:
-                          ├── reviewer-security
-                          ├── reviewer-architecture
-                          ├── reviewer-business-logic
-                          └── reviewer-edge-case
-                              ├→ [all approved] requirement complete → done
-                              └→ [any issues] developer fixes → test-writer → reviewers again (max 2 rounds)
+guild:new-requirement (live interview, not ticket-dispatched)
+  ├→ product-owner: interviews you, writes REQ document
+  └→ architect: explores codebase (calling guild:researcher inline as needed),
+     writes PLAN, creates dev tickets + the test-planner + reviewer tail directly
+      │
+      ▼  (tickets now exist — check-in drives the rest)
+developer ×N: implement code per plan, in parallel-group
+waves (disjoint files); foundational tickets run solo first
+  └→ test-planner: inventories the diff, writes the test plan,
+     declares the test-writer ticket(s)
+      └→ test-writer: writes and runs unit & integration tests
+          └→ 4 reviewers in parallel:
+              ├── reviewer-security
+              ├── reviewer-architecture
+              ├── reviewer-business-logic
+              └── reviewer-edge-case
+                  └→ orchestrator compiles a review report (.guild/reviews/REQ-NNN.md)
+                     and asks you which findings, if any, become fix tickets —
+                     no automatic re-review
 ```
 
 ## Skills
@@ -79,7 +82,12 @@ Quick read-only view of the board. No work is executed.
 
 ### `guild:new-requirement`
 
-Adds a new requirement stub to the board and creates a product-owner task to gather full details.
+Runs a live 3-way interview between the product-owner, the architect, and you, then writes the
+requirement doc, the implementation plan, and every developer/test-planner/reviewer ticket needed
+to build it — all before the skill returns. If Agent Teams is enabled
+(`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`), the product-owner and architect can message each other
+directly; otherwise the orchestrator moderates between them. Either way, only the orchestrator can
+ask you questions directly — both agents relay through it.
 
 **Trigger Phrases:**
 - "add a requirement"
@@ -205,8 +213,8 @@ cadence** via `/schedule` or `/loop` (opt-in per project).
 
 | Agent | Model | Role |
 |-------|-------|------|
-| `guild:product-owner` | Sonnet | Interviews user, gathers full requirements, writes REQ document |
-| `guild:architect` | Opus | Reads REQ, explores codebase, writes implementation PLAN, declares dev tasks; routes Svelte tasks to `developer-svelte` |
+| `guild:product-owner` | Sonnet | Interviews user (live, alongside the architect, inside `new-requirement`), writes REQ document; can delegate quick lookups to `guild:researcher` |
+| `guild:architect` | Opus | Explores codebase, calls `guild:researcher` inline as needed, writes implementation PLAN, creates dev/test-planner/reviewer tickets directly; routes Svelte tasks to `developer-svelte` |
 | `guild:developer` | Sonnet | Implements code per plan and requirement |
 | `guild:developer-svelte` | Sonnet | Svelte 5 / SvelteKit specialist — pre-loaded with four reference skills; used when tasks touch `.svelte`, `+page.*`, `+layout.*`, `+server.*`, hooks, or `svelte.config.js` |
 | `guild:test-planner` | Sonnet | Inventories the implemented diff, writes the test plan (`slice-test-plan.md`), declares the test-writer tickets |

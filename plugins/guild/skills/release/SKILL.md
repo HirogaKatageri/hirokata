@@ -68,10 +68,7 @@ For each requirement in scope:
 
 1. Find all its tasks with the awk filter above.
 
-2. **Block release** if ANY task for an included requirement:
-   - has a Work Log entry containing the literal token `ESCALATE` that has not been resolved → report and stop
-
-3. **Warn (do not block)** if ANY task for an included requirement is:
+2. **Warn (do not block)** if ANY task for an included requirement is:
    - in `.guild/tasks/failed/` — these are **user-waived** (the user chose "skip" when the task
      failed; the waiver is noted in the ticket's Work Log). List them and ask:
      ```
@@ -154,7 +151,7 @@ Transform `CHANGELOG.md`:
 
 ### 7. Archive Requirements
 
-Create archive directory `.guild/archive/{version}/` with subdirectories `requirements/`, `plans/`, `tasks/`.
+Create archive directory `.guild/archive/{version}/` with subdirectories `requirements/`, `plans/`, `tasks/`, `reviews/`.
 
 File moves come FROM the status subdirectories. Use `"$GUILD" path <ID>` to locate an artifact wherever it currently lives rather than hardcoding a status dir.
 
@@ -167,6 +164,8 @@ For each requirement in scope:
    - Move the sibling slice directory `.guild/plans/<status>/PLAN-NNN/` (if it exists) → `.guild/archive/{version}/plans/PLAN-NNN/` — the slice dir sits beside the overview in the same status dir.
 3. For each done task with matching `requirement: REQ-NNN` (glob `.guild/tasks/done/TASK-*.md` and read frontmatter):
    - Move `.guild/tasks/done/TASK-NNN.md` → `.guild/archive/{version}/tasks/TASK-NNN.md`
+4. If `.guild/reviews/REQ-NNN.md` exists:
+   - Move it → `.guild/archive/{version}/reviews/REQ-NNN.md`
 
 Leave any `todo` / `in-progress` / `failed` tasks in place (their files stay in `.guild/tasks/<status>/`).
 
@@ -292,6 +291,9 @@ Do not create files, move anything, or run any git commands.
 - **Never delete files** — archive (move) only
 - **CHANGELOG.md lives at repo root** — not inside `.guild/`
 - **`.guild/docs/` is evergreen** — never archive or touch the knowledge base during a release
-- **Pre-release gate blocks only on unresolved ESCALATE** — user-waived (`failed/`) tasks warn and ask, they don't block
+- **`.guild/reviews/REQ-NNN.md` archives alongside its requirement** — unlike `docs/`, review
+  reports are per-requirement history, not cross-cutting knowledge
+- **Pre-release gate only warns, never blocks** — user-waived (`failed/`) and not-yet-done tasks
+  warn and ask; there's no automatic-fix-loop escalation token to block on anymore
 - **In-progress tasks stay on the board** — they are not included in the archive
 - **One commit, one tag** — both are created atomically at step 10

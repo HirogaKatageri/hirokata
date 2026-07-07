@@ -1,6 +1,6 @@
 {
   "name": "hirokata",
-  "version": "3.6.0",
+  "version": "4.0.0",
   "owner": {
     "name": "Gian Patrick Quintana",
     "email": "gian.quintana@hirokata.dev"
@@ -23,8 +23,8 @@
     {
       "name": "guild",
       "source": "./plugins/guild",
-      "version": "3.3.0",
-      "description": "Continuous agent orchestration system. Manages requirements, planning, parallel development, test planning, unit & integration testing, and review through a directory-based ticket board driven by a deterministic CLI, with crash-safe session resume, automated agent chains, a Svelte/SvelteKit specialist developer agent, and an independent QA discipline. Say 'check in' to start a work session.",
+      "version": "4.0.0",
+      "description": "Continuous agent orchestration system. A live 3-way interview between product-owner, architect, and user plans each requirement up front; the board then drives parallel development, test planning, unit & integration testing, and a 4-reviewer pass that produces a report for user-approved fixes, through a directory-based ticket board driven by a deterministic CLI, with crash-safe session resume, a Svelte/SvelteKit specialist developer agent, and an independent QA discipline. Say 'check in' to start a work session.",
       "author": {
         "name": "Gian Patrick Quintana",
         "email": "gian.quintana@hirokata.dev"

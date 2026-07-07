@@ -30,7 +30,7 @@ rather than hand-rolling `find`/`mv`/ID arithmetic.
 | Task status (`todo`/`in-progress`/`done`/`failed`) | which `tasks/<status>/` dir holds `TASK-NNN.md` | the **orchestrator** via `guild move` |
 | Task metadata (title, agent, requirement, plan, plan-slice) | `TASK-NNN.md` frontmatter | whoever creates the ticket (`guild new task`) |
 | Work log / progress | `TASK-NNN.md` Work Log section | the assigned agent |
-| Requirement status (`todo`/`in-progress`/`done`) | which `requirements/<status>/` dir holds `REQ-NNN.md` | the orchestrator / product-owner flow via `guild move` |
+| Requirement status (`todo`/`in-progress`/`done`) | which `requirements/<status>/` dir holds `REQ-NNN.md` | the orchestrator via `guild move` |
 | Last check-in date | `.guild/state.yaml` | the orchestrator |
 
 There is no second copy of any of these. The orchestrator never reconciles two stores. **Status is

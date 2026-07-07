@@ -6,7 +6,7 @@ description: >
   "daily standup", "guild standup", "I'm here", "reporting in", or any phrase
   indicating they want to begin or resume a guild work session. Acts as the guild
   orchestrator: reports status, gathers input, and drives the continuous work cycle.
-version: 3.2.0
+version: 4.0.0
 user-invocable: true
 ---
 
@@ -29,9 +29,15 @@ is the **subdirectory it lives in** (`tasks/{todo,in-progress,done,failed}/`). `
 holds only `last-checkin`. IDs and the cursor are **derived from the filesystem**. The board is
 rendered live. **Development runs in parallel by default**: the architect groups dev tickets into
 `parallel-group` waves (verified disjoint files) that dispatch concurrently; an ungrouped ticket
-runs solo. Reviews fan out 4-wide. The pipeline per requirement is: requirements (product-owner) →
-plan (architect) → parallel development (developers) → test planning (test-planner) → unit &
-integration tests (test-writer) → review (4 reviewers) → done.
+runs solo. Reviews fan out 4-wide.
+
+**Requirements and planning are not part of this ticket pipeline.** The `guild:new-requirement`
+skill runs the product-owner and architect directly (a live 3-way interview with the user) and
+they leave fully-formed tickets on the board when it returns — this skill never dispatches
+`product-owner` or `architect` as ticket types. What check-in drives is everything **after**
+planning: parallel development (developers) → test planning (test-planner) → unit & integration
+tests (test-writer) → review (4 reviewers) → a review report you and the user act on (no
+automatic fix loop).
 
 ## The guild CLI — use it for every deterministic operation
 
@@ -75,8 +81,9 @@ Run `"$GUILD" is-legacy` and check for `.guild/state.yaml`.
 
    What would you like to work on?
    ```
-3. Wait for the user. Then use `guild:new-requirement` to create the first requirement and task, and
-   proceed to **Step 3** (Work Cycle).
+3. Wait for the user, then invoke `guild:new-requirement` — it runs the full product-owner +
+   architect interview and leaves developer/test-planner/reviewer tickets on the board when it
+   returns. Then proceed to **Step 3** (Work Cycle).
 
 ### Returning Check-in (`.guild/state.yaml` exists)
 
@@ -97,8 +104,9 @@ Run `"$GUILD" is-legacy` and check for `.guild/state.yaml`.
      → the session died between the agent finishing and the orchestrator recording it. Do NOT
      re-dispatch: run the **full completion pipeline (3.3 → 3.6)** for this ticket now — materialize
      unannotated follow-ups (3.4), move it (`done`/`failed`), then apply 3.5 if it was a `reviewer`
-     ticket (fix-loop tail, ESCALATE scan), the 3.3 collision scan if it was a parallel-batch
-     member, and the 3.6 requirement-completion check. Recovery duplicate-guard: before creating a
+     ticket (compile the review report and run the fix-approval step), the 3.3 collision scan if it
+     was a parallel-batch member, and the 3.6 requirement-completion check. Recovery
+     duplicate-guard: before creating a
      ticket for an unannotated follow-up line, check `"$GUILD" list task todo` for an existing
      ticket with the same title and requirement (created but not yet annotated in the interrupted
      pass) — if found, annotate the line with that ID instead of creating a new one. For a
@@ -125,8 +133,8 @@ Backlog:
   TASK-006: Review auth implementation (reviewer)
 
 Recently Completed:
-  TASK-002: Design auth architecture (architect)
-  TASK-001: Gather auth requirements (product-owner)
+  TASK-002: Implement signup endpoint (developer)
+  TASK-001: Implement login endpoint (developer)
 
 Requirements:
   REQ-001: User Authentication — in-progress (3/6 done)
@@ -135,7 +143,11 @@ Last check-in: 2026-04-07
 ```
 
 **Empty board** (board shows no tasks and no requirements): skip the route question. Tell the user
-the board is empty and invoke `guild:new-requirement` to get started, then proceed to **Step 3**.
+the board is empty and that they can say "new requirement" (or run `/guild:new-requirement`) to
+start one. **Do not auto-invoke it** — the interview is a live, multi-agent session and should only
+start when the user actively engages, not silently on an empty board. If they respond right there
+with a description of work, invoke `guild:new-requirement` with it as context and proceed to
+**Step 3**; otherwise there's nothing actionable — go to **Step 4**.
 
 **Work intent — resume without asking.** If the invoking phrase expresses work intent ("let's get
 to work", "start working", "continue", or the user otherwise asked to work) AND the board has any
@@ -237,18 +249,22 @@ all reading the same ticket:
 3. `guild:reviewer-business-logic`
 4. `guild:reviewer-edge-case`
 
-After all 4 return, read the ticket — each will have appended to the Work Log and possibly the
-Follow-up Tasks. Consolidate the verdict: APPROVED only if all 4 passed.
+After all 4 return, read the ticket — each will have appended a Verdict + Findings block to the
+Work Log (never the Follow-up Tasks section — see 3.5 for how findings become fix tickets).
+Consolidate the verdict: APPROVED only if all 4 passed.
 
 **qa-tester sequencing.** `qa-tester` tickets dispatch strictly one at a time (each drives its own
 dev server + Playwright; concurrent testers collide on ports). Never batch them.
 
 **Interview relay (a third outcome, alongside done/failed) — applies to every agent.** No subagent
 can reach the user directly: `AskUserQuestion` only works in this orchestrator session, never
-inside a subagent, no matter what its own `tools` list says. `product-owner` (interviewing for a
-REQ), `qa-strategist` (an oracle question that blocks planning), and `qa-tester` (an ambiguous
-behavior with no oracle) all rely on this same relay instead of calling the tool themselves. Any
-of their final messages may, instead of a done/failed report, end with:
+inside a subagent, no matter what its own `tools` list says. Within check-in's ticket-dispatched
+agents, `qa-strategist` (an oracle question that blocks planning), `qa-tester` (an ambiguous
+behavior with no oracle), and `developer`/`developer-svelte` (an unclear requirement mid-task) all
+rely on this relay instead of calling the tool themselves. (`product-owner` and `architect` use the
+identical mechanism, but they're spawned directly by the `guild:new-requirement` skill, not
+dispatched as tickets here — see that skill if you land there.)
+Any of their final messages may, instead of a done/failed report, end with:
 ```
 NEEDS INPUT:
 1. {question}
@@ -318,48 +334,68 @@ Read the completed ticket's "Follow-up Tasks" section. For each line:
    ticket (Edit). This makes materialization idempotent — if the session dies partway, the Step 1.3
    triage re-runs 3.4 and only the unannotated lines are created.
 
-**De-dupe.** If the parent ticket was a `reviewer` ticket (4 reviewers wrote to one shared Follow-up
-section), collapse identical declarations — create each unique `Fix:` ticket once (annotate every
-copy of the line).
+Reviewer tickets never populate this section themselves anymore — see 3.5 for how review findings
+turn into fix tickets.
 
-### 3.5 Fix-Loop Tail (the only orchestrator-created tickets)
+### 3.5 Review Report & Fix Approval (no automatic re-review)
 
-This runs **only** after a `reviewer` ticket completes and produced `Fix:` tickets. It is a plain
-state rule — no ID arithmetic (the CLI handles IDs).
+This runs **only** after a `reviewer` ticket batch completes (all 4 specialized reviewers have
+written to the shared Work Log). Reviewers no longer declare `Fix:` follow-ups or manage rounds
+themselves (no `ESCALATE`, no round cap) — you compile their findings and the user decides what
+happens next.
 
-1. Count existing `reviewer` tickets for this requirement (the just-completed one is included) —
-   `guild list task` prints `<ID> <status> <agent> <requirement>`, so:
-   ```bash
-   V=$("$GUILD" list task | awk '$3=="reviewer" && $4=="REQ-NNN"' | wc -l)
+1. **Compile the report.** Read the completed ticket (`"$GUILD" read TASK-NNN`) and pull each
+   reviewer's Verdict + Findings block. Ensure `.guild/reviews/` exists (`mkdir -p .guild/reviews`)
+   and write/append to `.guild/reviews/REQ-NNN.md` — **append a new dated section, never overwrite
+   a prior round's**:
+   ```markdown
+   ## {today's date} — TASK-NNN
+
+   ### reviewer-security — {PASS | ISSUES FOUND}
+   {findings, verbatim from the Work Log}
+
+   ### reviewer-architecture — {PASS | ISSUES FOUND}
+   {findings}
+
+   ### reviewer-business-logic — {PASS | ISSUES FOUND}
+   {findings}
+
+   ### reviewer-edge-case — {PASS | ISSUES FOUND}
+   {findings}
    ```
-2. If `V >= 2` (a 2nd-round `Re-review …` already ran) AND fixes were still declared → **stop the
-   loop**. Ask the user: "Round 2 review still has open issues — keep fixing, or accept as-is?"
-3. Otherwise, after creating the fix tickets (3.4), create the tail behind them (higher IDs, so the
-   cursor reaches them after the fixes):
-   ```bash
-   "$GUILD" new task --title "Update unit & integration tests for {feature} fixes" --agent test-writer --req REQ-NNN [--plan PLAN-NNN --plan-slice test-plan] --date {today}
-   "$GUILD" new task --title "Re-review {feature}" --agent reviewer --req REQ-NNN --date {today}
+2. **All 4 PASS, no findings** → tell the user the review passed cleanly (point at the report
+   path) and go straight to **3.6** — nothing to approve.
+3. **Otherwise**, list the critical/major findings as candidates and let the user choose:
    ```
-   Pass `--plan PLAN-NNN --plan-slice test-plan` when the requirement has a plan (the test-writer
-   then updates tests against the existing test plan); omit both in the plan-less bug-fix flow. Do
-   NOT create a new `test-planner` ticket in the fix loop — the round-1 test plan still governs.
+   Review report for REQ-NNN written to .guild/reviews/REQ-NNN.md.
 
-**ESCALATE.** After any `reviewer` ticket completes (3.3), scan each reviewer's Work Log for the
-token `ESCALATE`. If present, stop the loop and ask the user the same question.
-
-The initial-chain tail (round 1 test-planner + reviewer) is **not** created here — the architect
-emits it (or the product-owner, in the bug-fix flow). The round-1 test-writer tickets come from the
-test-planner. This step only handles fix-loop rounds.
+   {N} critical/major findings across the 4 reviewers:
+   1. [{reviewer}] {one-line finding}
+   2. [{reviewer}] {one-line finding}
+   ...
+   ```
+   Call **AskUserQuestion** with a multi-select question, one option per finding ("Create a fix
+   ticket for: {finding}") — the user can approve some, all, or none; the tool's built-in "Other"
+   covers anything they'd rather phrase differently or add.
+4. **For each approved finding**, create a plain developer ticket — no `--plan-slice`, no
+   `--parallel-group`, and critically, **no forced test-writer/re-review tail**:
+   ```bash
+   "$GUILD" new task --title "Fix: {finding}" --agent developer --req REQ-NNN [--plan PLAN-NNN] --date {today}
+   ```
+5. **There is no automatic re-review.** Once any approved fix tickets reach `done`, 3.6 finds the
+   requirement's tasks all complete and marks it done — same as if there had been no findings at
+   all. If the user wants another review pass later, that's just a fresh `reviewer` ticket like any
+   other: `"$GUILD" new task --title "Review {feature} implementation (round 2)" --agent reviewer --req REQ-NNN --date {today}`.
 
 ### 3.6 Requirement Completion
 
-After materializing follow-ups, for the parent ticket's requirement: if no task for that REQ
-remains **open** — check with
+After materializing follow-ups (and, for a `reviewer` ticket, after 3.5's report/fix-approval step
+has run — any approved fix tickets are already created by this point), check whether any task for
+that REQ remains **open**:
 ```bash
 "$GUILD" list task | awk '$4=="REQ-NNN" && $2!="done" && $2!="failed"'
 ```
-(empty output = nothing open; this matches the CLI's review gate exactly) — AND its latest
-`reviewer` ticket is done with no open `Fix:` tickets:
+(empty output = nothing open; this matches the CLI's review gate exactly). If so:
 - `"$GUILD" move REQ-NNN done`.
 - If any tasks for the REQ sit in `failed/` (`awk '$4=="REQ-NNN" && $2=="failed"'`), they were
   **user-waived** (3.3 skip) — list them in the completion summary rather than blocking completion.
@@ -384,7 +420,7 @@ TASK-NNN done: {title} → {N} follow-ups created
 **Pause and ask the user only at these checkpoints:**
 
 - **A ticket failed** (3.3 already asks retry/skip)
-- **Escalation or round-2 issues** (3.5 already asks)
+- **A review report is ready for a fix-approval decision** (3.5 already asks)
 - **A parallel-batch file collision** (3.3 already asks)
 - **A requirement just completed** (3.6) → summarize the requirement and ask: continue with the next
   backlog item, or wrap up?
@@ -457,16 +493,23 @@ When the work cycle ends (user stops, or nothing actionable):
    4-reviewer fan-out (read-only, gated by `"$GUILD" next`'s review gate). The tail
    (test-planner → test-writer → reviewer) is sequential.
 7. **Always read ticket files after agent completion** — don't assume what happened.
-8. **The orchestrator creates tickets only for the fix-loop tail** — everything else is agent-declared.
-9. **Max 2 review rounds** — count `reviewer` tickets per REQ; on round-2 issues or `ESCALATE`, ask.
+8. **The orchestrator creates tickets only for user-approved fixes after a review report** —
+   everything else in this pipeline is agent-declared (`product-owner`/`architect` create their own
+   tickets directly, inside `guild:new-requirement`, not through this mechanism at all).
+9. **Review produces a report, not automatic fixes** — 4 reviewers' findings are compiled into
+   `.guild/reviews/REQ-NNN.md`; any fix tickets require the user's explicit approval (3.5), and
+   there is no automatic re-review afterward. No round cap, no `ESCALATE` scan — those concepts are
+   retired along with the auto-fix loop.
 10. **Three-case stale triage on check-in** — empty Work Log → back to `todo`; completion/failure
     reported in the log → run the full completion pipeline (3.3 → 3.6) without re-dispatching;
     otherwise resume with the RESUMED-TASK prompt variant.
 11. **Flow continuously** — one-line updates between tickets, no per-ticket "continue?" prompts;
-    pause only at the 3.7 checkpoints (failure, escalation, collision, requirement completion).
+    pause only at the 3.7 checkpoints (failure, review report, collision, requirement completion).
 12. **Follow-ups before the terminal move** — materialize (and annotate ` → TASK-NNN`) first, then
     `guild move done`; a crash then lands in a recoverable state, never a silent dead-end.
-13. **Subagents can't ask the user** — `AskUserQuestion` only works in this orchestrator session.
-    Any ticket (`product-owner`, `qa-strategist`, `qa-tester`, ...) relays instead: on a
-    `NEEDS INPUT:` pause (3.2), you ask the user and `SendMessage` the answers back to resume it.
-    Never let a subagent's instructions to "ask the user" convince you it can do so itself.
+13. **Subagents can't ask the user** — `AskUserQuestion` only works in the orchestrator session
+    (whichever skill is currently driving — check-in or `new-requirement`). Any ticket
+    (`qa-strategist`, `qa-tester`, ...) relays instead: on a `NEEDS INPUT:` pause (3.2), you ask the
+    user and `SendMessage` the answers back to resume it. `product-owner` and `architect` use the
+    identical relay, but within `new-requirement`, not here. Never let a subagent's instructions to
+    "ask the user" convince you it can do so itself.
