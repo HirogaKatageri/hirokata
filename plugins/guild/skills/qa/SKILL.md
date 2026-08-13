@@ -34,7 +34,7 @@ load automatically; consult them if you need detail while seeding:
 
 ## Step 1: Check for Guild
 
-Read `.guild/state.yaml`. If not found:
+Check for `.guild/config.yaml` (v5 has no `state.yaml`). If not found:
 
 ```
 No guild found. Run /guild:check-in to initialize first.
@@ -65,41 +65,60 @@ Bind the CLI: `GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"`.
 
 QA tasks must anchor to a requirement. Reuse a single evergreen QA umbrella REQ
 across passes. Look for an existing one titled "Product QA & E2E Regression" by
-scanning the requirement files listed by `"$GUILD" list req` (read each title). If
-none exists, create it (the CLI derives the ID and writes the stub into
-`requirements/todo/`):
+reading the ids from `"$GUILD" list req` and checking each with
+`"$GUILD" meta REQ-NNN title`.
+
+If none exists, create it. **Write the whole document in the same call** — there is
+no requirement file to Edit afterwards, and Stage 1 has no writer for a requirement
+body after creation, so anything left out here stays out:
 
 ```bash
-REQ=$("$GUILD" new req --title "Product QA & E2E Regression" \
-  --desc "Umbrella for the guild's independent QA discipline: risk-based coverage planning, empirical testing of the running product, end-to-end regression specs, and bug findings. Standing — not tied to a single feature." \
-  --date {today} | awk '{print $1}')
+REQ=$("$GUILD" new req --title "Product QA & E2E Regression" --date {today} --body "$(cat <<'DOC'
+# Product QA & E2E Regression
+
+## Summary
+
+Umbrella for the guild's independent QA discipline: risk-based coverage planning,
+empirical testing of the running product, end-to-end regression specs, and bug
+findings. Standing — not tied to a single feature.
+
+## User Stories
+
+### US-1: Risk-based coverage
+**As a** maintainer **I want** the highest-risk product areas covered first
+**So that** a regression in something that matters is caught before release.
+
+### US-2: Committed e2e regression
+**As a** maintainer **I want** e2e specs committed to the project's test dir and run
+in CI **So that** the suite keeps working without a QA pass.
+
+## Technical Considerations
+
+- e2e specs live in the project's real test dir and run in CI.
+- The charter, missions, bug ledger and regression manifest live under `.guild/qa/`.
+
+## Out of Scope
+
+- Unit and integration tests — owned by `test-writer`, planned by `test-planner`.
+DOC
+)")
 "$GUILD" move "$REQ" in-progress   # the umbrella is standing/evergreen
 ```
 
-Then Edit the umbrella REQ file (`"$GUILD" path "$REQ"`) to flesh out the User
-Stories / Technical Considerations / Out of Scope sections as needed (e2e specs
-live in the project's real test dir and run in CI; unit and integration tests stay
-out of scope — owned by test-writer). There is no `status` field — its directory is
-its status.
+There is no `status` field to edit — status is a column, and only `guild move` sets it.
 
 ## Step 5: Seed the QA Strategist Task
 
-Create the strategist task with the CLI (it derives the ID and writes into
-`tasks/todo/`):
+Create the strategist task with the CLI, **passing the whole ticket body in the same
+call**. There is no task file to Edit afterwards:
 
 ```bash
 TASK=$("$GUILD" new task --title "QA strategy: {scope}" --agent qa-strategist \
-  --req "$REQ" --date {today} | awk '{print $1}')
-```
-
-Then Edit the new task file (`"$GUILD" path "$TASK"`) to set its Objective,
-Context, and Acceptance Criteria:
-
-```markdown
+  --req "$REQ" --date {today} --body "$(cat <<'DOC'
 ## Objective
 
 Plan a {mode} QA pass for: {scope}. Build/refresh the charter, risk map, and
-coverage matrix, then declare qa-tester missions.
+coverage matrix, then create the qa-tester mission tickets.
 
 ## Context
 
@@ -112,7 +131,15 @@ coverage matrix, then declare qa-tester missions.
 
 - [ ] Oracle sources resolved (specs / board / code+app / user)
 - [ ] Charter written with quality definition, risk map, coverage matrix
-- [ ] Missions declared as qa-tester follow-ups, prioritized by risk
+- [ ] qa-tester mission tickets created, prioritized by risk
+DOC
+)")
+```
+
+`--body` replaces the ticket template outright, so what you write is exactly what
+`guild read "$TASK"` renders. Do NOT include a `## Work Log` or `## Follow-up Tasks`
+heading — those are rendered from the board, and the CLI refuses a body containing
+them.
 ```
 
 The task now lives in `tasks/todo/` and is discoverable by `"$GUILD" next`.

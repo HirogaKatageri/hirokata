@@ -1,11 +1,15 @@
-# Task Lifecycle & File Format
+# Task Lifecycle & Ticket Format
 
-## Task File Location — status is the directory
+## There Are No Task Files — status is a column
 
-Task files live under `.guild/tasks/<status>/TASK-NNN.md` (zero-padded 3-digit ID), where
-`<status>` is one of `todo`, `in-progress`, `done`, `failed`. **The directory IS the status** —
-there is no `status` frontmatter field, no board, no second copy. To change a task's status, the
-orchestrator **moves the file** with `guild move TASK-NNN <status>`.
+A task is a ROW in `.guild/guild.db` with a zero-padded 3-digit ID (`TASK-001`). **`status` is a
+column**, one of `todo`, `in-progress`, `done`, `failed`, and the orchestrator changes it with
+`guild move TASK-NNN <status>` — there are no status directories and nothing to move on disk.
+
+The markdown shown below is what `guild read TASK-NNN` RENDERS from that row (frontmatter
+projected from columns, body from `body`, Work Log from `work_log`). It is not a file you can open
+or edit. `.guild/export/REQ-NNN.md` is a generated snapshot that `guild export` rewrites wholesale;
+editing it loses the edit.
 
 All task creation, movement, and lookup go through the guild CLI at
 `${CLAUDE_PLUGIN_ROOT}/scripts/guild` (see `scripts/README.md`).
@@ -46,8 +50,16 @@ _Agent appends progress notes here as it works._
 _Agent declares follow-ups here upon completion._
 ```
 
-`guild new task` scaffolds this template. Agents reference linked artifacts by **ID** and resolve
-the current path with `guild path <ID>` / `guild read <ID>` (locations move as status changes).
+`guild new task` scaffolds this template; `guild new task --body` replaces it outright when the
+creator has the whole document already.
+
+**There are no ticket files, and no paths.** `## Work Log` and `## Follow-up Tasks` are RENDERED by
+`guild read`, not stored — the log is built from `work_log` rows, which agents append to with
+`guild log TASK-NNN --agent A --entry '...'` and the orchestrator folds in with
+`guild spool drain TASK-NNN`. Agents reference linked artifacts by **ID** and read them with
+`guild read <ID>` / `guild meta <ID> [field]` / `guild slice PLAN-NNN <slug>`. `guild path` was
+removed in v5: the only files under `.guild/export/` are regenerated wholesale by `guild export`,
+so anything written there is discarded.
 
 ## Frontmatter Fields
 
@@ -245,7 +257,8 @@ grammar above; do not duplicate the procedure here.
 
 ## Requirement File Format
 
-Location: `.guild/requirements/<status>/REQ-NNN.md` (status = directory; `todo` ≈ the old `draft`).
+A row in the `requirement` table, rendered by `guild read REQ-NNN`. `status` is a column
+(`todo` ≈ the old `draft`), set only by `guild move`.
 
 ```markdown
 ---
@@ -343,20 +356,24 @@ cap — see check-in Step 3.5 and agent-chains.md Chain 4.
 
 ## Plan File Format
 
-The architect emits one overview file plus one slice per developer task. `guild new plan` scaffolds
-the overview in `plans/todo/` and creates its sibling slice directory.
+The architect writes one overview plus one slice brief per developer task. **There are no plan
+files and no slice directory** — a plan is a row and a slice is a row.
 
-**Overview** at `.guild/plans/<status>/PLAN-NNN.md` — for reviewers and orientation.
-**Slices** at `.guild/plans/<status>/PLAN-NNN/slice-{slug}.md` — one per developer task. The slice
-directory travels with the overview when the plan is moved between status dirs, so agents resolve a
-slice path with `guild slice PLAN-NNN {slug}` rather than hardcoding it. Each slice is
-self-contained: a developer reads only its slice (not the overview, not sibling slices) to do its
-work. The slice's "Interface Contract" section documents what the task exposes to or consumes from
+**Overview** — passed as `guild new plan --desc` (or `--body`) at creation, read back with
+`guild read PLAN-NNN`. For reviewers and orientation.
+
+**Slice briefs** — one per developer task. `plan_slice` rows exist in the schema and
+`guild slice PLAN-NNN {slug}` reads one, but **Stage 1 ships no command that writes one**; that is
+pending a later stage. Until it lands, the architect puts each slice brief in its developer
+ticket's `--objective`, which `guild read TASK-NNN` renders under `## Objective`, and still passes
+`--plan-slice {slug}` so the association is recorded on the row. Each brief is self-contained: a
+developer reads only its own ticket (not the overview, not sibling briefs) to do its work. The
+brief's "Interface Contract" section documents what the task exposes to or consumes from
 sibling tasks.
 
-**Test plan** at `.guild/plans/<status>/PLAN-NNN/slice-test-plan.md` — written later by the
-test-planner (not the architect), after all development for the requirement is done. Resolved with
-`guild slice PLAN-NNN test-plan`. It carries the Changed Files Inventory, the test infrastructure
+**Test plan** — composed later by the test-planner (not the architect), after all development for
+the requirement is done, and passed as the `--objective` of the test-writer ticket(s) it creates
+(with `--plan-slice test-plan`). It carries the Changed Files Inventory, the test infrastructure
 survey, and the unit/integration case lists; the test-writer implements it and the reviewers reuse
 its inventory to scope their reading.
 

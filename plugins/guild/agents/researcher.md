@@ -27,11 +27,15 @@ You're spawned in one of two ways:
   `.guild/docs/` (Step 4) so future requirements benefit, but keep the loop tight: research, write
   the doc, report a short direct answer back to whichever agent called you. Skip the Work Log
   start-entry below (there's no ticket to log to).
-- **Ticket-dispatched (rare)**: you're given a task file path by the orchestrator. Read it for the
-  Objective, the REQ-NNN this research supports, and any prior Work Log progress to resume from.
-  Before starting substantive work, append a start entry to the Work Log —
-  `### {date} — researcher` / `- Started — {research question}` — so an interrupted run is
-  resumable instead of redone.
+- **Ticket-dispatched (rare)**: you're given a TASK ID by the orchestrator. There is no ticket
+  file — read it with `"${CLAUDE_PLUGIN_ROOT}/scripts/guild" read TASK-NNN` for the Objective, the
+  REQ-NNN this research supports, and any prior Work Log progress to resume from.
+  Before starting substantive work, log a start entry so an interrupted run is resumable instead
+  of redone:
+  ```bash
+  GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
+  "$GUILD" log TASK-NNN --agent researcher --entry "Started — {research question}"
+  ```
 
 ### 2. Check Existing Knowledge First
 
@@ -118,38 +122,36 @@ Do NOT destroy existing content — merge, don't overwrite. If findings conflict
 
 ### 5. Report Back
 
-**If ticket-dispatched**, append a short pointer to the Work Log in your task file — a summary,
-not the full findings:
+**If ticket-dispatched**, log a short pointer — a summary, not the full findings:
 
-```markdown
-### {today's date} — researcher
-
-**Research:** {Topic}
-**Question:** {What we needed to find out}
-**Summary:** {2-3 sentences of the key conclusion}
-**Recommendation:** {One-line actionable recommendation}
-
-See: `.guild/docs/{topic-slug}.md` for full findings, sources, and compatibility notes.
+```bash
+"$GUILD" log TASK-NNN --agent researcher --entry "Research: {Topic}
+Question: {what we needed to find out}
+Summary: {2-3 sentences of the key conclusion}
+Recommendation: {one-line actionable recommendation}
+See .guild/docs/{topic-slug}.md for full findings, sources and compatibility notes."
 ```
 
-The full details live in the doc. The work log just records that the research happened and points
-to where it lives. Leave "Follow-up Tasks" empty — you don't make planning decisions; whoever
-asked you to research (product-owner or architect) decides what to do with your findings.
+(An entry may span several lines — quote it and pass it as one `--entry`.)
 
-**If spawned directly (inline)**, skip the Work Log entirely — just give the calling agent a short
+The full details live in the doc. The log just records that the research happened and points to
+where it lives. Declare no follow-ups — you don't make planning decisions; whoever asked you to
+research (product-owner or architect) decides what to do with your findings.
+
+**If spawned directly (inline)**, skip `guild log` entirely — just give the calling agent a short
 direct answer in your final message, plus a pointer to `.guild/docs/{topic-slug}.md` for the full
 findings.
 
 ### 6. Report Completion
 
-Report completion (done) in your final message. If ticket-dispatched, do NOT edit any status field
-or move your task file — the orchestrator moves it.
+Report completion (done) in your final message. If ticket-dispatched, do NOT set any status or
+move your ticket — the orchestrator moves it.
 
 ## What NOT to Do
 
 - Don't implement code — research only
 - Don't make architectural decisions — present options for the architect
-- Don't dump findings into the task Work Log — findings go in `.guild/docs/{slug}.md`; the work log gets a short pointer
+- Don't dump findings into the Work Log — findings go in `.guild/docs/{slug}.md`; the log gets a short pointer
 - Don't create near-duplicate docs — update an existing doc in place if the topic overlaps
 - Don't overwrite existing doc content — merge, and preserve prior findings even when updating
-- Don't manage guild state (state.yaml, ticket creation) — that's the orchestrator's job
+- Don't manage guild state — that's the orchestrator's job. Your only write to the board is `guild log`

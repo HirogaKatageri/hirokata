@@ -46,7 +46,7 @@ Parse from `$ARGUMENTS` or user input:
 
 ### 1. Check for Guild
 
-Read `.guild/state.yaml` (it holds only `last-checkin`).
+Check for `.guild/config.yaml` — that is what marks a v5 guild (there is no `state.yaml`).
 
 If not found:
 ```
@@ -91,14 +91,22 @@ Briefly describe what you need. The product-owner will dig into full details in 
 
 This is just a seed — the interview in Step 5 is where the real detail gets gathered.
 
-### 3. Create the Requirement Stub
+### 3. Do NOT Create the Requirement Yet
+
+**The product-owner creates it, at the end of the interview.** In v4 the requirement was a FILE,
+so this step scaffolded a stub and the product-owner filled it in by Editing it. In v5 the board
+is a database, nothing hands out a writable path, and Stage 1 has no writer for a requirement body
+*after* creation — so a stub created here would stay a stub forever.
+
+The product-owner therefore composes the whole document and creates the row in one call
+(`guild new req --title … --body …`), then reports the REQ ID back to you. Everything downstream
+— the architect's plan, every ticket — uses that ID.
+
+You can still show the user what number it will land on:
 
 ```bash
-read REQ _ < <("$GUILD" new req --title "{title}" --desc "{description}" --date {today})
+"$GUILD" next-id req     # e.g. 001 — indicative only, not reserved
 ```
-
-`$REQ` is now the requirement ID (e.g. `REQ-001`). The CLI scaffolds the template (Summary / User
-Stories / Technical Considerations / Out of Scope) in `requirements/todo/`.
 
 ### 4. Detect the Interview Mode
 
@@ -133,8 +141,10 @@ Spawn both **in the same message** so they run concurrently:
 ```
 Agent(
   subagent_type: "guild:product-owner",
-  prompt: "You're gathering requirements for {REQ} — \"{title}\". Requirement path:
-           {`guild path REQ-NNN`}. Seed description: {description}. Today's date: {today}.
+  prompt: "You're gathering requirements for a new feature — \"{title}\". There is NO
+           requirement row yet: compose the document, then create it yourself with
+           `guild new req --title ... --date {today} --body ...` and report the REQ ID.
+           Seed description: {description}. Today's date: {today}.
            Interview mode: {MODE}. {if team: 'The architect is running concurrently and you can
            SendMessage it by name (\"architect\") for cross-talk.'} {if relay: 'The architect is
            running concurrently; the orchestrator will relay relevant context between you.'}
@@ -143,9 +153,10 @@ Agent(
 )
 Agent(
   subagent_type: "guild:architect",
-  prompt: "You're planning for {REQ} — \"{title}\", currently being interviewed by the
-           product-owner (requirement path: {`guild path REQ-NNN`}, still a stub — it will fill in
-           as the interview proceeds). Interview mode: {MODE}. {if team: 'The product-owner is
+  prompt: "You're planning for a new feature — \"{title}\", currently being interviewed by the
+           product-owner. The requirement row does not exist yet; the product-owner creates it
+           when the interview concludes and I will send you its REQ ID then. Read it with
+           `guild read REQ-NNN` at that point. Interview mode: {MODE}. {if team: 'The product-owner is
            running concurrently and you can SendMessage it by name (\"product-owner\") for
            cross-talk.'} {if relay: 'The product-owner is running concurrently; the orchestrator
            will relay relevant context between you.'} Start exploring the codebase now (your
@@ -175,14 +186,16 @@ asking. When you see this, `SendMessage` both agents to wrap up immediately — 
 current draft without further questions — rather than continuing the round-robin.
 
 **Product-owner reports done:**
-- If it took the **bug-fix short-circuit** (created its own fix/test-writer/reviewer tickets via
-  Bash, per its own instructions), tell the architect to stop — this doesn't need a plan — and
-  `TaskStop` its session. Skip to Step 7.
-- Otherwise, once the product-owner is done, `SendMessage` the architect: "The requirement is
-  final at {path} — proceed to Design and Write the Plan." Keep relaying any further architect
-  `NEEDS INPUT` rounds until it reports done.
+It reports the **REQ ID it created** — record it as `$REQ`; every later step needs it.
 
-**Architect reports done:** it will report PLAN-NNN's path and the ticket IDs it created
+- If it took the **bug-fix short-circuit** (created the requirement plus its own
+  fix/test-writer/reviewer tickets via Bash, per its own instructions), tell the architect to
+  stop — this doesn't need a plan — and `TaskStop` its session. Skip to Step 7.
+- Otherwise `SendMessage` the architect: "The requirement is final: it is {REQ} — read it with
+  `guild read {REQ}` and proceed to Design and Write the Plan." Keep relaying any further
+  architect `NEEDS INPUT` rounds until it reports done.
+
+**Architect reports done:** it will report the PLAN-NNN id and the ticket IDs it created
 (developer(s), test-planner, reviewer) — no further action needed from you; it created them
 directly via the CLI.
 
@@ -201,10 +214,12 @@ Run /guild:check-in to start building.
 ## Rules
 
 - **IDs are derived by the CLI** — never hand-assign or zero-pad IDs yourself; `guild new`
-  computes the next ID from the filesystem.
-- **No `status` field** — status is the containing directory. `guild new req` places the stub in
-  `requirements/todo/` directly; the architect's `guild new task` calls place tickets in
-  `tasks/todo/` directly.
+  derives the next ID in the same SQL statement that inserts the row, so it cannot collide.
+- **Status is a COLUMN, not a directory** — there are no `requirements/todo/` or `tasks/todo/`
+  directories in v5. Everything created by `guild new` starts at `todo`, and only the
+  orchestrator moves it (`guild move`).
+- **Documents are written at creation** — `guild new … --body` is the whole write surface for a
+  requirement or plan document. There is no `Edit the file`, because there is no file.
 - **This skill does not return until planning is complete** — unlike the old flow, there is no
   hand-off to a later check-in for requirement-gathering or planning. Both happen here, live.
 - **Never let a subagent try `AskUserQuestion` itself** — team mode or not, only you can ask the

@@ -1,67 +1,74 @@
 # Guild State Format
 
-The guild has **no `BOARD.md`** and **no `status` frontmatter field**. An artifact's status is
-the **subdirectory it lives in**. A tiny `state.yaml` holds only `last-checkin`. The "board" is a
-**live view** rendered on demand by scanning the status directories — never a stored artifact.
+The guild board is a **Turso database** at `.guild/guild.db`. There is **no `BOARD.md`**, no
+ticket file, and no status directory: an artifact's status is a **column**. `last-checkin` is a row
+in `guild_state` (there is no `state.yaml`). The "board" is a **live view** rendered on demand from
+SQL — never a stored artifact.
+
+**Nothing hands out a writable path.** `guild path` was removed in v5: the only files under
+`.guild/export/` are a generated snapshot that `guild export` rewrites wholesale, so anything
+edited there is discarded.
 
 All deterministic state operations go through the **guild CLI** at
 `${CLAUDE_PLUGIN_ROOT}/scripts/guild` (see `scripts/README.md`). Skills and agents shell out to it
 rather than hand-rolling `find`/`mv`/ID arithmetic.
 
-## Status is a directory
+## What is on disk
 
 ```
 .guild/
-  state.yaml                              # only: last-checkin
-  requirements/{todo,in-progress,done}/REQ-NNN.md
-  plans/{todo,in-progress,done}/PLAN-NNN.md      # PLAN-NNN/ slice dir sits alongside the file
-  tasks/{todo,in-progress,done,failed}/TASK-NNN.md
-  docs/                                   # evergreen researcher knowledge base
-  qa/                                     # evergreen QA artifacts
-  archive/                                # evergreen released requirements
+  config.yaml         # committed. storage mode; env var NAMES only, never a credential
+  journal.ndjson      # committed. append-only change log — `guild rebuild` replays it
+  export/REQ-NNN.md   # committed. GENERATED snapshot; `guild export` rewrites it wholesale
+  guild.db            # gitignored. DERIVED state — the board itself
+  spool/TASK-NNN.ndjson  # gitignored. agents' un-drained log/finding lines
+  journal.pending     # gitignored. quarantined journal lines — `guild journal recover`
+  backup-*/           # gitignored. pre-rebuild database and pre-compaction journal copies
+  docs/               # evergreen researcher knowledge base
+  qa/                 # evergreen QA artifacts
+  reviews/REQ-NNN.md  # per-requirement review reports
+  v4-archive*/        # a v4 board `guild init` moved aside — never parsed, never deleted
 ```
 
-`docs/`, `qa/`, and `archive/` are evergreen — never cleared or archived away.
+**`journal.ndjson` is the durable board.** `guild.db` can be deleted at any time and rebuilt from
+it. The reverse is not true: lose the journal and the history is gone.
+
+`docs/` and `qa/` are evergreen — never cleared.
 
 ## Single source of truth per fact
 
 | Fact | Lives in | Changed by |
 |------|----------|------------|
-| Task status (`todo`/`in-progress`/`done`/`failed`) | which `tasks/<status>/` dir holds `TASK-NNN.md` | the **orchestrator** via `guild move` |
-| Task metadata (title, agent, requirement, plan, plan-slice) | `TASK-NNN.md` frontmatter | whoever creates the ticket (`guild new task`) |
-| Work log / progress | `TASK-NNN.md` Work Log section | the assigned agent |
-| Requirement status (`todo`/`in-progress`/`done`) | which `requirements/<status>/` dir holds `REQ-NNN.md` | the orchestrator via `guild move` |
-| Last check-in date | `.guild/state.yaml` | the orchestrator |
+| Task status (`todo`/`in-progress`/`done`/`failed`) | `task.status` | the **orchestrator** via `guild move` |
+| Task metadata (title, agent, requirement, plan, plan-slice) | `task` columns | whoever creates the ticket (`guild new task`); title also by `guild retitle` |
+| Work log / progress | `work_log` rows | the assigned agent via `guild log`, folded in by `guild spool drain` |
+| Review findings | `review_finding` rows | reviewers via `guild finding`, folded in by `guild spool drain` |
+| Requirement status (`todo`/`in-progress`/`done`) | `requirement.status` | the orchestrator via `guild move` |
+| Last check-in date | the `last-checkin` row in `guild_state` | the orchestrator via `guild checkin` |
 
 There is no second copy of any of these. The orchestrator never reconciles two stores. **Status is
-never written into frontmatter** — moving the file is the only way to change status.
+never written into a document** — `guild move` is the only way to change it.
 
-## `.guild/state.yaml`
+There are **no ID counters** and **no `current` cursor**:
 
-```yaml
-last-checkin: 2026-06-23   # ISO date of last check-in (null if never)
-```
-
-That is the entire file. There are **no ID counters** and **no `current` cursor**:
-
-- **IDs are derived.** The next ID for a kind is `max(existing across all status dirs + archive)
-  + 1`, computed by `guild next-id <req|task|plan>` (and used automatically by `guild new`). IDs
-  are zero-padded to 3 digits (`001`…`999`) and continuous across releases. There is no counter to
-  maintain, increment, or reset — deletion and creation are both self-correcting.
-- **The cursor is derived.** "What am I working on" is simply whatever sits in
-  `tasks/in-progress/`. `guild next` recomputes the next actionable task every cycle from the
-  directories; there is nothing to cache or reconcile.
+- **IDs are derived.** `guild new` computes `MAX(n) + 1` in the same SQL statement that inserts the
+  row, so two creates can never collide. `guild next-id <req|task|plan>` reports the same number.
+  IDs are zero-padded to 3 digits (`001`…`999`), never reused, and continuous across releases.
+- **The cursor is derived.** "What am I working on" is simply whatever task is `in-progress`.
+  `guild next` recomputes the next actionable task every cycle; there is nothing to cache.
 
 ## The next actionable ticket — `guild next`
 
 The orchestrator never scans by hand; it runs `guild next`, which encodes:
 
-1. **Resume** — any task in `tasks/in-progress/` (lowest ID first). Interrupted work.
-2. **Otherwise** — the lowest-ID task in `tasks/todo/`.
-3. **Review gate** — a `reviewer` task is *only* actionable when every *other* task for its
-   requirement has left `todo/` and `in-progress/` (the per-REQ N/N gate). If the lowest-ID `todo`
-   is a reviewer task whose requirement still has open implementation/test/fix tasks, it is skipped
-   and the next `todo` is taken.
+1. **Resume** — any `in-progress` task (lowest ID first). Interrupted work.
+2. **Otherwise** — the lowest-ID `todo` task.
+3. **Review gate** — a `reviewer` task is *only* actionable when every *other non-reviewer* task
+   for its requirement has left `todo` and `in-progress` (the per-REQ N/N gate). If the lowest-ID
+   `todo` is a reviewer task whose requirement still has open implementation/test/fix tasks, it is
+   skipped and the next `todo` is taken. Other *reviewer* tickets are deliberately ignored by the
+   gate: counting them would make two reviewer tickets on one requirement gate each other and
+   answer `none` forever.
 4. **Nothing actionable** → `guild next` prints `none`; the board is caught up.
 
 **Parallel-group batch.** When the task `guild next` returns is a `developer`/`developer-svelte`
@@ -77,22 +84,22 @@ assertion that grouped dev tickets touch disjoint files and may run together (se
 
 ## Rendering the live board view — `guild board`
 
-`guild-status` and `check-in` build the status report by running `guild board`, which scans the
-directories — it does **not** read a board file:
+`guild-status` and `check-in` build the status report by running `guild board`, which is one SQL
+script — it does **not** read a board file:
 
-1. Lists `tasks/in-progress/` (In Progress), `tasks/todo/` (Backlog), the newest ~20 of
-   `tasks/done/` (Recently Completed), and any `tasks/failed/`.
-2. Lists `requirements/*/REQ-*.md` grouped by their status dir; computes each REQ's progress as
-   `done-tasks / total-tasks` by counting tasks whose `requirement` frontmatter matches (a task's
-   doneness is read from its directory).
-3. Reads `last-checkin` from `state.yaml`.
+1. Lists `in-progress` tasks (In Progress), `todo` (Backlog), the newest 20 `done` (Recently
+   Completed), and any `failed`.
+2. Lists requirements grouped by status; computes each REQ's progress as `done-tasks / total-tasks`
+   with a `LEFT JOIN` and a `SUM(CASE ...)`.
+3. Reads the `last-checkin` row.
 
-The output shape is unchanged from the old board view — only the source changed to a directory scan.
+The output shape is unchanged from the v4 board view — only the source changed.
 
 ## Stale `in-progress` recovery
 
-On check-in, each task left in `tasks/in-progress/` is triaged three ways (procedure: check-in
-skill Step 1.3):
+On check-in, each `in-progress` task is triaged three ways (procedure: check-in skill Step 1.3).
+**Run `guild spool drain TASK-NNN` first** — an agent's log lives in a spool file until it is
+drained, so an undrained ticket reads as never-started and would be reset:
 - **Empty Work Log** → never started → `guild move TASK-NNN todo`.
 - **Final Work Log entry reports completion/failure** → the session died before the orchestrator
   recorded it → record the outcome now (materialize follow-ups, then move) without re-dispatching.

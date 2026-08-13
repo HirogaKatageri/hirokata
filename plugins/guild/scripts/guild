@@ -1,654 +1,222 @@
 #!/usr/bin/env bash
 #
-# guild — deterministic CLI for the Guild plugin's file-based board.
+# guild — deterministic CLI for the Guild plugin's board.
 #
-# Status is encoded by DIRECTORY, not a frontmatter field:
-#   .guild/requirements/{todo,in-progress,done}/REQ-NNN.md
-#   .guild/plans/{todo,in-progress,done}/PLAN-NNN.md   (+ PLAN-NNN/ slice dir alongside)
-#   .guild/tasks/{todo,in-progress,done,failed}/TASK-NNN.md
+# v5: the board is a Turso database, not a directory tree. Status is a COLUMN, IDs are
+# derived in SQL (`MAX(n) + 1`, in the same statement as the insert), and the cursor is
+# still derived (the in-progress task). Two storage modes, chosen at `guild init`:
 #
-# IDs are DERIVED from the filesystem (max existing + 1, archive included) — there is
-# no counter to maintain. The cursor (current task) is DERIVED (the in-progress task).
-# state.yaml holds only `last-checkin`.
+#   local  .guild/guild.db          via `tursodb -q -m list`   (default, no account)
+#   cloud  $TURSO_DATABASE_URL      via `turso db shell`       (opt-in)
 #
-# All commands operate relative to the guild root (default: ./.guild, override $GUILD_DIR).
+# What git carries: .guild/config.yaml, .guild/journal.ndjson, .guild/export/.
+# What it does not: .guild/guild.db (derived state; `guild rebuild` replays it).
+#
+# This file is the DISPATCHER ONLY. Every command lives in a cmd_* function in one of
+# the five modules under lib/, which define functions and nothing else:
+#
+#   lib/db.sh         driver, config, SQL literals, JSON escaping, the spool
+#   lib/journal.sh    the append-only change log: append, preflight, recover, sync,
+#                     rebuild, compact
+#   lib/artifacts.sh  new / read / meta / status / move / retitle / list / next /
+#                     batch / slice / next-id / log / finding / spool drain / checkin
+#   lib/render.sh     board, export (markdown + JSON)
+#   lib/init.sh       init, v4 archival, docs/qa carry-over, the journal wrappers
+#
+# THERE IS NO `guild path`. In v4 the path WAS the storage, so an agent could resolve a
+# path and Edit it. In v5 only requirements get an export file, that file is generated
+# output, and `guild export` rebuilds the whole directory on every run — so a returned
+# path was a place where an agent's work went to be silently discarded. Reads go through
+# `guild read` / `guild meta` / `guild slice`; writes go through `guild log`,
+# `guild finding`, `guild retitle`, `guild move`, `guild checkin`.
 #
 # Usage: guild <command> [args]   —   run `guild help` for the full list.
 
 set -euo pipefail
 
-GUILD_DIR="${GUILD_DIR:-.guild}"
+# ---- locate ourselves ------------------------------------------------------------
+#
+# Skills invoke this as ${CLAUDE_PLUGIN_ROOT}/scripts/guild from an arbitrary cwd, and
+# a user may well have symlinked it onto $PATH. Resolve the symlink chain by hand:
+# macOS has no `readlink -f`, and `realpath` is not guaranteed either.
 
-# ---- artifact-type configuration -------------------------------------------------
-
-# kind -> directory name
-kind_dir() {
-  case "$1" in
-    req|REQ)   echo "requirements" ;;
-    task|TASK) echo "tasks" ;;
-    plan|PLAN) echo "plans" ;;
-    *) echo "guild: unknown kind '$1'" >&2; return 1 ;;
+_guild_self="${BASH_SOURCE[0]:-$0}"
+while [ -L "$_guild_self" ]; do
+  _guild_dir="$(cd -P "$(dirname "$_guild_self")" && pwd)"
+  _guild_self="$(readlink "$_guild_self")"
+  case "$_guild_self" in
+    /*) ;;
+    *) _guild_self="$_guild_dir/$_guild_self" ;;
   esac
-}
+done
+GUILD_SCRIPT_DIR="$(cd -P "$(dirname "$_guild_self")" && pwd)"
+unset _guild_self _guild_dir
 
-# kind -> ID prefix
-kind_prefix() {
-  case "$1" in
-    req|REQ)   echo "REQ" ;;
-    task|TASK) echo "TASK" ;;
-    plan|PLAN) echo "PLAN" ;;
-    *) echo "guild: unknown kind '$1'" >&2; return 1 ;;
-  esac
-}
-
-# kind -> valid statuses (space separated)
-kind_statuses() {
-  case "$1" in
-    req|REQ)   echo "todo in-progress done" ;;
-    task|TASK) echo "todo in-progress done failed" ;;
-    plan|PLAN) echo "todo in-progress done" ;;
-    *) echo "guild: unknown kind '$1'" >&2; return 1 ;;
-  esac
-}
-
-# ID string (e.g. TASK-001) -> kind token
-id_kind() {
-  case "$1" in
-    REQ-*)  echo "req" ;;
-    TASK-*) echo "task" ;;
-    PLAN-*) echo "plan" ;;
-    *) echo "guild: unrecognized id '$1'" >&2; return 1 ;;
-  esac
-}
-
-# ---- frontmatter helpers ---------------------------------------------------------
-
-# fm <file> <key> — print the frontmatter value for <key> (first match), stripped of
-# surrounding quotes/whitespace. Empty string if absent.
-fm() {
-  awk -v k="$2" '
-    BEGIN { infm = 0 }
-    /^---[ \t]*$/ { infm++; if (infm == 2) exit; next }
-    infm == 1 {
-      if ($0 ~ "^"k"[ \t]*:") {
-        sub("^"k"[ \t]*:[ \t]*", "")
-        gsub(/^["'\''[:space:]]+|["'\''[:space:]]+$/, "")
-        print
-        exit
-      }
-    }
-  ' "$1"
-}
-
-# sval <file> <key> — read a top-level "key: value" from a plain YAML file (no
-# frontmatter fences, e.g. state.yaml). Empty string if absent.
-sval() {
-  awk -v k="$2" '
-    $0 ~ "^"k"[ \t]*:" {
-      sub("^"k"[ \t]*:[ \t]*", "")
-      gsub(/^["'\''[:space:]]+|["'\''[:space:]]+$/, "")
-      print
-      exit
-    }
-  ' "$1"
-}
-
-# ---- path resolution -------------------------------------------------------------
-
-# find_path <ID> — echo the path to the artifact wherever it lives (live dirs first,
-# then archive). Exit 1 if not found.
-find_path() {
-  local id="$1" kind dir prefix num statuses st p
-  kind="$(id_kind "$id")"
-  dir="$(kind_dir "$kind")"
-  statuses="$(kind_statuses "$kind")"
-  for st in $statuses; do
-    p="$GUILD_DIR/$dir/$st/$id.md"
-    [ -f "$p" ] && { echo "$p"; return 0; }
-  done
-  # archive: .guild/archive/<version>/<dir>/<ID>.md
-  if [ -d "$GUILD_DIR/archive" ]; then
-    p="$(find "$GUILD_DIR/archive" -type f -name "$id.md" -path "*/$dir/*" 2>/dev/null | head -n1)"
-    [ -n "$p" ] && { echo "$p"; return 0; }
+GUILD_LIB_DIR="$GUILD_SCRIPT_DIR/lib"
+for _guild_mod in db journal artifacts render init; do
+  if [ ! -f "$GUILD_LIB_DIR/$_guild_mod.sh" ]; then
+    printf 'guild: missing module %s/%s.sh — is the plugin checkout complete?\n' \
+      "$GUILD_LIB_DIR" "$_guild_mod" >&2
+    exit 1
   fi
+  # shellcheck source=/dev/null
+  . "$GUILD_LIB_DIR/$_guild_mod.sh"
+done
+unset _guild_mod
+
+# ---- retired v4 commands ---------------------------------------------------------
+#
+# v5 has no flat-file legacy format and no history import (§4, §11): a v4 board is
+# ARCHIVED to .guild/v4-archive/ by `guild init`, never parsed.
+#
+# `is-legacy` keeps working as a predicate rather than erroring, because the v4 skills
+# call it as `if "$GUILD" is-legacy; then "$GUILD" migrate; fi` — answering "no" is
+# both true and the safe branch. `migrate` says plainly what replaced it.
+
+cmd_is_legacy() {
   return 1
 }
 
-# status_of <ID> — echo the status (directory name) of an artifact. "archived" if in
-# the archive. Exit 1 if not found.
-status_of() {
-  local id="$1" p
-  p="$(find_path "$id")" || return 1
-  case "$p" in
-    "$GUILD_DIR/archive/"*) echo "archived" ;;
-    *) basename "$(dirname "$p")" ;;
-  esac
-}
-
-# ---- ID derivation ---------------------------------------------------------------
-
-# max_num <kind> — echo the highest numeric ID in use for <kind> across ALL status
-# dirs and the archive. 0 if none exist.
-max_num() {
-  local kind dir prefix
-  kind="$1"
-  dir="$(kind_dir "$kind")"
-  prefix="$(kind_prefix "$kind")"
-  {
-    find "$GUILD_DIR/$dir" -type f -name "$prefix-*.md" 2>/dev/null || true
-    [ -d "$GUILD_DIR/archive" ] && find "$GUILD_DIR/archive" -type f -name "$prefix-*.md" -path "*/$dir/*" 2>/dev/null || true
-  } | sed -E "s#.*/$prefix-0*([0-9]+)\.md#\1#" | sort -n | tail -n1 | grep -E '^[0-9]+$' || echo 0
-}
-
-# next_num <kind> — echo the next zero-padded 3-digit ID number for <kind>.
-next_num() {
-  local n
-  n="$(max_num "$1")"
-  printf '%03d\n' "$((n + 1))"
-}
-
-# ---- commands --------------------------------------------------------------------
-
-cmd_init() {
-  mkdir -p \
-    "$GUILD_DIR/requirements/todo" "$GUILD_DIR/requirements/in-progress" "$GUILD_DIR/requirements/done" \
-    "$GUILD_DIR/tasks/todo" "$GUILD_DIR/tasks/in-progress" "$GUILD_DIR/tasks/done" "$GUILD_DIR/tasks/failed" \
-    "$GUILD_DIR/plans/todo" "$GUILD_DIR/plans/in-progress" "$GUILD_DIR/plans/done" \
-    "$GUILD_DIR/docs" "$GUILD_DIR/qa" "$GUILD_DIR/reviews"
-  if [ ! -f "$GUILD_DIR/state.yaml" ]; then
-    printf 'last-checkin: %s\n' "${1:-null}" > "$GUILD_DIR/state.yaml"
-  fi
-  echo "Guild initialized at $GUILD_DIR"
-}
-
-cmd_path() { find_path "$1" || { echo "guild: $1 not found" >&2; return 1; }; }
-
-cmd_read() { local p; p="$(find_path "$1")" || { echo "guild: $1 not found" >&2; return 1; }; cat "$p"; }
-
-cmd_status() { status_of "$1" || { echo "guild: $1 not found" >&2; return 1; }; }
-
-cmd_next_id() { next_num "$1"; }
-
-# slice <PLAN-ID> <slug> — echo the path to a plan slice wherever the plan lives.
-cmd_slice() {
-  local plan="$1" slug="$2" pp dir
-  pp="$(find_path "$plan")" || { echo "guild: $plan not found" >&2; return 1; }
-  dir="$(dirname "$pp")/$plan"
-  # normalize slug -> slice-<slug>.md (accept either form)
-  case "$slug" in
-    slice-*) : ;;
-    *) slug="slice-$slug" ;;
-  esac
-  case "$slug" in
-    *.md) : ;;
-    *) slug="$slug.md" ;;
-  esac
-  echo "$dir/$slug"
-}
-
-# move <ID> <status> — move an artifact's file (and, for plans, its slice dir) into
-# the target status subdirectory. Validates the status against the kind.
-cmd_move() {
-  local id="$1" target="$2" kind dir statuses ok st src
-  kind="$(id_kind "$id")"
-  dir="$(kind_dir "$kind")"
-  statuses="$(kind_statuses "$kind")"
-  ok=0
-  for st in $statuses; do [ "$st" = "$target" ] && ok=1; done
-  [ "$ok" = 1 ] || { echo "guild: invalid status '$target' for $kind (allowed: $statuses)" >&2; return 1; }
-  src="$(find_path "$id")" || { echo "guild: $id not found" >&2; return 1; }
-  case "$src" in "$GUILD_DIR/archive/"*) echo "guild: $id is archived; refusing to move" >&2; return 1 ;; esac
-  mkdir -p "$GUILD_DIR/$dir/$target"
-  if [ "$src" = "$GUILD_DIR/$dir/$target/$id.md" ]; then echo "$src"; return 0; fi
-  mv "$src" "$GUILD_DIR/$dir/$target/$id.md"
-  # plans carry a sibling slice directory named after the plan ID
-  if [ "$kind" = "plan" ]; then
-    local slicedir; slicedir="$(dirname "$src")/$id"
-    [ -d "$slicedir" ] && mv "$slicedir" "$GUILD_DIR/$dir/$target/$id"
-  fi
-  echo "$GUILD_DIR/$dir/$target/$id.md"
-}
-
-# list <kind> [status] — list IDs of a kind, optionally filtered to one status.
-# Output per line, sorted by ID:
-#   tasks:            "<ID> <status> <agent> <requirement>"
-#   requirements/plans: "<ID> <status>"
-# The extra task columns let the orchestrator filter deterministically with awk,
-# e.g.  guild list task | awk '$3=="reviewer" && $4=="REQ-001"'
-cmd_list() {
-  local kind="$1" filter="${2:-}" dir prefix statuses st p id
-  dir="$(kind_dir "$kind")"
-  prefix="$(kind_prefix "$kind")"
-  statuses="$(kind_statuses "$kind")"
-  for st in $statuses; do
-    [ -n "$filter" ] && [ "$filter" != "$st" ] && continue
-    [ -d "$GUILD_DIR/$dir/$st" ] || continue
-    for p in "$GUILD_DIR/$dir/$st/$prefix-"*.md; do
-      [ -f "$p" ] || continue
-      id="$(basename "$p" .md)"
-      if [ "$prefix" = "TASK" ]; then
-        echo "$id $st $(fm "$p" agent) $(fm "$p" requirement)"
-      else
-        echo "$id $st"
-      fi
-    done
-  done | sort
-}
-
-# meta <ID> [field] — print an artifact's frontmatter. With a field name, print just
-# that value; with no field, print the whole frontmatter block (without the fences).
-# Cheaper than `guild read` when only metadata is needed (e.g. at dispatch).
-cmd_meta() {
-  local p
-  p="$(find_path "$1")" || { echo "guild: $1 not found" >&2; return 1; }
-  if [ -n "${2:-}" ]; then
-    fm "$p" "$2"
-  else
-    awk '/^---[ \t]*$/ { n++; next } n == 1 { print } n >= 2 { exit }' "$p"
-  fi
-}
-
-# batch <TASK-ID> — echo the task IDs that must dispatch together with this one: all
-# todo/in-progress tasks sharing its `parallel-group` AND `requirement`. A task with no
-# parallel-group prints just itself (a batch of one). Used by the orchestrator to expand
-# `guild next` into a concurrent developer batch.
-cmd_batch() {
-  local id="$1" p grp req
-  p="$(find_path "$id")" || { echo "guild: $id not found" >&2; return 1; }
-  grp="$(fm "$p" parallel-group)"
-  req="$(fm "$p" requirement)"
-  if [ -z "$grp" ]; then echo "$id"; return 0; fi
-  local q qid qgrp qreq
-  for q in "$GUILD_DIR/tasks/todo/"TASK-*.md "$GUILD_DIR/tasks/in-progress/"TASK-*.md; do
-    [ -f "$q" ] || continue
-    qid="$(basename "$q" .md)"
-    qgrp="$(fm "$q" parallel-group)"; qreq="$(fm "$q" requirement)"
-    [ "$qgrp" = "$grp" ] && [ "$qreq" = "$req" ] && echo "$qid"
-  done | sort -u
-}
-
-# next — echo the next actionable task as "<TASK-ID> <path>", or "none".
-# Rule: resume any in-progress task (lowest ID); else lowest-ID todo task; a `reviewer`
-# task is gated — only actionable when no other task for its requirement remains in
-# todo/ or in-progress/ (the per-REQ N/N review gate).
-cmd_next() {
-  local p id
-  # 1. resume in-progress (lowest ID; glob order is ID order for zero-padded IDs)
-  for p in "$GUILD_DIR/tasks/in-progress/"TASK-*.md; do
-    [ -f "$p" ] || continue
-    id="$(basename "$p" .md)"; echo "$id $p"; return 0
-  done
-  # 2. lowest-ID todo, honoring the review gate
-  for p in "$GUILD_DIR/tasks/todo/"TASK-*.md; do
-    [ -f "$p" ] || continue
-    id="$(basename "$p" .md)"
-    local agent req other_open=0 q qid qreq
-    agent="$(fm "$p" agent)"
-    if [ "$agent" = "reviewer" ]; then
-      req="$(fm "$p" requirement)"
-      # any OTHER task for this REQ still in todo/ or in-progress/ ?
-      for q in "$GUILD_DIR/tasks/todo/"TASK-*.md "$GUILD_DIR/tasks/in-progress/"TASK-*.md; do
-        [ -f "$q" ] || continue
-        qid="$(basename "$q" .md)"; [ "$qid" = "$id" ] && continue
-        qreq="$(fm "$q" requirement)"
-        [ "$qreq" = "$req" ] && { other_open=1; break; }
-      done
-      [ "$other_open" = 1 ] && continue
-    fi
-    echo "$id $p"; return 0
-  done
-  echo "none"
-}
-
-# Shared: emit one display line for a task file.
-_task_line() {
-  local p id title agent
-  p="$1"; id="$(basename "$p" .md)"
-  title="$(fm "$p" title)"; agent="$(fm "$p" agent)"
-  printf '  %s: %s (%s)\n' "$id" "$title" "$agent"
-}
-
-# board — render the live board by scanning the status directories.
-cmd_board() {
-  local p any
-  echo "Guild Board"
-  echo "==========="
-  echo
-
-  echo "In Progress:"
-  any=0
-  for p in "$GUILD_DIR/tasks/in-progress/"TASK-*.md; do
-    [ -f "$p" ] || continue; _task_line "$p"; any=1
-  done
-  [ "$any" = 0 ] && echo "  (none)"
-  echo
-
-  echo "Backlog:"
-  any=0
-  for p in "$GUILD_DIR/tasks/todo/"TASK-*.md; do
-    [ -f "$p" ] || continue; _task_line "$p"; any=1
-  done
-  [ "$any" = 0 ] && echo "  (none)"
-  echo
-
-  echo "Recently Completed:"
-  any=0
-  local done_files i count
-  done_files=( "$GUILD_DIR/tasks/done/"TASK-*.md )
-  count=0
-  for (( i=${#done_files[@]}-1; i>=0; i-- )); do
-    p="${done_files[i]}"
-    [ -f "$p" ] || continue
-    _task_line "$p"; any=1
-    count=$((count + 1)); [ "$count" -ge 20 ] && break
-  done
-  [ "$any" = 0 ] && echo "  (none)"
-
-  local fany=0
-  for p in "$GUILD_DIR/tasks/failed/"TASK-*.md; do
-    [ -f "$p" ] || continue
-    [ "$fany" = 0 ] && { echo; echo "Failed:"; fany=1; }
-    _task_line "$p"
-  done
-  echo
-
-  echo "Requirements:"
-  any=0
-  local rp rid rtitle rstatus total done q qreq qst
-  for rstatus in todo in-progress done; do
-    for rp in "$GUILD_DIR/requirements/$rstatus/"REQ-*.md; do
-      [ -f "$rp" ] || continue
-      rid="$(basename "$rp" .md)"; rtitle="$(fm "$rp" title)"
-      total=0; done=0
-      for qst in todo in-progress done failed; do
-        for q in "$GUILD_DIR/tasks/$qst/"TASK-*.md; do
-          [ -f "$q" ] || continue
-          qreq="$(fm "$q" requirement)"; [ "$qreq" = "$rid" ] || continue
-          total=$((total + 1))
-          [ "$qst" = "done" ] && done=$((done + 1))
-        done
-      done
-      printf '  %s: %s — %s (%s/%s done)\n' "$rid" "$rtitle" "$rstatus" "$done" "$total"
-      any=1
-    done
-  done
-  [ "$any" = 0 ] && echo "  (none)"
-
-  echo
-  printf 'Last check-in: %s\n' "$(sval "$GUILD_DIR/state.yaml" last-checkin)"
-}
-
-# ---- creation commands -----------------------------------------------------------
-
-# parse --flags into flag_<name> shell variables (dashes in the flag name become
-# underscores, e.g. --plan-slice -> $flag_plan_slice). Bash 3.2 compatible.
-parse_flags() {
-  local key
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --*)
-        key="${1#--}"
-        key="$(printf '%s' "$key" | tr '-' '_')"
-        shift
-        printf -v "flag_$key" '%s' "${1:-}"
-        [ $# -gt 0 ] && shift
-        ;;
-      *) shift ;;
-    esac
-  done
-}
-
-_today() { sval "$GUILD_DIR/state.yaml" last-checkin; }
-
-cmd_new() {
-  local sub="$1"; shift
-  parse_flags "$@"
-  case "$sub" in
-    req)  new_req ;;
-    task) new_task ;;
-    plan) new_plan ;;
-    *) echo "guild: unknown 'new' target '$sub' (req|task|plan)" >&2; return 1 ;;
-  esac
-}
-
-new_req() {
-  local title="${flag_title:-}" desc="${flag_desc:-}" date="${flag_date:-$(_today)}"
-  [ -n "$title" ] || { echo "guild: new req requires --title" >&2; return 1; }
-  local num id path
-  num="$(next_num req)"; id="REQ-$num"
-  mkdir -p "$GUILD_DIR/requirements/todo"
-  path="$GUILD_DIR/requirements/todo/$id.md"
-  cat > "$path" <<EOF
----
-id: $id
-title: "$title"
-created: $date
----
-
-# $title
-
-## Summary
-
-${desc:-_To be gathered by the product-owner._}
-
-## User Stories
-
-_To be gathered by the product-owner._
-
-## Technical Considerations
-
-_To be determined._
-
-## Out of Scope
-
-_To be determined._
-EOF
-  echo "$id $path"
-}
-
-new_task() {
-  local title="${flag_title:-}" agent="${flag_agent:-}" req="${flag_req:-}" \
-        plan="${flag_plan:-}" slice="${flag_plan_slice:-}" date="${flag_date:-$(_today)}" \
-        objective="${flag_objective:-}" pgroup="${flag_parallel_group:-}"
-  [ -n "$title" ]  || { echo "guild: new task requires --title" >&2; return 1; }
-  [ -n "$agent" ]  || { echo "guild: new task requires --agent" >&2; return 1; }
-  [ -n "$req" ]    || { echo "guild: new task requires --req" >&2; return 1; }
-  local num id path
-  num="$(next_num task)"; id="TASK-$num"
-  mkdir -p "$GUILD_DIR/tasks/todo"
-  path="$GUILD_DIR/tasks/todo/$id.md"
-  {
-    echo "---"
-    echo "id: $id"
-    echo "title: \"$title\""
-    echo "agent: $agent"
-    echo "requirement: $req"
-    if [ -n "$plan" ]; then echo "plan: $plan"; else echo "plan: null"; fi
-    [ -n "$slice" ] && echo "plan-slice: $slice"
-    [ -n "$pgroup" ] && echo "parallel-group: $pgroup"
-    echo "created: $date"
-    echo "---"
-    echo
-    echo "## Objective"
-    echo
-    echo "${objective:-$title}"
-    echo
-    echo "## Context"
-    echo
-    echo "- Requirement: $req"
-    [ -n "$plan" ] && echo "- Plan: $plan"
-    [ -n "$slice" ] && echo "- Plan slice: $slice"
-    echo
-    echo "## Acceptance Criteria"
-    echo
-    echo "- [ ] Task completed successfully"
-    echo
-    echo "## Work Log"
-    echo
-    echo "## Follow-up Tasks"
-    echo
-  } > "$path"
-  echo "$id $path"
-}
-
-new_plan() {
-  local title="${flag_title:-}" req="${flag_req:-}" task="${flag_task:-}" date="${flag_date:-$(_today)}"
-  [ -n "$title" ] || { echo "guild: new plan requires --title" >&2; return 1; }
-  [ -n "$req" ]   || { echo "guild: new plan requires --req" >&2; return 1; }
-  local num id path
-  num="$(next_num plan)"; id="PLAN-$num"
-  mkdir -p "$GUILD_DIR/plans/todo/$id"
-  path="$GUILD_DIR/plans/todo/$id.md"
-  cat > "$path" <<EOF
----
-id: $id
-title: "$title"
-requirement: $req
-task: ${task:-null}
-created: $date
----
-
-# $title
-
-## Architecture Overview
-
-_High-level design decisions._
-
-## Implementation Tasks
-
-_Specific developer tasks — transcribed into the originating task's Follow-up Tasks._
-
-## Technical Decisions
-
-_Key choices and rationale._
-
-## Risks
-
-_Identified risks and mitigations._
-EOF
-  echo "$id $path"
-}
-
-# ---- migration -------------------------------------------------------------------
-
-# is the guild in the legacy (pre-status-dir) format?
-is_legacy() {
-  [ -f "$GUILD_DIR/BOARD.md" ] && return 0
-  local d
-  for d in requirements tasks plans; do
-    if ls "$GUILD_DIR/$d/"*.md >/dev/null 2>&1; then return 0; fi
-  done
-  return 1
-}
-
-# migrate one kind's flat files into status subdirs, stripping the `status:` field.
-_migrate_kind() {
-  local kind="$1" dir prefix default="$2" p id st target slicedir
-  dir="$(kind_dir "$kind")"
-  prefix="$(kind_prefix "$kind")"
-  for p in "$GUILD_DIR/$dir/"*.md; do
-    [ -f "$p" ] || continue
-    id="$(basename "$p" .md)"
-    st="$(fm "$p" status)"
-    case "$st" in
-      draft|"") target="$default" ;;
-      todo|to-do) target="todo" ;;
-      in-progress|in_progress) target="in-progress" ;;
-      done) target="done" ;;
-      failed) target="failed" ;;
-      *) target="$default" ;;
-    esac
-    # tasks are the only kind with failed/; clamp others
-    [ "$kind" != "task" ] && [ "$target" = "failed" ] && target="done"
-    mkdir -p "$GUILD_DIR/$dir/$target"
-    # strip the status: line, then place in the target dir
-    sed '/^status:[[:space:]]/d' "$p" > "$GUILD_DIR/$dir/$target/$id.md"
-    rm -f "$p"
-    if [ "$kind" = "plan" ]; then
-      slicedir="$GUILD_DIR/$dir/$id"
-      [ -d "$slicedir" ] && mv "$slicedir" "$GUILD_DIR/$dir/$target/$id"
-    fi
-  done
-}
-
-# migrate — convert a legacy flat-file guild into the status-directory layout.
 cmd_migrate() {
-  local lc
-  lc="$(sval "$GUILD_DIR/state.yaml" last-checkin)"
-  cmd_init "${lc:-null}" >/dev/null
-  _migrate_kind req  todo
-  _migrate_kind task todo
-  _migrate_kind plan todo
-  [ -f "$GUILD_DIR/BOARD.md" ] && rm -f "$GUILD_DIR/BOARD.md"
-  printf 'last-checkin: %s\n' "${lc:-null}" > "$GUILD_DIR/state.yaml"
-  echo "Migration complete — status is now encoded by directory."
+  die "guild: 'migrate' was retired in v5 — there is no history import.
+'guild init' MOVES an existing v4 board to .guild/v4-archive/ (untouched, still in
+git) and carries over only .guild/docs/ and .guild/qa/. Re-enter unfinished work with
+the guild:new-requirement skill, reading the archived plan for the details."
 }
 
 # ---- help ------------------------------------------------------------------------
 
 cmd_help() {
   cat <<'EOF'
-guild — deterministic CLI for the Guild file-based board (status = directory).
+guild — deterministic CLI for the Guild board (a Turso database; status is a column).
 
 Setup:
-  guild init [DATE]              Create the .guild status-dir layout + state.yaml
-  guild is-legacy                Exit 0 if the guild uses the old flat-file format
-  guild migrate                  Convert a legacy flat-file guild to status dirs
+  guild init [--mode local] [--url-env NAME] [--token-env NAME] [--yes] [DATE]
+                                 Create config.yaml, schema, journal, spool/, export/,
+                                 docs/, qa/, reviews/; archive an existing v4 board
+                                 (moved, never deleted); carry over docs/ + qa/.
+                                 Cloud mode is NOT yet verified and is refused.
 
-Create (templates, auto-derived IDs):
-  guild new req  --title T [--desc D] [--date YYYY-MM-DD]
-  guild new task --title T --agent A --req REQ-NNN [--plan PLAN-NNN]
-                 [--plan-slice slug] [--parallel-group LABEL] [--objective O] [--date YYYY-MM-DD]
-  guild new plan --title T --req REQ-NNN [--task TASK-NNN] [--date YYYY-MM-DD]
-      Each prints "<ID> <path>".
+Create (templates, IDs derived in SQL) — each prints the new ID:
+  guild new req  --title T [--desc D | --body B] [--date YYYY-MM-DD]
+  guild new task --title T --agent A --req REQ-NNN [--plan PLAN-NNN] [--plan-slice slug]
+                 [--parallel-group LABEL] [--objective O | --body B] [--date YYYY-MM-DD]
+  guild new plan --title T --req REQ-NNN [--desc D | --body B] [--task TASK-NNN]
+                 [--date YYYY-MM-DD]
+      --desc / --objective fill one section of the template; --body REPLACES it, and is
+      how a product-owner or architect authors a whole document now that there is no file.
 
-Resolve / read:
-  guild path  <ID>              Print the file path (searches all statuses + archive)
-  guild read  <ID>              Print the file contents
+Read (the v4 `path` command is REMOVED — nothing hands out a writable path now):
+  guild read  <ID>              Render the artifact as markdown, from the database
   guild meta  <ID> [field]      Print the frontmatter (or one field) — cheaper than read
-  guild status <ID>             Print the status (directory) the artifact is in
-  guild slice <PLAN-ID> <slug>  Print the path to a plan slice
+  guild status <ID>             Print the artifact's status
+  guild slice <PLAN-ID> <slug>  Print a plan slice's body
   guild next-id <req|task|plan> Print the next available ID number (NNN)
 
-Status transitions (status = which directory the file lives in):
-  guild move <ID> <status>      Move artifact to todo|in-progress|done[|failed]
-                                (plans carry their slice dir along)
+Orchestrator writes (agents never move their own work):
+  guild move    <ID> <status>   Set status to todo|in-progress|done[|failed]
+  guild retitle <ID> "New title"
+  guild checkin [YYYY-MM-DD]    Record today's check-in (default: today, UTC)
+
+Agent writes — one appended line, no database connection (§2.4):
+  guild log     <TASK-ID> --agent A --entry "what you did"
+  guild finding <TASK-ID> --reviewer R --severity critical|major|minor|nit
+                          --summary S [--detail D] [--file F] [--line N]
+  guild spool drain <TASK-ID>   Orchestrator: fold a task's spool into the database
 
 Query:
   guild list <req|task|plan> [status]   List "<ID> <status>" lines (tasks add "<agent> <req>"
                                         columns — filter with awk, e.g. $3=="reviewer" && $4=="REQ-001")
-  guild next                            Print next actionable task "<TASK-ID> <path>" or "none"
+  guild next                            Print the next actionable "<TASK-ID>" or "none"
   guild batch <TASK-ID>                 Print the dev tickets that dispatch together (parallel-group)
   guild board                           Render the live board
 
+Durability:
+  guild export [--json]         Regenerate .guild/export/*.md, or dump state as JSON
+  guild rebuild                 Replay .guild/journal.ndjson into a fresh database
+  guild journal compact [--force]  Snapshot current state as a new baseline journal
+  guild journal recover         Fold .guild/journal.pending back into the journal
+  guild journal sync [table...] Journal un-journaled work_log/review_finding/event rows
+
 Environment:
-  GUILD_DIR   Guild root directory (default: .guild)
+  GUILD_DIR     Guild root directory (default: .guild)
+  GUILD_ACTOR   Who mutations are attributed to (default: orchestrator)
+  GUILD_SCHEMA  Override the path to schema.sql
+
+Storage needs the TursoDB engine shell (local mode, the default and the only verified one):
+  tursodb   curl --proto '=https' --tlsv1.2 -LsSf \
+              https://github.com/tursodatabase/turso/releases/latest/download/turso_cli-installer.sh | sh
 EOF
 }
 
 # ---- dispatch --------------------------------------------------------------------
+#
+# `init` runs BEFORE db_load_config: it is the command that creates config.yaml, and it
+# seeds the driver globals itself so the binary check reports the mode being written
+# rather than a default read back from a file that does not exist yet.
 
 main() {
+  local cmd
   [ $# -ge 1 ] || { cmd_help; return 1; }
-  local cmd="$1"; shift
+  cmd="$1"
+  shift
+
   case "$cmd" in
-    init)     cmd_init "$@" ;;
-    is-legacy) is_legacy ;;
-    migrate)  cmd_migrate "$@" ;;
-    new)      cmd_new "$@" ;;
-    path)     cmd_path "$@" ;;
-    read)     cmd_read "$@" ;;
-    meta)     cmd_meta "$@" ;;
-    status)   cmd_status "$@" ;;
-    slice)    cmd_slice "$@" ;;
-    move)     cmd_move "$@" ;;
-    list)     cmd_list "$@" ;;
-    next)     cmd_next "$@" ;;
-    batch)    cmd_batch "$@" ;;
-    next-id)  cmd_next_id "$@" ;;
-    board)    cmd_board "$@" ;;
-    help|-h|--help) cmd_help ;;
-    *) echo "guild: unknown command '$cmd' (try 'guild help')" >&2; return 1 ;;
+    help | -h | --help)
+      cmd_help
+      return 0
+      ;;
+    init)
+      cmd_init "$@"
+      return 0
+      ;;
+  esac
+
+  db_load_config
+
+  case "$cmd" in
+    new)       cmd_new "$@" ;;
+    read)      cmd_read "$@" ;;
+    meta)      cmd_meta "$@" ;;
+    status)    cmd_status "$@" ;;
+    slice)     cmd_slice "$@" ;;
+    next-id)   cmd_next_id "$@" ;;
+    move)      cmd_move "$@" ;;
+    retitle)   cmd_retitle "$@" ;;
+    checkin)   cmd_checkin "$@" ;;
+    log)       cmd_log "$@" ;;
+    finding)   cmd_finding "$@" ;;
+    spool)     cmd_spool "$@" ;;
+    list)      cmd_list "$@" ;;
+    next)      cmd_next "$@" ;;
+    batch)     cmd_batch "$@" ;;
+    board)     cmd_board "$@" ;;
+    export)    cmd_export "$@" ;;
+    rebuild)   cmd_rebuild "$@" ;;
+    journal)   cmd_journal "$@" ;;
+    is-legacy) cmd_is_legacy "$@" ;;
+    migrate)   cmd_migrate "$@" ;;
+    path)
+      # Removed, not renamed — and it must say so, because thirteen v4 call sites used
+      # to Edit the file it named. A bare "unknown command" would read as a typo.
+      die "guild: 'path' was removed in v5 — there is no writable file behind an ID.
+
+In v4 the path WAS the storage. In v5 the board is a database; only requirements get an
+export file, and 'guild export' regenerates that whole directory, so anything Edited
+there is discarded on the next export.
+
+  read it       guild read <ID>            (the rendered document)
+                guild meta <ID> [field]    (just the frontmatter)
+                guild slice <PLAN-ID> <slug>
+  write it      guild log <TASK-ID> --agent A --entry '...'
+                guild finding <TASK-ID> --reviewer R --severity S --summary '...'
+                guild retitle <ID> 'New title'
+                guild move <ID> <status>"
+      ;;
+    *)
+      printf "guild: unknown command '%s' (try 'guild help')\n" "$cmd" >&2
+      return 1
+      ;;
   esac
 }
 

@@ -4,17 +4,18 @@ description: >
   This skill should be used when the user asks to "cut a release", "release the
   guild", "ship it", "create a release", "tag a version", "publish a release",
   "guild release", or wants to finalize completed requirements into a versioned
-  release. Renames CHANGELOG Unreleased to a version, archives completed REQs,
-  and creates an annotated git tag. Does not push.
+  release. Renames CHANGELOG Unreleased to a version, snapshots completed REQs
+  from the board export, and creates an annotated git tag. Does not push.
 version: 2.0.0
 user-invocable: true
 ---
 
 # Guild Release — Archive and Tag a Version
 
-Finalize completed guild requirements into a versioned release: stamp the `CHANGELOG.md` Unreleased section with a version, move completed requirement artifacts into a dated archive, and create an annotated git tag.
+Finalize completed guild requirements into a versioned release: stamp the `CHANGELOG.md` Unreleased section with a version, snapshot the completed requirements from the board export into a dated release directory, and create an annotated git tag.
 
-Status is encoded by the subdirectory an artifact lives in — there is **no `status:` frontmatter field**. All board lookups and moves go through the guild CLI. Bind it once and reuse:
+Status is a **column** in the guild database — there are no status subdirectories and no ticket
+files. All board lookups and moves go through the guild CLI. Bind it once and reuse:
 ```bash
 GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
 ```
@@ -22,7 +23,7 @@ GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
 ## Arguments
 
 - `--dry-run` — print the full plan without making any changes
-- `--only REQ-NNN[,REQ-MMM]` — release only the named requirements (default: all requirements in `.guild/requirements/done/` since last release)
+- `--only REQ-NNN[,REQ-MMM]` — release only the named requirements (default: every `done` requirement not named in a previous release snapshot)
 
 ## Steps
 
@@ -32,11 +33,11 @@ Run in parallel:
 - `git rev-parse --is-inside-work-tree` — confirm git repo
 - `git status --short` — check for uncommitted changes
 - `git tag --list --sort=-v:refname` — list existing tags
-- Read `.guild/state.yaml` — confirm the guild exists
+- Read `.guild/config.yaml` — confirm the guild exists (v5 has no `state.yaml`)
 
 Stop conditions:
 - Not a git repo → `Not inside a git repository. Guild release requires git.`
-- No `.guild/state.yaml` → `No guild found. Nothing to release.`
+- No `.guild/config.yaml` → `No guild found. Nothing to release.`
 - Uncommitted changes → ask:
   ```
   You have uncommitted changes. A release should be a clean point in history.
@@ -49,7 +50,8 @@ Stop conditions:
 Find requirements to include:
 
 - If `--only REQ-NNN,...` provided: use exactly those.
-- Otherwise: list the done requirements with `"$GUILD" list req done` — include every requirement in `.guild/requirements/done/` that is NOT already present in any `.guild/archive/*/requirements/` directory.
+- Otherwise: list the done requirements with `"$GUILD" list req done` — include every one that is
+  NOT already listed in a previous release snapshot under `.guild/releases/*/RELEASE.md`.
 
 If the resulting set is empty, stop with:
 ```
@@ -69,14 +71,14 @@ For each requirement in scope:
 1. Find all its tasks with the awk filter above.
 
 2. **Warn (do not block)** if ANY task for an included requirement is:
-   - in `.guild/tasks/failed/` — these are **user-waived** (the user chose "skip" when the task
-     failed; the waiver is noted in the ticket's Work Log). List them and ask:
+   - `failed` — these are **user-waived** (the user chose "skip" when the task failed; the waiver
+     is noted in the ticket's Work Log). List them and ask:
      ```
      These tasks for included requirements were waived (failed, user chose not to retry):
        TASK-NNN: {title}
      The release will note them. Continue? (yes / no)
      ```
-   - in `.guild/tasks/in-progress/` or `.guild/tasks/todo/` → list them and ask:
+   - `in-progress` or `todo` → list them and ask:
      ```
      These tasks for included requirements are not yet done:
        TASK-NNN: {title} ({status})
@@ -149,46 +151,65 @@ Transform `CHANGELOG.md`:
 
    The new `## [Unreleased]` section is deliberately empty — ready for future work.
 
-### 7. Archive Requirements
+### 7. Snapshot the Released Requirements
 
-Create archive directory `.guild/archive/{version}/` with subdirectories `requirements/`, `plans/`, `tasks/`, `reviews/`.
+> **ARCHIVING IS PENDING A LATER STAGE — this step no longer moves anything.**
+>
+> v4 archived a release by moving `.guild/requirements/done/REQ-NNN.md` and friends into
+> `.guild/archive/{version}/`. Those files do not exist in v5: the board is a database, status is a
+> column, and there is no `guild archive` and no `guild delete` in Stage 1. A file-moving step here
+> would silently do nothing (the `rm`/`mv` targets are absent) while reporting that it archived N
+> requirements — which is worse than not running at all.
+>
+> What replaces it, and what is deferred:
+> - **Replaced now:** the release snapshot below, taken from `guild export`. That export is
+>   markdown, is committed, and is exactly the PR-reviewable record the archive used to be.
+> - **Deferred:** actually retiring a released requirement from the live board. Until a later
+>   stage adds that, a `done` requirement simply stays `done` on the board. It does not block
+>   anything — `guild next` only ever looks at open tasks — it just keeps appearing in
+>   `guild board`'s Requirements list.
 
-File moves come FROM the status subdirectories. Use `"$GUILD" path <ID>` to locate an artifact wherever it currently lives rather than hardcoding a status dir.
+Regenerate the export and copy it into a release snapshot directory. `guild export` rebuilds
+`.guild/export/` wholesale from current state, so it is a true snapshot of the moment:
 
-For each requirement in scope:
+```bash
+"$GUILD" export
+mkdir -p ".guild/releases/{version}"
+for req in {the REQs in scope}; do
+  cp ".guild/export/$req.md" ".guild/releases/{version}/$req.md"
+  if [ -f ".guild/reviews/$req.md" ]; then
+    cp ".guild/reviews/$req.md" ".guild/releases/{version}/$req.review.md"
+  fi
+done
+```
 
-1. Move the done requirement → archive:
-   `.guild/requirements/done/REQ-NNN.md` → `.guild/archive/{version}/requirements/REQ-NNN.md`
-2. For each plan with matching `requirement: REQ-NNN` in its frontmatter (glob `.guild/plans/*/PLAN-*.md` and read frontmatter, or resolve with `"$GUILD" path PLAN-NNN`):
-   - Move `.guild/plans/<status>/PLAN-NNN.md` → `.guild/archive/{version}/plans/PLAN-NNN.md`
-   - Move the sibling slice directory `.guild/plans/<status>/PLAN-NNN/` (if it exists) → `.guild/archive/{version}/plans/PLAN-NNN/` — the slice dir sits beside the overview in the same status dir.
-3. For each done task with matching `requirement: REQ-NNN` (glob `.guild/tasks/done/TASK-*.md` and read frontmatter):
-   - Move `.guild/tasks/done/TASK-NNN.md` → `.guild/archive/{version}/tasks/TASK-NNN.md`
-4. If `.guild/reviews/REQ-NNN.md` exists:
-   - Move it → `.guild/archive/{version}/reviews/REQ-NNN.md`
+Each exported REQ file already inlines that requirement's plans, tasks, work logs and review
+findings — so the snapshot carries everything the v4 archive did, in one file per requirement,
+without moving anything out from under the live board.
 
-Leave any `todo` / `in-progress` / `failed` tasks in place (their files stay in `.guild/tasks/<status>/`).
+**Never snapshot `.guild/docs/`** — the knowledge base is evergreen. Researcher findings persist
+across releases so future architects and researchers can reuse them.
 
-**Never archive `.guild/docs/`** — the knowledge base is evergreen. Researcher findings persist across releases so future architects and researchers can reuse them. Docs are not versioned alongside releases.
+**Never snapshot `.guild/qa/`** — the QA discipline's charter, ledger, regression manifest,
+sessions and missions are evergreen and span releases. The standing "Product QA & E2E Regression"
+umbrella requirement stays `in-progress` and is never included in a release.
 
-**Never archive `.guild/qa/`** — the QA discipline's charter, ledger, regression
-manifest, sessions, and missions are evergreen and span releases. The standing
-"Product QA & E2E Regression" umbrella requirement stays `in-progress` and is
-never included in a release.
+### 8. Write the Release Record
 
-### 8. Snapshot Board State
+IDs are derived in SQL (`MAX(n) + 1`) and are never reused, so nothing has to be reset or carried
+across a release. `last-checkin` is a database row written only by `"$GUILD" checkin` — do NOT
+touch it here.
 
-There are no ID counters in the new model — IDs are derived from the filesystem (`max(existing across all status dirs + archive) + 1`) and stay continuous across releases because archived files keep their IDs. `state.yaml` holds only `last-checkin`; do NOT touch it here.
-
-Write `.guild/archive/{version}/STATE-snapshot.md` recording the release and the requirements it covers. Optionally capture the highest ID per kind at release time as `"$GUILD" next-id <kind>` minus 1 (these are derived, not stored counters); omit them if you prefer:
+Write `.guild/releases/{version}/RELEASE.md`. This file is also what Step 2 reads back to decide
+what has already been released, so the REQ IDs must appear in it verbatim:
 
 ```markdown
 ---
 released: {today's date}
 version: {version}
-highest-req-at-release: {next-id req - 1}
-highest-task-at-release: {next-id task - 1}
-highest-plan-at-release: {next-id plan - 1}
+highest-req-at-release: {`guild next-id req` - 1}
+highest-task-at-release: {`guild next-id task` - 1}
+highest-plan-at-release: {`guild next-id plan` - 1}
 requirements:
   - REQ-NNN: {title}
   - REQ-MMM: {title}
@@ -196,17 +217,19 @@ requirements:
 
 # Release {version} Snapshot
 
-Requirements included in this release are archived alongside this file.
-IDs are derived from the filesystem (status dirs + archive) and remain
-continuous across releases — there are no counters to reset.
+Each requirement in this release is captured beside this file as `REQ-NNN.md`, exported from the
+board at release time with `guild export` — plans, tasks, work logs and review findings inlined.
+
+The requirements themselves remain on the live board as `done`. v5 has no archive command yet;
+retiring released requirements from the board is pending a later stage.
+
+IDs are derived in SQL and are never reused, so they remain continuous across releases.
 ```
 
 ### 9. No Board Table to Update
 
-There is no `BOARD.md`. Once a released requirement's REQ file is moved into the archive (step 7), it
-no longer appears in the live requirements view (`guild board` scans the status dirs) — nothing else
-to update. Leave the completed task files for that requirement archived in step 7; any unfinished
-tasks stay in `.guild/tasks/<status>/`.
+There is no `BOARD.md` — `"$GUILD" board` renders live from the database. Released requirements
+stay on it as `done` (see the note in step 7); nothing here edits board state.
 
 ### 10. Create Git Tag
 
@@ -230,7 +253,9 @@ EOF
 
 Do NOT push. Do NOT pass `--no-verify`.
 
-If pre-commit hooks fail, surface the error and stop. The archive moves have already happened on disk — instruct the user to resolve the hook issue and commit manually.
+If pre-commit hooks fail, surface the error and stop. The snapshot files have already been written
+— instruct the user to resolve the hook issue and commit manually. Nothing was moved or deleted, so
+re-running the release after fixing the hook is safe.
 
 ### 11. Report Result
 
@@ -239,10 +264,11 @@ Released {version}
 ==================
 
 Changelog: CHANGELOG.md (new [{version}] section added)
-Archived: .guild/archive/{version}/
-  {N} requirement(s)
-  {N} plan(s)
-  {N} task(s)
+Snapshot: .guild/releases/{version}/
+  {N} requirement(s), exported with plans, tasks, work logs and findings inlined
+
+  Note: released requirements stay on the live board as `done` — v5 has no
+  archive command yet, so nothing was moved off the board.
 
 Git:
   Commit {short-hash}: chore(release): {version}
@@ -268,8 +294,10 @@ CHANGELOG.md changes:
   ## [Unreleased] → ## [{version}] - {today's date}
   New [Unreleased] section would be created empty
 
-Files to move:
-  .guild/requirements/done/REQ-NNN.md → .guild/archive/{version}/requirements/REQ-NNN.md
+Files to write (nothing is moved or deleted):
+  .guild/releases/{version}/REQ-NNN.md        (from `guild export`)
+  .guild/releases/{version}/REQ-NNN.review.md (if a review report exists)
+  .guild/releases/{version}/RELEASE.md
   ...
 
 Git actions:
@@ -281,19 +309,22 @@ Warnings:
   {any warnings from the pre-release gate}
 ```
 
-Do not create files, move anything, or run any git commands.
+Do not create files or run any git commands. (Note that `--dry-run` must NOT run
+`"$GUILD" export` either — the export rebuilds `.guild/export/` on disk.)
 
 ## Rules
 
 - **Never push** — the user decides when to push commits and tags
 - **Never skip hooks** — do not pass `--no-verify`
-- **IDs are derived, not counters** — there is nothing to reset; archived files keep their IDs so the sequence stays continuous
-- **Never delete files** — archive (move) only
+- **IDs are derived, not counters** — derived in SQL as `MAX(n) + 1` and never reused, so nothing is reset and the sequence stays continuous
+- **Never delete or move board state** — a release only ever COPIES the export into a snapshot
+- **Archiving is deferred** — released requirements stay `done` on the live board; v5 has no
+  `guild archive`, and a step that pretended to move files would report work it did not do
 - **CHANGELOG.md lives at repo root** — not inside `.guild/`
-- **`.guild/docs/` is evergreen** — never archive or touch the knowledge base during a release
-- **`.guild/reviews/REQ-NNN.md` archives alongside its requirement** — unlike `docs/`, review
-  reports are per-requirement history, not cross-cutting knowledge
-- **Pre-release gate only warns, never blocks** — user-waived (`failed/`) and not-yet-done tasks
+- **`.guild/docs/` is evergreen** — never snapshot or touch the knowledge base during a release
+- **`.guild/reviews/REQ-NNN.md` is COPIED into the snapshot** — unlike `docs/`, review reports are
+  per-requirement history, not cross-cutting knowledge. The original stays where it is.
+- **Pre-release gate only warns, never blocks** — user-waived (`failed`) and not-yet-done tasks
   warn and ask; there's no automatic-fix-loop escalation token to block on anymore
-- **In-progress tasks stay on the board** — they are not included in the archive
+- **In-progress tasks stay on the board** — they are not included in the snapshot
 - **One commit, one tag** — both are created atomically at step 10

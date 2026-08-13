@@ -151,10 +151,119 @@ Three consequences worth designing around:
 1. **One round trip per command.** In cloud mode every shell invocation is a network call.
    Commands must compose all their SQL into a single `db_exec` — `guild board` issues one
    query returning one result set, not eight. A hard rule, not an optimization.
-2. **Non-interactive SQL on stdin works** — confirmed by the guild master against a real
-   `tursodb` install, though the manual does not spell it out. `db_exec` above is therefore the
-   design, and the `turso dev --db-file` background-server fallback is not needed. The
+2. **Non-interactive SQL on stdin works — verified.** Executed against `tursodb 0.7.2`:
+
+   ```
+   $ printf "CREATE TABLE t(a TEXT, b INT) STRICT;
+             INSERT INTO t VALUES('it''s',1);
+             SELECT a,b FROM t;" | tursodb -q -m list /tmp/x.db
+   it's|1
+   ```
+
+   Confirms three things at once: stdin execution, **pipe-separated output** from `-m list`
+   (so row parsing splits on `|`), and `''` quote escaping. `db_exec` above is therefore the
+   design; the `turso dev --db-file` background-server fallback is not needed and the
    no-daemon non-goal holds.
+
+   Note the parsing consequence: since rows are `|`-separated, any **text field that can itself
+   contain a pipe** — titles, work-log entries, review findings — cannot be parsed positionally
+   from a naive `SELECT a, b`. Emit such fields last, or `replace()` the separator server-side,
+   or select them one at a time. This is a real footgun and the reason `-m list` output should
+   never be split with a bare `cut -d'|'` on a query that includes free text.
+
+### 2.2.1 Free text must travel as hex — the statement-splitter trap
+
+Found the hard way, during Stage 1 implementation. **`tursodb`'s stdin script splitter ends a
+statement at a `;` that terminates a line, even inside an open string literal:**
+
+```sql
+INSERT INTO t VALUES('code:
+    const x = 1;        -- ← the splitter ends the statement HERE
+    doThing();
+done');
+→ × non-terminated literal
+```
+
+A semicolon *inline* (`'has; semicolon'`) is fine. It is specifically a semicolon at
+end-of-line inside a multi-line literal. Since requirement bodies and plan slices routinely
+contain code fragments, this fires in **ordinary use**, not just adversarial input — and it
+had been failing silently, with the error swallowed and empty stderr.
+
+**The rule: every free-text value crosses into SQL as a hex blob cast to text.**
+
+> **Caveat found later, during implementation review — `CAST(x'…' AS TEXT)` is byte-exact
+> only for valid UTF-8.** The two engines diverge on invalid bytes, verified directly:
+>
+> | input `caf\xe9 \xff\xfe bad` | result |
+> |---|---|
+> | `tursodb 0.7.2` | `636166`**`EFBFBD`**`20`**`EFBFBDEFBFBD`**`20626164` — replaced with U+FFFD |
+> | `sqlite3` | `636166`**`E9`**`20`**`FFFE`**`20626164` — bytes preserved |
+>
+> So non-UTF-8 input is **silently corrupted** on local mode, and differently on cloud.
+> This is a regression in kind from the pre-hex behavior, where tursodb rejected the whole
+> stream loudly. Either store free text as BLOB and cast on read, or validate UTF-8 at the
+> flag boundary and refuse with a clear message. Do not leave it silent.
+
+```sql
+CAST(x'636f64653a0a2020636f6e7374207820...' AS TEXT)
+```
+
+Hex is unambiguous and, critically, **always single-line**, so the splitter can never tear it
+and there is no escaping to get wrong. Verified round-tripping multi-line code with trailing
+semicolons, plus `日本語 🎯 a|b it's "q" \ back;` — byte-exact.
+
+So the CLI has two escapers, and the distinction is load-bearing:
+
+| Helper | For | Mechanism |
+|--------|-----|-----------|
+| `sql_str` | identifiers, IDs, enums, dates — values from a known-safe alphabet | `'...'` with quotes doubled |
+| `sql_text` | **all free text** — titles, bodies, objectives, work-log entries, findings | `CAST(x'…' AS TEXT)` |
+
+**This is the same root cause as every output-side injection** (board section forgery, export
+marker forgery, frontmatter field forgery): free text escaping its channel. On the way in, hex
+solves it. On the way out, the same principle applies — never interpolate free text into a
+structured line format; length-prefix or encode it so a value can never impersonate a
+structural token.
+
+### 2.2.2 The output side: one escaper per structural token
+
+Hex fixes the way in. There is no single answer for the way out, because the CLI writes four
+different structured formats and **each one has a different structural token**. Getting the
+token right is the whole job; an escaper matched to the wrong granularity looks correct and
+is not. Every one of these was a live, reproduced injection first.
+
+| Surface | Structural token | Mechanism | Fidelity |
+|---|---|---|---|
+| `board`, the frontmatter block | **the start of a line** | `_render_flat` — CR deleted, LF → space, in SQL | one line per row, always |
+| `list <kind>` | **the field boundary** (awk splits on blanks) | `_render_col` — flattening **plus** every blank → `_` | one row per artifact *and* one field per column |
+| `export` | *(none — the body must keep its newlines)* | length-prefixed header; the reader consumes N lines **by count, never by inspection** | byte-exact |
+| `export --json` | the JSON string | `json_object()` — the engine escapes | byte-exact |
+| a composed body (`--objective`, `--desc`, a title) | **a line `guild read` itself generates** | `_art_defuse_body` — two-space indent on `---`, `## Work Log`, `## Follow-up Tasks` | those three lines shift by two spaces |
+
+Three consequences are design decisions rather than implementation details:
+
+1. **`guild list` is a filter, not a round trip.** `guild help` documents the orchestrator
+   filtering it with `awk '$3 == "reviewer" && $4 == "REQ-001"'`, so a *space* in `--agent`
+   forges a column exactly as a newline used to forge a row — `--agent 'reviewer REQ-001'` on
+   REQ-002 matched that filter. No separator can fix it, since argv admits every byte but NUL;
+   the fields are made unable to contain a blank instead. The byte-exact value is one round
+   trip away in `guild meta <ID> <field>`, which is not columnar and so is never flattened.
+2. **The frontmatter is YAML, and unforgeable is not the same as valid.** Flattening stops a
+   title forging an `agent:` line, but `title: "C:\path\new"` is still a YAML *ScannerError*,
+   and a literal `\n` in a title was being decoded back into a real newline by the reader —
+   undoing the flattening on the far side. So the quoted field is escaped as a proper
+   double-quoted scalar and the bare fields are quoted only when they are not already safe
+   plain scalars (`GLOB '*[^A-Za-z0-9_.-]*'`), which keeps v4's `agent: developer` /
+   `plan: null` / `parallel-group: impl` byte-identical and changes only what used to fail
+   to parse.
+3. **Every heading `guild read` generates is defused in a composed body — both of them.**
+   `## Follow-up Tasks` is read back out of a rendered ticket to decide what work to
+   materialize; `## Work Log` looks decorative but `skills/check-in` triages on an *empty*
+   one ("never started — move it back to todo"), so a body that plants a non-empty one above
+   the real one is writing the orchestrator's input just as directly. Verbatim and unforgeable
+   cannot both hold on a line-oriented channel; the CLI chooses unforgeable for every line it
+   generates and keeps `guild meta <ID> <field>` as the byte-exact channel.
+
 3. **`tursodb --mcp` exists** — the binary can serve MCP instead of a shell, which would let
    Claude Code query the guild database through MCP tools directly. Tempting, but the CLI must
    work from inside compiled workflows and plain bash, where MCP wiring is not guaranteed.
@@ -262,16 +371,91 @@ engine (the Rust rewrite), and local `tursodb` is always the latter. Their SQL s
 The schema must therefore target the **intersection**, verified against TursoDB's compatibility
 matrix:
 
-| Feature | TursoDB | Verdict |
-|---------|---------|---------|
-| `STRICT` tables | ✅ Supported, no longer experimental | **Use it** |
-| `RETURNING` | ✅ | **Use it** — insert-and-get-ID in one statement |
-| WAL, `PRAGMA foreign_keys` | ✅ | Use |
-| JSON functions | ✅ Near-complete | Use |
-| **FTS5** | ❌ **Not supported.** TursoDB uses a Tantivy-backed index instead: `CREATE INDEX i ON t USING fts (cols)`, itself experimental | **Avoid.** `doc search` uses `LIKE` |
-| **`WITH RECURSIVE`** | ❌ Not yet supported | **Avoid** — see the trap below |
+**Verified empirically against `tursodb 0.7.2`**, not just read from the docs — every row
+below was executed.
+
+**THE TABLE'S RULE: IF THE CODE DEPENDS ON IT, IT HAS A ROW.** An incomplete matrix is worse
+than no matrix, because it is read as an allowlist and silently trusted as one. Three review
+rounds found constructs in `scripts/lib/*.sh` that were not listed here — including
+`CAST(x'…' AS TEXT)`, which §2.2.1 makes the transport for *every free-text value in the
+CLI*. So the list below is now the whole of what the code uses, not a highlights reel, and
+adding an SQL construct to the CLI means adding its verified row here in the same change.
+
+**Core — the schema and the shape of every query**
+
+| Feature | Result | Verdict |
+|---------|--------|---------|
+| `STRICT` tables | ✅ Works; `VARCHAR(10)` correctly rejected (`× Parse error: unknown datatype`) | **Use it** |
+| `CREATE TABLE IF NOT EXISTS` (re-run) | ✅ Idempotent | Use — `guild init` is re-runnable |
+| `REFERENCES` / composite `PRIMARY KEY` / `UNIQUE (a, b)` / `NOT NULL DEFAULT` | ✅ Enforced — a duplicate gives `UNIQUE constraint failed: c.(pid, slug)` | Use — the whole of §3.2 |
+| `PRAGMA foreign_keys=ON` | ✅ Enforced — a bad ref gives `FOREIGN KEY constraint failed` | Use |
+| `PRAGMA foreign_keys=OFF` | ✅ | Use — `guild rebuild` replays out of dependency order |
+| `PRAGMA journal_mode=WAL` | ✅ → `wal` | Use |
+| `PRAGMA table_info(t)` | ✅ → `0\|id\|TEXT\|0\|\|1` rows | Use — `journal_sync` reads the live column list |
+| `sqlite_master` (+ `name NOT LIKE 'sqlite_%'`) | ✅ → the user tables | Use — `journal compact` enumerates tables |
+| Multi-statement script on stdin | ✅ Rows of every statement concatenate, in statement order | **Use it** — this is how one command is one round trip (§2.2) |
+| Explicit `BEGIN;` … `COMMIT;` | ✅ | Use — every create is one transaction |
+
+**Writes**
+
+| Feature | Result | Verdict |
+|---------|--------|---------|
+| `INSERT … RETURNING` | ✅ `INSERT ... RETURNING id` → `X-1` | **Use it** — insert-and-get-ID in one statement |
+| `UPDATE … RETURNING` | ✅ → `R\|X-1\|up` | **Use it** — `move` / `retitle` return the mutated row for the journal |
+| `INSERT … SELECT … RETURNING` | ✅ → `R\|X-3\|hello` | **Use it** — the create shape of §2.2: the `FROM` clause *is* the referential check |
+| `ON CONFLICT DO UPDATE` + `excluded.` | ✅ | Use — the journal replay and `checkin` depend on it |
+| `INSERT OR REPLACE` | ✅ Replaces the conflicting row | Use — `journal rebuild` replays each row idempotently |
+
+**Values — the transport and the escapers**
+
+| Feature | Result | Verdict |
+|---------|--------|---------|
+| `CAST(x'…' AS TEXT)` | ✅ Byte-exact **for valid UTF-8** — `x'e697a5…'` → `日本語 🎯`, `x''` → `''`. ⚠️ **Invalid UTF-8 is replaced with U+FFFD, and libSQL preserves the bytes instead** | **Use it — it is the transport (§2.2.1)**, with the divergence in that section's caveat. The one row on this table that is not unconditionally safe |
+| `NULLIF(x, '')` | ✅ → NULL for `''`, the value otherwise | Use — how an omitted optional flag becomes NULL |
+| `COALESCE` | ✅ | Use |
+| `replace` / `length` / `substr` / `trim` / `lower` / `abs` / `hex` / `instr` | ✅ | Use — `replace()` is the whole output-channel defence (§2.2.1) |
+| Deeply nested `replace()` (36 levels, generated) | ✅ → `"C:\\path\\new \"\x07 日"` | Use — the YAML escaper in `lib/render.sh` is one such chain |
+| `printf('%03d', n)` / `printf('%012d', n)` | ✅ → `TASK-007`, `000000000042` | Use — the ID derivation in §3.3 and the export's stable sort key |
+| `CAST(x AS INTEGER)` | ✅ | Use — `MAX(CAST(substr(id,3) AS INTEGER))` is the next-ID scan |
+| `GLOB` with a negated class (`'*[^A-Za-z0-9_.-]*'`) | ✅ `developer`/`TASK-001`/`2026-08-13`/`null` → 0; a space, a `:`, a TAB, non-ASCII → 1 | Use — decides which frontmatter fields need YAML quoting. `-` last in the class is a literal |
+| `LIKE` with `%` | ✅ | Use — `sqlite_master` filtering; `doc search` |
+
+**JSON**
+
+| Feature | Result | Verdict |
+|---------|--------|---------|
+| `json_object(…)` | ✅ Escapes control characters, so one row is always one line | **Use it** — the journal, `export --json` and every `RETURNING` row |
+| `json_object(<column>, v)` — a **computed label** | ✅ → `{"X-1":"hello"}` | Use — `export --json` renders `guild_state` as a real object. Fallback if an engine ever rejects it: `json_object('key', key, 'value', value)` |
+| `json_extract` | ✅ Returns the JSON value's own type (`'v'`, `7`) | Use — spool drain and journal replay |
+| `json_valid` | ✅ → `1` / `0` / NULL for NULL | Use — `CASE WHEN json_valid(x) THEN x END` is what stops a malformed spool line raising |
+
+**Queries**
+
+| Feature | Result | Verdict |
+|---------|--------|---------|
+| Non-recursive CTE (`WITH x AS ...`) | ✅ | **Use freely** — see the nuance below |
+| `LEFT JOIN` + `GROUP BY` + `COUNT` / `SUM(CASE WHEN …)` / `MAX` | ✅ | Use — the board's live `N/M done` counters |
+| Compound `UNION ALL` with one trailing `ORDER BY` | ✅ Ordering applies across the whole compound | Use — the export is one ordered compound SELECT |
+| `ORDER BY CASE … END` | ✅ | Use — the board's status ordering |
+| `NOT EXISTS (…)` correlated subquery | ✅ | Use — `guild next`'s review gate, in place of recursion |
+| `LIMIT` | ✅ | Use |
+
+**Not used — verified as unavailable, or deliberately declined**
+
+| Feature | Result | Verdict |
+|---------|--------|---------|
+| `char(10)` | ✅ Works (→ `0A`) | **Declined.** A literal newline inside a quoted string and `CAST(x'0a' AS TEXT)` already cover it; a third spelling of one idea is a third thing to keep verified |
+| `group_concat` | ✅ Works | **Declined.** The work log is emitted as its own statement so one row stays one line |
+| **`WITH RECURSIVE`** | ❌ **Fails** | **Avoid** — see the trap below |
+| **FTS5** (`CREATE VIRTUAL TABLE ... USING fts5`) | ❌ **Fails.** TursoDB uses a Tantivy-backed `CREATE INDEX ... USING fts` instead, itself experimental | **Avoid.** `doc search` uses `LIKE` |
 | Generated columns | 🚧 Virtual only, behind `--experimental-generated-columns` | Avoid |
 | Window functions | 🚧 No `lag`, `lead`, `ntile`, `percent_rank`, `cume_dist` | Avoid those five |
+| `CREATE INDEX` — incl. `IF NOT EXISTS`, `DESC`, composite | ✅ Verified: `ON e(ts DESC)` and `ON e(a, ts)` both created and visible in `sqlite_master` | **Use it** — `schema.sql` creates four, applied by both `init` and `rebuild` |
+| `VIEW` / `TRIGGER`, `AUTOINCREMENT`, `CHECK` constraints | — Not exercised | **Not used by the CLI.** Verify before introducing one |
+
+**The CTE nuance:** plain `WITH x AS (SELECT ...)` works fine — only the `RECURSIVE` variant
+fails. Worth stating explicitly so nobody over-corrects and bans all CTEs; the ordinary kind is
+useful for keeping the single-round-trip board query readable.
 
 **The `WITH RECURSIVE` trap.** Transitive closure over a dependency graph is the textbook
 recursive-CTE query, and `guild segment` is exactly a graph traversal — so this looks fatal at
@@ -572,10 +756,10 @@ identical signatures — a deliberate constraint, so agent definitions need mini
 | Command | Note |
 |---------|------|
 | `guild read <ID>` | Renders markdown **from the database**. Agents see no difference. |
-| `guild path <ID>` | Now returns an export path; kept for agents that pass paths around. |
-| `guild meta <ID> [field]` | Frontmatter-equivalent projection of the row. |
+| ~~`guild path <ID>`~~ | **REMOVED in implementation.** The draft kept it, returning an export path. That was wrong: `guild export` deletes and rebuilds `.guild/export/` on every run, so an agent that Edited a returned path lost its work silently — and for `TASK-*`/`PLAN-*` the file never existed at all. The command now exits 1 naming its replacements (`read`/`meta`/`slice` to read; `log`/`finding`/`retitle`/`move`/`checkin` to write), and `new`/`move`/`next` print the bare ID. |
+| `guild meta <ID> [field]` | Frontmatter-equivalent projection of the row. The block form is flattened and YAML-escaped; the single-field form (`guild meta <ID> title`) is the **byte-exact** channel (§2.2.2). |
 | `guild board` | Same rendering, one query behind it. |
-| `guild list <kind> [status]` | Same awk-friendly columns. |
+| `guild list <kind> [status]` | Same awk-friendly columns — and now genuinely awk-safe: blanks inside a column become `_`, so the field count is fixed (§2.2.2). A **filter**, not a round trip. |
 | `guild move <ID> <status>` | Orchestrator-only, unchanged semantics. |
 | `guild slice <PLAN> <slug>` | Reads `plan_slice`. |
 
@@ -1255,6 +1439,12 @@ implementation details that Stage 1 will surface on contact.
 ---
 
 ## References
+
+**Runtime verification.** The §2.2 driver invocation and every §3.0 portability claim were
+executed against `tursodb 0.7.2` (installed at `~/.turso/tursodb`) rather than taken from the
+docs. Where the docs and the binary disagreed, the binary won — and it settled two things the
+documentation does not cover at all: stdin execution, and the pipe-separated shape of
+`-m list` output.
 
 Turso documentation consulted for §2.2 and §3.0:
 

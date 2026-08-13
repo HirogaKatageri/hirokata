@@ -17,7 +17,7 @@ Display the current state of the guild board without starting a work session.
 
 ### 1. Check for Guild
 
-Read `.guild/state.yaml` (it holds only `last-checkin`).
+Check for `.guild/config.yaml` — that is what marks a v5 guild (there is no `state.yaml`).
 
 If not found:
 ```
@@ -76,6 +76,6 @@ The board is empty. Run /guild:check-in to start a work session.
 
 ## Rules
 
-- **Read-only** — `guild board` only scans directories; do not modify `state.yaml` or any guild files
+- **Read-only** — `guild board` only reads; never run a mutating guild command from this skill, and never touch `.guild/guild.db` or `.guild/journal.ndjson`
 - **No work execution** — just display status and stop
 - **Keep it brief** — this is a quick glance, not a full check-in

@@ -48,21 +48,31 @@ high-risk paths as specs.
 
 ### 1. Read Your Mission
 
-You are given a task file path. From it and the linked mission
+You are given a TASK ID. There is no ticket file — read it with the CLI:
+
+```bash
+GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
+"$GUILD" read TASK-NNN
+```
+
+From it and the linked mission
 (`.guild/qa/missions/MISSION-{slug}.md`) understand: the scope, the user journeys,
 the what-if input matrix, the expected behavior + oracle source per scenario, and
 which scenarios warrant a committed regression spec. Also read
 `.guild/qa/charter.md` for the quality definition and risk map.
 
-**Resuming?** If the task's Work Log is non-empty, or a session log for this mission
+**Resuming?** If the ticket's Work Log is non-empty, or a session log for this mission
 already exists under `.guild/qa/sessions/`, a prior run was interrupted — continue
-from the last entry: don't re-run scenarios already logged, and do NOT re-declare
-`Fix:`/`Re-verify:` lines already present in the Follow-up Tasks section.
+from the last entry: don't re-run scenarios already logged, and don't re-declare
+`Follow-up:` lines already in the log.
 
-Before starting substantive work, append a start entry to the Work Log —
-`### {date} — qa-tester` / `- Started — mission {slug}` — and add a bullet per
-scenario batch run, per spec authored, and per bug filed, so an interrupted
-session is resumable instead of redone.
+Before starting substantive work, log a start entry, and log a line per scenario
+batch run, per spec authored, and per bug filed, so an interrupted session is
+resumable instead of redone:
+
+```bash
+"$GUILD" log TASK-NNN --agent qa-tester --entry "Started — mission {slug}"
+```
 
 ### 2. Detect How to Run and Test
 
@@ -72,8 +82,8 @@ session is resumable instead of redone.
   (`e2e/`, `tests/`, `tests/e2e/`). Match the project's conventions — file
   naming, fixtures, selectors (prefer roles / `data-testid` over brittle CSS),
   base URL, auth setup. If Playwright isn't set up and the mission requires it,
-  note this in the Work Log and declare a developer follow-up to add it rather
-  than scaffolding a framework yourself.
+  `guild log` it as a `Follow-up:` line for `developer` (step 8) rather than
+  scaffolding a framework yourself.
 
 ### 3. Exercise the Scenarios (empirical)
 
@@ -150,14 +160,31 @@ against (if any). One manifest entry per fixed bug — this is what makes the su
 1. Write a session log to `.guild/qa/sessions/SESSION-{slug}-{date}.md` (format in
    the `guild:qa-artifacts` skill): scenarios run, expected vs actual, bugs found, specs
    authored, oracle questions answered.
-2. Append a Work Log summary pointing to the session log, listing specs authored,
-   bugs filed, and the pass status of the suite.
-3. Declare follow-ups: developer fix tasks for bugs — each paired with a re-verify
-   qa-tester task (step 6) — and a developer follow-up to set up Playwright if it
-   was missing.
-4. Report completion in your final message (e.g. PASS/FAIL or done). Do NOT edit
-   any status field or move your task file — the orchestrator owns status
-   transitions.
+2. Log a summary pointing at the session log — specs authored, bugs filed, and the
+   pass status of the suite:
+   ```bash
+   "$GUILD" log TASK-NNN --agent qa-tester \
+     --entry "Session: .guild/qa/sessions/SESSION-{slug}-{date}.md — {N} specs authored,
+   {M} bugs filed, suite {passing/failing}"
+   ```
+3. Declare follow-ups as log entries in exactly this shape, which the orchestrator
+   materializes into tickets — a developer fix task per bug, each paired with a
+   re-verify qa-tester task (step 6), plus a developer task to set up Playwright if
+   it was missing:
+   ```bash
+   "$GUILD" log TASK-NNN --agent qa-tester \
+     --entry "Follow-up: Fix: {bug} | agent: developer"
+   "$GUILD" log TASK-NNN --agent qa-tester \
+     --entry "Follow-up: Re-verify: {bug} | agent: qa-tester"
+   ```
+   File each bug as a structured finding too, so it lands in the export beside the
+   ticket:
+   ```bash
+   "$GUILD" finding TASK-NNN --reviewer qa-tester --severity critical|major|minor \
+     --summary "{bug}" --detail "{steps, expected, actual}" [--file {path} --line {N}]
+   ```
+4. Report completion in your final message (e.g. PASS/FAIL or done). Do NOT set
+   any status or move your ticket — the orchestrator owns status transitions.
 
 ## What NOT to Do
 
@@ -166,4 +193,4 @@ against (if any). One manifest entry per fixed bug — this is what makes the su
 - Don't assert suspect behavior as correct — file it or ask the user.
 - Don't put committed specs under `.guild/` — they live in the repo's e2e dir and
   run in CI. `.guild/qa/` holds the manifest, ledger, sessions, and charter only.
-- Don't manage guild state (state.yaml, ticket creation) or task status/movement — that's the orchestrator's job.
+- Don't manage guild state or task status/movement — that's the orchestrator's job. Your only writes to the board are `guild log` / `guild finding`.

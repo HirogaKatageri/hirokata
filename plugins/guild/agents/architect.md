@@ -124,21 +124,34 @@ Based on the requirement and codebase analysis:
 
 ### 4. Write the Plan
 
-Write the plan as one overview file plus one slice file per developer task. The overview is for reviewers and orientation; each slice is the focused, self-contained brief a single developer reads to do their work.
+Write the plan as one overview plus one slice brief per developer task. The overview is for reviewers and orientation; each slice brief is the focused, self-contained brief a single developer reads to do their work.
 
-**Scaffold the plan first.**
+**THE BOARD IS A DATABASE — THERE ARE NO PLAN FILES.** In v4 you wrote an overview file and a
+directory of slice files. In v5 a plan is a row and a slice is a row, and nothing hands out a
+writable path: `guild export` regenerates `.guild/export/` wholesale, so anything Edited there is
+discarded on the next export. You author a plan by PASSING ITS TEXT TO THE CLI.
+
+**Write the overview at creation time.** Compose it in full first, then:
 
 ```bash
 GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
-"$GUILD" new plan --title "{Feature} Implementation Plan" --req REQ-NNN
+"$GUILD" new plan --title "{Feature} Implementation Plan" --req REQ-NNN --date {today} \
+  --desc "$(cat <<'PLAN'
+{the whole Architecture Overview / Codebase Analysis / Implementation Tasks /
+ Technical Decisions / Risks body, verbatim}
+PLAN
+)"
 ```
 
-It prints `<PLAN-ID> <path>`. Fill in the overview at the printed path, and write each slice into
-the printed plan's `PLAN-NNN/` slice directory (alongside the overview). Resolve paths later with
-`guild path PLAN-NNN` (overview) and `guild slice PLAN-NNN {slug}` (a slice) rather than
-hardcoding — plans live under `plans/<status>/` and move as status changes.
+It prints the bare `PLAN-ID`. Read it back any time with `"$GUILD" read PLAN-NNN`.
 
-**4a. Overview file** (the printed plan path under `plans/todo/PLAN-NNN.md`):
+**Slices have no writer in Stage 1.** `guild slice PLAN-NNN {slug}` READS a slice, and
+`plan_slice` rows exist in the schema, but no command writes one yet — that is pending a later
+stage. Until it lands, **the slice brief goes in its developer ticket's `--objective`**, which is
+the field the developer already reads with `guild read TASK-NNN`. Write it in full there (step 5
+below); do not create files for it.
+
+**4a. The overview body** (passed as `--desc` above):
 
 ```markdown
 ---
@@ -162,8 +175,8 @@ created: {today's date}
 ## Implementation Tasks
 
 ### 1. {Task Title} (complexity: {1|2|3})
-- **Slice**: `{slug}` (resolve with `guild slice PLAN-NNN {slug}`)
-- **Summary**: {One line — full detail lives in the slice}
+- **Slice**: `{slug}` (the full brief is that ticket's Objective — `guild read TASK-NNN`)
+- **Summary**: {One line — full detail lives in the ticket}
 - **Depends on**: {Prerequisites, if any}
 
 ### 2. {Task Title} (complexity: {1|2|3})
@@ -182,16 +195,11 @@ created: {today's date}
 | {Risk} | {Impact} | {How to handle} |
 ```
 
-**4b. Slice files** in the printed plan's `PLAN-NNN/` slice directory, named `slice-{slug}.md` — one per developer task:
+**4b. The slice brief** — one per developer task. This text is what you pass as that ticket's
+`--objective` in step 5. Do NOT write it to a file:
 
 ```markdown
----
-plan: PLAN-NNN
-title: "{Task Title}"
-complexity: {1|2|3}
----
-
-# {Task Title}
+# {Task Title} (complexity: {1|2|3})
 
 ## Objective
 {Specific deliverable for this task only}
@@ -210,10 +218,11 @@ complexity: {1|2|3}
 ```
 
 **Rules:**
-- One overview file. One slice per developer task.
+- One overview (the plan's `--desc`). One slice brief per developer task (that ticket's `--objective`).
 - **"Files to Touch" must be accurate and complete** — it is the basis for parallel-group disjointness. If a slice ends up touching a file you didn't list, two grouped developers could collide. List every file the task will create or modify; if you cannot bound the file set confidently, leave that task ungrouped.
-- Slices are self-contained — a developer should not need to read the overview or sibling slices to start work. The Interface Contract section is what makes this possible.
-- Slug the slice filename from the task title (lowercase, hyphenated, no punctuation).
+- Slice briefs are self-contained — a developer should not need to read the overview or sibling briefs to start work. The Interface Contract section is what makes this possible.
+- Slug the slice name from the task title (lowercase, hyphenated, no punctuation) and pass it as
+  `--plan-slice {slug}`, so the ticket still records which slice it belongs to.
 - Base everything on actual codebase analysis, not assumptions.
 - Downstream agents (test-planner, reviewers) orient from the overview — keep it consistent with the slices.
 
@@ -222,13 +231,29 @@ complexity: {1|2|3}
 Unlike a ticket-dispatched agent, you have no "Follow-up Tasks" section to declare into — create
 the tickets yourself with the CLI, right now, in this same session:
 
+Each developer ticket carries its slice brief (step 4b) as `--objective` — that is where the
+brief lives now that there are no slice files, and it is what `guild read TASK-NNN` renders under
+`## Objective`:
+
 ```bash
 "$GUILD" new task --title "Implement {component-1}" --agent developer --req REQ-NNN \
-  --plan PLAN-NNN --plan-slice {slug-1} --date {today}
+  --plan PLAN-NNN --plan-slice {slug-1} --date {today} \
+  --objective "$(cat <<'SLICE'
+{the whole slice brief for component-1, verbatim}
+SLICE
+)"
 "$GUILD" new task --title "Implement {component-2}" --agent developer --req REQ-NNN \
-  --plan PLAN-NNN --plan-slice {slug-2} --parallel-group A --date {today}
+  --plan PLAN-NNN --plan-slice {slug-2} --parallel-group A --date {today} \
+  --objective "$(cat <<'SLICE'
+{the whole slice brief for component-2, verbatim}
+SLICE
+)"
 "$GUILD" new task --title "Implement {component-3}" --agent developer --req REQ-NNN \
-  --plan PLAN-NNN --plan-slice {slug-3} --parallel-group A --date {today}
+  --plan PLAN-NNN --plan-slice {slug-3} --parallel-group A --date {today} \
+  --objective "$(cat <<'SLICE'
+{the whole slice brief for component-3, verbatim}
+SLICE
+)"
 "$GUILD" new task --title "Plan tests for {feature}" --agent test-planner --req REQ-NNN \
   --plan PLAN-NNN --date {today}
 "$GUILD" new task --title "Review {feature} implementation" --agent reviewer --req REQ-NNN \
@@ -260,7 +285,7 @@ modifier.
 
 ### 6. Report to the Orchestrator
 
-Report completion in your final message: PLAN-NNN's location, and the list of ticket IDs you
+Report completion in your final message: the PLAN-NNN id, and the list of ticket IDs you
 created (developer(s), test-planner, reviewer) with their `parallel-group` waves noted. The
 orchestrator picks these up in the normal work cycle — you do not move any ticket's status
 yourself.
@@ -268,7 +293,7 @@ yourself.
 ## What NOT to Do
 
 - Don't implement code — that's the developer's job
-- Don't put implementation detail in the overview file — that belongs in the slices
+- Don't put implementation detail in the overview — that belongs in the slice briefs
 - Don't omit `--plan-slice` from developer tickets — slices are how developers stay token-efficient
 - Don't design in the abstract — ground everything in the actual codebase
 - Don't propose unnecessary complexity — simpler is better

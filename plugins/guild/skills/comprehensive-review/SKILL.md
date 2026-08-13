@@ -20,8 +20,9 @@ Orchestrates five specialized review agents in parallel to provide a complete, m
 ### Step 1: Identify Review Scope
 
 1. **Find requirements documents** — check the guild board first: if `.guild/` exists, read the
-   relevant `REQ-NNN.md` under `.guild/requirements/{in-progress,done}/` and the linked plan
-   (`.guild/plans/<status>/PLAN-NNN.md` plus its slices) for the feature being reviewed. Otherwise
+   relevant requirement and plan through the CLI — the board is a database, not a directory tree:
+   `"${CLAUDE_PLUGIN_ROOT}/scripts/guild" list req`, then `guild read REQ-NNN` and
+   `guild read PLAN-NNN` for the feature being reviewed. Otherwise
    fall back to `requirements/`, `docs/`, `planning/`, or phase plan files. If none found, ask the
    user.
 2. **Identify recent changes** — use `git log` and `git diff` to understand scope

@@ -49,7 +49,14 @@ pillars in brief:
 
 ### 1. Read Your Task
 
-You are given a task file path. Read it for:
+You are given a TASK ID. There is no ticket file — the board is a database:
+
+```bash
+GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
+"$GUILD" read TASK-NNN
+```
+
+Read it for:
 - **Scope**: the whole product, or a named area / flow (e.g. "checkout", "auth")
 - **Mode**: `full` (build/refresh the charter + missions) or `cadence` (re-run
   regression + a focused exploratory pass on top-risk areas)
@@ -59,18 +66,24 @@ You are given a task file path. Read it for:
 mission files already contain fresh content for this scope, a prior run was
 interrupted — continue from what exists on disk rather than rewriting it.
 
-Before starting substantive work, append a start entry to the Work Log —
-`### {date} — qa-strategist` / `- Started — QA survey, mode {full|cadence}` — and
-add a bullet after the charter and after each mission file is written, so an
-interrupted run is resumable instead of redone.
+Before starting substantive work, log a start entry, and log a line after the
+charter and after each mission file is written, so an interrupted run is
+resumable instead of redone:
+
+```bash
+"$GUILD" log TASK-NNN --agent qa-strategist \
+  --entry "Started — QA survey, mode {full|cadence}"
+```
 
 ### 2. Resolve the Oracle (layered)
 
 Before you can say what "correct" means, gather sources of intended behavior, in
 this order — use what's available, fall through when it isn't:
 
-1. **Internal specs** — glob `.guild/requirements/*.md` and `.guild/docs/*.md`
-   for documented behavior and acceptance criteria.
+1. **Internal specs** — the requirements are rows, not files: list them with
+   `"$GUILD" list req` and read the relevant ones with `"$GUILD" read REQ-NNN`
+   for documented behavior and acceptance criteria. Also glob
+   `.guild/docs/*.md` for the researcher's knowledge base.
 2. **External board** — if a board MCP connector (Linear, Jira, etc.) is
    available to you as a tool, query it for the relevant tickets/acceptance
    criteria. If no connector is configured, skip this layer (note it).
@@ -141,11 +154,17 @@ follow-up scoped to "run regression suite + exploratory pass on top-risk areas".
 
 ### 7. Update Your Task
 
-1. Append to the Work Log: what you surveyed, the risk map summary, missions
-   created, and any open oracle questions. Point to `.guild/qa/charter.md`.
-2. Report completion in your final message (e.g. PASS/FAIL or done). Do NOT edit
-   any status field or move your task file — the orchestrator owns status
-   transitions.
+1. Log what you surveyed, the risk map summary, the missions created, and any
+   open oracle questions — pointing at `.guild/qa/charter.md` rather than
+   repeating it:
+   ```bash
+   "$GUILD" log TASK-NNN --agent qa-strategist \
+     --entry "Surveyed {N} areas; risk map: {summary}. Charter: .guild/qa/charter.md"
+   "$GUILD" log TASK-NNN --agent qa-strategist \
+     --entry "Open oracle questions: {list, or none}"
+   ```
+2. Report completion in your final message (e.g. PASS/FAIL or done). Do NOT set
+   any status or move your ticket — the orchestrator owns status transitions.
 
 ## What NOT to Do
 
@@ -153,6 +172,7 @@ follow-up scoped to "run regression suite + exploratory pass on top-risk areas".
 - Don't fix code or assert behavior — you plan; the tester observes and authors.
 - Don't treat current behavior as automatically correct — flag suspect behavior
   as an open oracle question for the tester to confirm or file as a bug.
-- Don't dump the full plan into the task Work Log — it lives in the charter and
-  missions; the work log gets a summary and pointers.
-- Don't manage guild state (state.yaml, ticket creation) or task status/movement — that's the orchestrator's job.
+- Don't dump the full plan into the Work Log — it lives in the charter and
+  missions; the log gets a summary and pointers.
+- Don't manage guild state or task status/movement — that's the orchestrator's
+  job. Your only writes to the board are `guild log` and the tickets you create.

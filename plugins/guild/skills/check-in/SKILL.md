@@ -17,17 +17,19 @@ dispatch tasks to agents, materialize follow-ups, and drive the continuous work 
 
 **Reference documents — load on demand, not upfront.** This skill is self-sufficient for the hot
 path (Steps 1–4). Read a reference only when its trigger fires:
-- `references/state-format.md` — when `"$GUILD" is-legacy` exits 0, or the `.guild/` layout itself
-  is in question
+- `references/state-format.md` — when the `.guild/` layout itself is in question
 - `references/task-lifecycle.md` — when a follow-up line carries an unrecognized modifier, or a
   ticket/requirement/plan file must be scaffolded or repaired by hand (the CLI normally does this)
 - `references/agent-chains.md` — when routing a flow Step 3 doesn't cover (research-first,
   bug-fix, QA seeding) or you need chain rationale
 
-**Core model:** there is **no `BOARD.md`** and **no `status` frontmatter field**. A ticket's status
-is the **subdirectory it lives in** (`tasks/{todo,in-progress,done,failed}/`). `.guild/state.yaml`
-holds only `last-checkin`. IDs and the cursor are **derived from the filesystem**. The board is
-rendered live. **Development runs in parallel by default**: the architect groups dev tickets into
+**Core model:** the board is a **database** (`.guild/guild.db`), not a directory tree. There is no
+`BOARD.md`, no ticket file, and no status subdirectory: **status is a COLUMN**, set only by
+`"$GUILD" move`. IDs and the cursor are derived in SQL. `last-checkin` is a row, stamped by
+`"$GUILD" checkin`. **Nothing hands out a writable path** — `guild path` is gone, because
+`guild export` regenerates `.guild/export/` wholesale and anything edited there is discarded. You
+read with `read`/`meta`/`slice` and write with `move`/`retitle`/`checkin`/`new`; agents write with
+`log`/`finding`. The board is rendered live. **Development runs in parallel by default**: the architect groups dev tickets into
 `parallel-group` waves (verified disjoint files) that dispatch concurrently; an ungrouped ticket
 runs solo. Reviews fan out 4-wide.
 
@@ -50,29 +52,35 @@ GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
 | Need | Command |
 |------|---------|
 | Create the layout | `"$GUILD" init {today}` |
-| Detect / convert a legacy guild | `"$GUILD" is-legacy` · `"$GUILD" migrate` |
-| Next actionable ticket | `"$GUILD" next` → `TASK-NNN <path>` or `none` |
+| Archive a v4 board | `"$GUILD" init {today}` — MOVES it to `v4-archive/`; there is no `migrate` |
+| Next actionable ticket | `"$GUILD" next` → `TASK-NNN` or `none` |
 | Expand a parallel-group dev batch | `"$GUILD" batch TASK-NNN` → the TASK IDs to dispatch together |
 | Dispatch / complete / fail / retry | `"$GUILD" move TASK-NNN in-progress\|done\|failed\|todo` |
 | Create a follow-up task | `"$GUILD" new task --title "…" --agent A --req REQ-NNN [--plan PLAN-NNN] [--plan-slice slug] [--parallel-group L]` |
-| Resolve a ticket / plan slice | `"$GUILD" path ID` · `"$GUILD" read ID` · `"$GUILD" slice PLAN-NNN slug` |
+| Read a ticket / plan slice | `"$GUILD" read ID` · `"$GUILD" slice PLAN-NNN slug` (there is no `path`) |
+| Fold an agent's reports into the board | `"$GUILD" spool drain TASK-NNN` — run before reading a ticket back |
+| Stamp the check-in date | `"$GUILD" checkin {today}` |
+| Retitle a ticket | `"$GUILD" retitle ID "New title"` |
 | Ticket metadata only (dispatch) | `"$GUILD" meta ID [field]` — frontmatter without the body |
 | Mark a requirement done | `"$GUILD" move REQ-NNN done` |
 | Render the board | `"$GUILD" board` |
 | List tickets (awk-filterable) | `"$GUILD" list task [status]` → `<ID> <status> <agent> <req>` |
 
-Never hand-roll `find`/`mv`/ID arithmetic, and **never write a `status:` field** — moving the file
-is the only way to change status.
+Never hand-roll `find`/`mv`/ID arithmetic, and **never touch `.guild/guild.db` or
+`.guild/journal.ndjson` directly** — `"$GUILD" move` is the only way to change status, and every
+mutation has to go through the CLI so it lands in the journal git carries.
 
 ## Step 1: Initialize or Load Guild
 
-Run `"$GUILD" is-legacy` and check for `.guild/state.yaml`.
+Check for `.guild/config.yaml` — that file, not `state.yaml`, is what says a v5 guild exists.
 
-### First Check-in (`.guild/` does not exist)
+### First Check-in (`.guild/config.yaml` does not exist)
 
-1. Create the layout: `"$GUILD" init {today's date}`. This creates the
-   `requirements|tasks|plans/{todo,in-progress,done}` structure (tasks also get `failed/`),
-   `docs/`, `qa/`, and a `state.yaml` containing only `last-checkin`.
+1. Create the guild: `"$GUILD" init {today's date}`. This writes `config.yaml`, the database, the
+   journal, and `spool/`, `export/`, `docs/`, `qa/`, `reviews/`. If a **v4 board** is present it is
+   MOVED to `.guild/v4-archive/` (never deleted, still plain markdown, still in git) and only
+   `docs/` and `qa/` are carried over — there is no history import. `init` prints the exact list
+   before it moves anything; show that to the user.
 2. Greet the user:
    ```
    Guild initialized. This is your first check-in.
@@ -85,20 +93,19 @@ Run `"$GUILD" is-legacy` and check for `.guild/state.yaml`.
    architect interview and leaves developer/test-planner/reviewer tickets on the board when it
    returns. Then proceed to **Step 3** (Work Cycle).
 
-### Returning Check-in (`.guild/state.yaml` exists)
+### Returning Check-in (`.guild/config.yaml` exists)
 
-1. **Legacy migration:** if `"$GUILD" is-legacy` exits 0, this is a pre-3.0 guild (flat files with
-   `status:` frontmatter, or a `BOARD.md`). Tell the user:
-   ```
-   This guild uses the old flat-file format. Status now lives in todo/in-progress/done
-   subdirectories instead of a frontmatter field. Convert in place now? (yes / no)
-   ```
-   On "yes": run `"$GUILD" migrate` (moves every ticket into its status subdir, strips the `status:`
-   field, removes any `BOARD.md`, reduces `state.yaml`). On "no": stop — the new skill cannot drive
-   the old layout.
-2. Update the check-in date: set `last-checkin` to today's date in `.guild/state.yaml` (Edit).
-3. **Stale `in-progress` triage:** for each task under `tasks/in-progress/`, read its Work Log and
-   pick one of three cases:
+1. **A v4 board instead?** If `.guild/state.yaml` or `.guild/requirements/` exists but
+   `config.yaml` does not, this is a v4 guild. There is no in-place conversion in v5:
+   `"$GUILD" init` ARCHIVES the old board and carries over only `docs/` and `qa/`. Tell the user
+   exactly that, show them what `init` says it will move, and get a yes before running it.
+   (`"$GUILD" is-legacy` always exits non-zero in v5 and `"$GUILD" migrate` only explains its own
+   retirement — do not branch on them.)
+2. Stamp the check-in date: `"$GUILD" checkin {today's date}`. This is the only writer of
+   `last-checkin`; there is no `state.yaml` to edit.
+3. **Stale `in-progress` triage:** for each ticket in `"$GUILD" list task in-progress`, first fold
+   in anything its agent reported but that was never drained —
+   `"$GUILD" spool drain TASK-NNN` — then `"$GUILD" read TASK-NNN` and pick one of three cases:
    - **Empty Work Log** → never started → `"$GUILD" move TASK-NNN todo`.
    - **Final entry reports completion or failure** (agents end their log with a done/failed report)
      → the session died between the agent finishing and the orchestrator recording it. Do NOT
@@ -196,12 +203,12 @@ If it prints `none`: report "All caught up!" and go to **Step 4**.
    `parallel-group`, it returns every `todo`/`in-progress` dev ticket sharing that group and
    requirement — the batch dispatched together.
 2. Move every ticket in the batch to in-progress: `"$GUILD" move TASK-NNN in-progress` (one per
-   member). If the requirement is still in `requirements/todo/` (`"$GUILD" status REQ-NNN` → `todo`),
-   advance it too: `"$GUILD" move REQ-NNN in-progress`.
+   member). If the requirement is still `todo` (`"$GUILD" status REQ-NNN`), advance it too:
+   `"$GUILD" move REQ-NNN in-progress`.
 3. Get each ticket's metadata with `"$GUILD" meta TASK-NNN` (frontmatter only — do NOT `guild read`
-   the full ticket at dispatch; the agent reads its own ticket). From the `agent`, `requirement`,
-   `plan`, and `plan-slice` fields, resolve the paths to pass along: `"$GUILD" path REQ-NNN`, and
-   for any `plan-slice`, `"$GUILD" slice PLAN-NNN {slug}`.
+   the full ticket at dispatch; the agent reads its own ticket). You need the `agent`,
+   `requirement`, `plan` and `plan-slice` fields. **Pass IDs, not paths** — there are no paths, and
+   the agent resolves what it needs itself with `guild read` / `guild slice`.
 4. Spawn with the **Agent tool** — a single call for a solo ticket; for a parallel-group batch, **one
    Agent call per ticket in the same message** so they run concurrently. Each agent's own definition
    carries its close-out protocol; the prompt stays minimal:
@@ -209,20 +216,24 @@ If it prints `none`: report "All caught up!" and go to **Step 4**.
    ```
    Agent(
      subagent_type: "guild:{agent-name}",
-     prompt: "Your task is TASK-NNN. Read it with:
-                ${CLAUDE_PLUGIN_ROOT}/scripts/guild read TASK-NNN
-              (or open the file at the path the orchestrator provides).
-              Requirement: {resolved path from `guild path REQ-NNN`}
-              Plan slice (if any): {resolved path from `guild slice PLAN-NNN slug`}
+     prompt: "Your task is TASK-NNN. There are no ticket files — read it with:
+                GUILD=\"${CLAUDE_PLUGIN_ROOT}/scripts/guild\"; \"$GUILD\" read TASK-NNN
+              Requirement: REQ-NNN  (read it with `\"$GUILD\" read REQ-NNN`)
+              Plan: PLAN-NNN, slice `{slug}`  (read it with `\"$GUILD\" slice PLAN-NNN {slug}`)
               Today's date: {today's date}
 
-              Report done or failed in your final message. Do NOT move your task file
-              or edit any status — the orchestrator owns all transitions."
+              Record your progress as you go with
+                \"$GUILD\" log TASK-NNN --agent {agent-name} --entry '...'
+              — that log is what makes an interrupted task resumable, and it is the only
+              thing I read back when you are done.
+
+              Report done or failed in your final message. Do NOT move your ticket or set
+              any status — the orchestrator owns all transitions."
    )
    ```
 
-   **Resumed ticket?** If the ticket was already in `tasks/in-progress/` with a non-empty Work Log
-   before this dispatch (Step 1.3 case three, or `guild next` returned an in-progress path), prepend
+   **Resumed ticket?** If the ticket was already `in-progress` with a non-empty Work Log before
+   this dispatch (Step 1.3 case three, or `guild next` returned an in-progress ticket), prepend
    one line to the prompt:
 
    ```
@@ -249,9 +260,10 @@ all reading the same ticket:
 3. `guild:reviewer-business-logic`
 4. `guild:reviewer-edge-case`
 
-After all 4 return, read the ticket — each will have appended a Verdict + Findings block to the
-Work Log (never the Follow-up Tasks section — see 3.5 for how findings become fix tickets).
-Consolidate the verdict: APPROVED only if all 4 passed.
+After all 4 return, run `"$GUILD" spool drain TASK-NNN` once, then `"$GUILD" read TASK-NNN`: each
+reviewer logs a one-line verdict with `guild log`, and files each finding with `guild finding`
+(structured, with severity/file/line). Consolidate: APPROVED only if all 4 verdicts passed.
+See 3.5 for how findings become fix tickets.
 
 **qa-tester sequencing.** `qa-tester` tickets dispatch strictly one at a time (each drives its own
 dev server + Playwright; concurrent testers collide on ports). Never batch them.
@@ -288,18 +300,29 @@ After the agent(s) return:
 
 For **each** ticket in the dispatched batch:
 
-1. **Read the updated ticket** (`"$GUILD" read TASK-NNN`) — check the Work Log and Follow-up Tasks,
-   and note whether the agent reported success or failure.
+1. **Fold in the agent's reports, then read the ticket.** Agents append to a per-task spool rather
+   than writing to the database, so their Work Log is not on the board until you drain it:
+   ```bash
+   "$GUILD" spool drain TASK-NNN     # idempotent; a task with no spool is a no-op
+   "$GUILD" read TASK-NNN
+   ```
+   Check the Work Log, and note whether the agent reported success or failure. **Draining is not
+   optional** — skip it and the ticket reads as never-started, which is what Step 1.3 acts on.
 2. **Record the outcome — follow-ups FIRST, then the move.** The orchestrator is the only writer of
    status. Materializing before moving means a crash mid-processing leaves the ticket in
    `in-progress/`, where Step 1.3 recovers it; a ticket in `done/` is never revisited.
    - Reported done → process follow-ups (3.4), **then** `"$GUILD" move TASK-NNN done`
    - Reported failed → `"$GUILD" move TASK-NNN failed` (no follow-up processing), then ask the user
-     (AskUserQuestion) whether to **retry** (`"$GUILD" move TASK-NNN todo`) or **skip** (leave in
-     `failed/`). On **skip**, append a waiver line to the ticket's Work Log — `Skipped by user on
-     {date} — excluded from REQ scope` — so downstream agents and the completion summary have the
-     fact on record. A ticket in `failed/` is **user-adjudicated**: it no longer blocks the review
-     gate or requirement completion (3.6), it just gets reported.
+     (AskUserQuestion) whether to **retry** (`"$GUILD" move TASK-NNN todo`) or **skip** (leave
+     `failed`). On **skip**, record the waiver in the ticket's Work Log so downstream agents and
+     the completion summary have the fact on record:
+     ```bash
+     "$GUILD" log TASK-NNN --agent orchestrator \
+       --entry "Skipped by user on {date} — excluded from REQ scope"
+     "$GUILD" spool drain TASK-NNN
+     ```
+     A `failed` ticket is **user-adjudicated**: it no longer blocks the review gate or requirement
+     completion (3.6), it just gets reported.
 
 **Parallel-batch checks** (only when the batch had more than one ticket):
 - Do not move on until **every** member has reached `done` (or been resolved). A `failed` member
@@ -311,48 +334,67 @@ For **each** ticket in the dispatched batch:
 
 ### 3.4 Materialize Follow-up Tasks
 
-Read the completed ticket's "Follow-up Tasks" section. For each line:
+**Most agents now create their own follow-ups.** The architect, the test-planner and the
+product-owner all have Bash and the CLI, and they create their tail tickets directly in their own
+session — there is no `## Follow-up Tasks` section for them to declare into, because there is no
+ticket file. When one of those reports done, it names the ticket IDs it created; nothing to do here
+but note them.
 
-1. **Parse**: title, agent, and the optional modifiers `plan: PLAN-NNN`, `plan-slice: {slug}`,
-   `parallel-group: {label}`. (No `depends-on`, no magic tokens; ignore a legacy `priority:` field
-   if one appears.) The `plan:` modifier is emitted by the architect — the one agent whose own
-   ticket predates the plan; when absent, the new ticket inherits the parent ticket's `plan`
-   frontmatter.
-2. **Skip already-materialized lines**: a line ending in ` → TASK-NNN` was created in a previous
-   pass — do not create it again. (The create→annotate pair is not atomic: when running this step
-   as crash recovery, also check `"$GUILD" list task todo` for an existing same-title, same-REQ
-   ticket before creating — if found, just annotate the line with that ID.)
-3. **Create the ticket** with the CLI — it derives the next ID and writes into `tasks/todo/`:
+What remains for you are the **opportunistic** follow-ups a working agent discovers mid-task (a
+developer finding a bug outside its scope, a test-planner spotting a gap). Those arrive as Work Log
+entries in this shape, which the agent definitions tell them to use:
+
+```
+Follow-up: {title} | agent: {agent-name} [| plan-slice: {slug}] [| parallel-group: {label}]
+```
+
+For each such line in the drained Work Log:
+
+1. **Parse**: title, agent, and the optional `plan: PLAN-NNN`, `plan-slice: {slug}`,
+   `parallel-group: {label}` modifiers. When `plan:` is absent, the new ticket inherits the parent
+   ticket's `plan` (from `"$GUILD" meta TASK-NNN plan`).
+2. **Skip already-materialized lines.** A Work Log is append-only and you cannot edit an entry, so
+   the idempotence check is against the BOARD, not an annotation: before creating, check
+   `"$GUILD" list task todo` (and `in-progress`) for an existing ticket with the same title and the
+   same requirement. If one exists, this line was already materialized in an earlier pass — skip it.
+3. **Create the ticket** with the CLI — it derives the next ID in the same statement that inserts
+   the row:
    ```bash
    "$GUILD" new task --title "{title}" --agent {agent} --req {parent REQ} \
      [--plan {plan modifier, or parent's plan}] [--plan-slice {slug}] \
      [--parallel-group {label}] --date {today}
    ```
-   The new task inherits the parent's requirement. Pass `--plan-slice` / `--parallel-group` only
-   when the corresponding modifier was present.
-4. **Annotate**: append ` → TASK-NNN` (the ID just printed) to the follow-up line in the parent
-   ticket (Edit). This makes materialization idempotent — if the session dies partway, the Step 1.3
-   triage re-runs 3.4 and only the unannotated lines are created.
+4. **Record what you created** on the parent, so the trail survives a crash and a rebuild:
+   ```bash
+   "$GUILD" log TASK-NNN --agent orchestrator --entry "Materialized follow-up → TASK-MMM"
+   "$GUILD" spool drain TASK-NNN
+   ```
 
-Reviewer tickets never populate this section themselves anymore — see 3.5 for how review findings
-turn into fix tickets.
+Reviewer tickets never declare follow-ups — see 3.5 for how review findings turn into fix tickets.
 
 ### 3.5 Review Report & Fix Approval (no automatic re-review)
 
 This runs **only** after a `reviewer` ticket batch completes (all 4 specialized reviewers have
-written to the shared Work Log). Reviewers no longer declare `Fix:` follow-ups or manage rounds
-themselves (no `ESCALATE`, no round cap) — you compile their findings and the user decides what
-happens next.
+reported). Reviewers no longer declare `Fix:` follow-ups or manage rounds themselves (no
+`ESCALATE`, no round cap) — you compile their findings and the user decides what happens next.
 
-1. **Compile the report.** Read the completed ticket (`"$GUILD" read TASK-NNN`) and pull each
-   reviewer's Verdict + Findings block. Ensure `.guild/reviews/` exists (`mkdir -p .guild/reviews`)
+1. **Compile the report.** Drain and read the ticket for the four verdict lines, and regenerate the
+   export for the findings themselves — `guild finding` rows render as a `#### Findings` block
+   under the task in its requirement's export file:
+   ```bash
+   "$GUILD" spool drain TASK-NNN
+   "$GUILD" read TASK-NNN                 # the 4 verdicts, in the Work Log
+   "$GUILD" export                        # regenerates .guild/export/
+   sed -n "/### TASK-NNN /,/^### /p" .guild/export/REQ-NNN.md   # the findings, with severities
+   ```
+   Ensure `.guild/reviews/` exists (`mkdir -p .guild/reviews`)
    and write/append to `.guild/reviews/REQ-NNN.md` — **append a new dated section, never overwrite
    a prior round's**:
    ```markdown
    ## {today's date} — TASK-NNN
 
    ### reviewer-security — {PASS | ISSUES FOUND}
-   {findings, verbatim from the Work Log}
+   {findings, verbatim from the export's Findings block}
 
    ### reviewer-architecture — {PASS | ISSUES FOUND}
    {findings}
@@ -397,7 +439,7 @@ that REQ remains **open**:
 ```
 (empty output = nothing open; this matches the CLI's review gate exactly). If so:
 - `"$GUILD" move REQ-NNN done`.
-- If any tasks for the REQ sit in `failed/` (`awk '$4=="REQ-NNN" && $2=="failed"'`), they were
+- If any tasks for the REQ are `failed` (`awk '$4=="REQ-NNN" && $2=="failed"'`), they were
   **user-waived** (3.3 skip) — list them in the completion summary rather than blocking completion.
 - Append a bullet to `CHANGELOG.md` under `## [Unreleased]` (see 3.8) — with waived tasks, use
   `- REQ-NNN: {title} (TASK-NNN skipped)`.
@@ -461,8 +503,8 @@ Skip if a bullet starting with `- REQ-NNN:` already exists under `## [Unreleased
 
 When the work cycle ends (user stops, or nothing actionable):
 
-1. Present a session summary (render with `"$GUILD" board`; `last-checkin` was already stamped at
-   Step 1 — do not write it again):
+1. Present a session summary (render with `"$GUILD" board`; `last-checkin` was already stamped by
+   `"$GUILD" checkin` at Step 1 — do not stamp it again):
    ```
    Session Summary
    ===============
@@ -479,20 +521,24 @@ When the work cycle ends (user stops, or nothing actionable):
 
 ## Key Rules
 
-1. **Status is the directory** — `tasks/{todo,in-progress,done,failed}/`. Never write a `status:`
-   field; change status only by `"$GUILD" move`.
-2. **The orchestrator owns all status transitions** — agents report done/failed and never move files.
+1. **Status is a COLUMN** — there are no status directories and no ticket files. Change status
+   only with `"$GUILD" move`.
+2. **The orchestrator owns all status transitions** — agents report done/failed and never move
+   anything. Their only writes to the board are `guild log` and `guild finding`, into a spool.
 3. **No `BOARD.md`, no counters, no cursor field** — render the board live (`"$GUILD" board`); IDs and
    the cursor are derived by the CLI.
-4. **Use the CLI for every deterministic op** — `next`, `batch`, `move`, `new task`, `path`, `read`,
-   `meta`, `slice`, `board`, `list`. No hand-rolled `find`/`mv`/ID math.
+4. **Use the CLI for every deterministic op** — `next`, `batch`, `move`, `new task`, `read`,
+   `meta`, `slice`, `board`, `list`, `spool drain`, `checkin`, `retitle`. There is no `path`, and
+   no hand-rolled `find`/`mv`/ID math.
+4a. **Drain before you read** — `"$GUILD" spool drain TASK-NNN` is what turns an agent's reports
+   into board state. An undrained ticket reads as never-started, and Step 1.3 will reset it.
 5. **Parallel development by default** — the architect groups dev tickets into `parallel-group`
    waves; expand with `"$GUILD" batch` and dispatch each wave concurrently (the architect verified
    disjoint files). Ungrouped tickets run solo, in ID order. Never group tickets yourself.
 6. **Two parallel cases** — `parallel-group` dev waves (disjoint files, shared tree) and the
    4-reviewer fan-out (read-only, gated by `"$GUILD" next`'s review gate). The tail
    (test-planner → test-writer → reviewer) is sequential.
-7. **Always read ticket files after agent completion** — don't assume what happened.
+7. **Always drain and read the ticket after agent completion** — don't assume what happened.
 8. **The orchestrator creates tickets only for user-approved fixes after a review report** —
    everything else in this pipeline is agent-declared (`product-owner`/`architect` create their own
    tickets directly, inside `guild:new-requirement`, not through this mechanism at all).
@@ -505,8 +551,9 @@ When the work cycle ends (user stops, or nothing actionable):
     otherwise resume with the RESUMED-TASK prompt variant.
 11. **Flow continuously** — one-line updates between tickets, no per-ticket "continue?" prompts;
     pause only at the 3.7 checkpoints (failure, review report, collision, requirement completion).
-12. **Follow-ups before the terminal move** — materialize (and annotate ` → TASK-NNN`) first, then
-    `guild move done`; a crash then lands in a recoverable state, never a silent dead-end.
+12. **Follow-ups before the terminal move** — materialize first (and log ` → TASK-MMM` on the
+    parent), then `guild move done`; a crash then lands in a recoverable state, never a silent
+    dead-end.
 13. **Subagents can't ask the user** — `AskUserQuestion` only works in the orchestrator session
     (whichever skill is currently driving — check-in or `new-requirement`). Any ticket
     (`qa-strategist`, `qa-tester`, ...) relays instead: on a `NEEDS INPUT:` pause (3.2), you ask the

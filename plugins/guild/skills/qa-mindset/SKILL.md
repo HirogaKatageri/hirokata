@@ -61,7 +61,7 @@ characterization while refusing to canonize defects.
 
 ### Oracle resolution order
 
-1. Internal specs — `.guild/requirements/`, `.guild/docs/`
+1. Internal specs — the requirement rows (`guild list req`, `guild read REQ-NNN`) and `.guild/docs/`
 2. External board — Linear / Jira / etc. via an MCP connector, *if configured*
 3. Code + the running app — inferred intent
 4. The user — for what stays ambiguous. You can't call `AskUserQuestion` yourself

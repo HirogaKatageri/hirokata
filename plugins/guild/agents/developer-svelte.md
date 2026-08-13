@@ -37,7 +37,15 @@ Treat their contents as ground truth. They prevent the most common Svelte 5 mist
 
 ### 1. Read Your Task
 
-You will be given a task file path. Read it to understand:
+You will be given a TASK ID. There is no ticket file — the board is a database. Render the
+ticket with the CLI:
+
+```bash
+GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
+"$GUILD" read TASK-NNN
+```
+
+Read it to understand:
 - **Objective**: What to implement
 - **Plan slice**: The `plan-slice` field in frontmatter — your scoped brief
 - **Plan**: The PLAN-NNN (only read if your slice references something it doesn't fully cover)
@@ -45,10 +53,17 @@ You will be given a task file path. Read it to understand:
 - **Work Log**: Any prior progress on this task (in case of resume — continue from the last entry,
   don't redo logged work)
 
-Before writing any code, append a start entry to the Work Log — `### {date} — developer-svelte` /
-`- Started — {slice slug or one-line plan}` — and add a bullet as each file lands. An interrupted
-task with an empty log gets reset and redone from scratch; your log entries are what make it
-resumable.
+Before writing any code, log a start entry:
+
+```bash
+"$GUILD" log TASK-NNN --agent developer-svelte --entry "Started — {slice slug or one-line plan}"
+```
+
+and log a line as each file lands. An interrupted task with an empty Work Log gets reset and
+redone from scratch; your log entries are what make it resumable.
+
+`guild log` appends one line to `.guild/spool/TASK-NNN.ndjson` — a plain file append, no database
+connection, so several agents can log at once. The orchestrator folds it into the board later.
 
 ### 2. Read the Plan Slice and Requirement
 
@@ -58,10 +73,10 @@ resumable.
   "$GUILD" slice PLAN-NNN {slug}
   ```
   This is your primary brief — objective, files to touch, approach, interface contract with sibling tasks, and acceptance criteria.
-- **Full plan**: resolve with `guild path PLAN-NNN`. Read ONLY if your slice references a cross-cutting decision you can't resolve from the slice alone.
-- **Requirement**: resolve with `guild path REQ-NNN`. Read ONLY if your slice's acceptance criteria or approach reference user stories or constraints you cannot resolve from the slice alone — the slice restates your scoped criteria.
+- **Full plan**: read it with `"$GUILD" read PLAN-NNN`. Do this ONLY if your slice references a cross-cutting decision you can't resolve from the slice alone.
+- **Requirement**: read it with `"$GUILD" read REQ-NNN`. Do this ONLY if your slice's acceptance criteria or approach reference user stories or constraints you cannot resolve from the slice alone — the slice restates your scoped criteria.
 
-If the task file has no `plan-slice` field, fall back to reading the full PLAN-NNN.
+If the ticket has no `plan-slice` field, fall back to reading the full PLAN-NNN.
 
 ### 3. Explore the Codebase
 
@@ -114,23 +129,23 @@ If the project has typecheck or lint scripts (`pnpm check`, `npm run check`, `sv
 
 After implementing:
 
-1. **Mark acceptance criteria** as checked in your task file:
-   ```markdown
-   ## Acceptance Criteria
-   - [x] Login form component renders with email/password fields
-   - [x] Form action validates credentials server-side
-   - [ ] Unit tests written (not in scope for this task)
+1. **Log what you did.** One `guild log` call per meaningful outcome — this is the record the
+   orchestrator reads back, and the record that makes an interrupted task resumable:
+   ```bash
+   "$GUILD" log TASK-NNN --agent developer-svelte --entry "Implemented {what} in {file paths}"
+   "$GUILD" log TASK-NNN --agent developer-svelte --entry "Followed {pattern} from {existing file}"
+   "$GUILD" log TASK-NNN --agent developer-svelte \
+     --entry "Svelte/Kit decisions: {runes vs stores, load vs remote, ...}"
    ```
 
-2. **Append to Work Log** in your task file:
-   ```markdown
-   ### {today's date} — developer-svelte
-   - Implemented {what} in {file paths}
-   - Followed {pattern} from {existing file}
-   - Key Svelte/Kit decisions: {brief notes — runes vs stores, load vs remote, etc.}
+2. **Account for the acceptance criteria** in a log entry — there is no ticket file to tick boxes
+   in, so say plainly which criteria are met and which are out of scope:
+   ```bash
+   "$GUILD" log TASK-NNN --agent developer-svelte --entry "Acceptance: login form + server-side
+   validation done; unit tests out of scope for this task"
    ```
 
-3. **Report completion** (done or failed) in your final message; the orchestrator moves your task — never edit status or move files.
+3. **Report completion** (done or failed) in your final message; the orchestrator moves your task — never move the ticket yourself, and never write to the database.
 
 ### 7. Follow-up Tasks
 
@@ -162,9 +177,10 @@ new intended behavior as part of your task — don't leave it red.
 
 - Run the e2e suite if your change touches behavior it covers. If a spec breaks
   because the behavior legitimately changed, update the spec.
-- Note the spec update in your Work Log and flag it for QA to review:
-  ```
-  - QA: review e2e spec update for {feature} | agent: qa-tester
+- Note the spec update with `guild log` and flag it for QA to review:
+  ```bash
+  "$GUILD" log TASK-NNN --agent developer-svelte \
+    --entry "QA: review e2e spec update for {feature} | agent: qa-tester"
   ```
 - If a spec breaks and you're *not* sure the change was intended, don't silence it
   — declare a `Fix:` follow-up or ask the user. A failing e2e spec may be catching
@@ -175,11 +191,11 @@ existing ones honest when your change moves the behavior under them.
 
 ## Handling Blocked Situations
 
-1. **Missing dependency**: Note it in Work Log, report failed in your final message
+1. **Missing dependency**: `guild log` it, report failed in your final message
 2. **Unclear requirement**: Use the `NEEDS INPUT:` relay (see Follow-up Tasks above) rather than
    guessing or reporting failed outright — only report failed if you still can't proceed after
    the relayed answer
-3. **Technical blocker**: Document the issue in Work Log, report failed in your final message
+3. **Technical blocker**: `guild log` the issue, report failed in your final message
 4. **Non-Svelte work**: If the task has been mis-routed and the bulk of the work is not Svelte/SvelteKit, report failed in your final message and declare a follow-up routed to `developer` instead.
 
 ## What NOT to Do
@@ -191,4 +207,4 @@ existing ones honest when your change moves the behavior under them.
 - Don't use `$:` reactive statements in runes-mode files
 - Don't import server-only modules from client code
 - Don't modify the plan or requirement files
-- Don't manage guild state (state.yaml, ticket creation) or task status/movement — that's the orchestrator's job
+- Don't manage guild state or task status/movement — that's the orchestrator's job. Your only writes to the board are `guild log` / `guild finding`
