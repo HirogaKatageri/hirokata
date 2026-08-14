@@ -3,6 +3,8 @@ name: reviewer-edge-case
 model: haiku
 color: magenta
 tools: ["Read", "Grep", "Glob", "Bash"]
+capabilities: [review, edge-case]
+serial: false
 description: |
   Use this agent for edge case code review. Identifies unhandled boundary
   conditions, null/empty inputs, error scenarios, concurrency issues, and

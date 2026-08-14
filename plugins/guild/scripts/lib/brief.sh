@@ -141,6 +141,13 @@ SQL
 # task for its requirement is still open. Matched exactly, and other reviewers are ignored
 # in the gate, because two reviewer tickets on one requirement otherwise gate each other
 # into a permanent `none`.
+#
+# STAGE 3: `blocked` IS PART OF THE GATE'S OPEN SET, `failed` is not. The reasoning lives
+# in one place — THE BLOCKED CONTRACT at the top of lib/artifacts.sh, decision 2 — and the
+# short form is that a review certifying a requirement whose implementation slice was never
+# dispatched is a green nobody can tell from a real one. This clause and cmd_next's are the
+# SAME predicate written twice, and the header above forbids them to diverge: if you edit
+# one, edit the other in the same change.
 _brief_bounty_where() {
   cat <<'SQL'
 t.status = 'todo'
@@ -148,7 +155,7 @@ t.status = 'todo'
          OR NOT EXISTS (SELECT 1 FROM task o
                          WHERE o.requirement_id = t.requirement_id
                            AND o.id <> t.id
-                           AND o.status IN ('todo','in-progress')
+                           AND o.status IN ('todo','in-progress','blocked')
                            AND COALESCE(o.agent,'') <> 'reviewer') )
 SQL
 }
@@ -403,18 +410,24 @@ _brief_sql() {
 
     goal_expr="'  ' || $(_brief_txt 'g.id' 32) || '  [p' || g.priority || ' ' || $(_brief_txt 'g.status' 24) || ']  ' || $(_brief_txt 'g.title' 90) || CASE WHEN ph.id IS NULL THEN '  ·  no open phase' ELSE '  ·  on ' || $(_brief_txt 'ph.id' 32) || ' ' || $(_brief_txt 'ph.title' 60) END || '  ·  ' || COALESCE(SUM(CASE WHEN r.status = 'done' THEN 1 ELSE 0 END), 0) || '/' || COUNT(r.id) || ' req done'"
 
-    flight_expr="'  ' || $(_brief_txt 't.id' 32) || '  ' || $(_brief_txt 't.title' 80) || '  ·  ' || $(_brief_txt "COALESCE(NULLIF(t.agent,''), 'unassigned')" 40) || '  ·  ' || $(_brief_txt 't.requirement_id' 32) || '  ·  ' || $age_expr"
+    # `_render_task_who`, NOT `COALESCE(NULLIF(t.agent,''), 'unassigned')` — the same
+    # shared expression `guild board` and `guild list task` print, for the same reason.
+    # Stage 3 made `--agent` optional, so a capability-routed ticket has an empty
+    # `t.agent` and this column said `unassigned` about work the roster can absolutely
+    # place. Three surfaces printing three answers about one ticket is the mismatch;
+    # `needs:frontend+implement` is the answer all three now give.
+    flight_expr="'  ' || $(_brief_txt 't.id' 32) || '  ' || $(_brief_txt 't.title' 80) || '  ·  ' || $(_brief_txt "$(_render_task_who 't.id')" 40) || '  ·  ' || $(_brief_txt 't.requirement_id' 32) || '  ·  ' || $age_expr"
 
     block_expr="'  ' || $(_brief_txt 't.id' 32) || '  ' || $(_brief_txt 't.title' 80) || '  ·  ' || $(_brief_txt 't.status' 24) || '  ·  waiting on ' || $(_brief_txt "COALESCE((SELECT group_concat(x, ' ') FROM (SELECT b.id AS x FROM task_dependency d JOIN task b ON b.id = d.depends_on WHERE d.task_id = t.id AND b.status NOT IN ('done','waived') ORDER BY b.id)), 'nothing recorded')" 80)"
 
-    bounty_row_expr="'  ' || $(_brief_txt 't.id' 32) || '  ' || $(_brief_txt 't.title' 80) || '  ·  ' || $(_brief_txt "COALESCE(NULLIF(t.agent,''), 'unassigned')" 40) || '  ·  ' || $(_brief_txt 't.requirement_id' 32) || '  ·  p' || t.priority"
+    bounty_row_expr="'  ' || $(_brief_txt 't.id' 32) || '  ' || $(_brief_txt 't.title' 80) || '  ·  ' || $(_brief_txt "$(_render_task_who 't.id')" 40) || '  ·  ' || $(_brief_txt 't.requirement_id' 32) || '  ·  p' || t.priority"
 
     bug_expr="'  ' || $(_brief_txt 'b.id' 32) || '  ' || $(_brief_txt 'b.severity' 16) || '  ' || $(_brief_txt 'b.status' 16) || '  ' || $(_brief_txt 'b.title' 80) || '  ·  found by ' || $(_brief_txt "COALESCE(NULLIF(b.found_by,''), 'unknown')" 40) || CASE WHEN COALESCE(b.fix_task_id,'') = '' THEN '' ELSE '  ·  fix ' || $(_brief_txt 'b.fix_task_id' 32) END"
 
     # `[unresolved]` / `[waived]` sits where the bug row puts its status, because it is the
     # same question — is this still mine to deal with? The reason clause is dropped rather
     # than blanked when the work log carries nothing, exactly as the bug row drops `fix`.
-    fail_expr="'  ' || $(_brief_txt 't.id' 32) || '  [' || CASE WHEN $waived_expr THEN 'waived' ELSE 'unresolved' END || ']  ' || $(_brief_txt 't.title' 80) || '  ·  ' || $(_brief_txt "COALESCE(NULLIF(t.agent,''), 'unassigned')" 40) || '  ·  ' || $(_brief_txt 't.requirement_id' 32) || CASE WHEN COALESCE($reason_expr, '') = '' THEN '' ELSE '  ·  ' || $(_brief_txt "$reason_expr" 100) END"
+    fail_expr="'  ' || $(_brief_txt 't.id' 32) || '  [' || CASE WHEN $waived_expr THEN 'waived' ELSE 'unresolved' END || ']  ' || $(_brief_txt 't.title' 80) || '  ·  ' || $(_brief_txt "$(_render_task_who 't.id')" 40) || '  ·  ' || $(_brief_txt 't.requirement_id' 32) || CASE WHEN COALESCE($reason_expr, '') = '' THEN '' ELSE '  ·  ' || $(_brief_txt "$reason_expr" 100) END"
 
     # severity · disposition · reviewer · the task it came from · the summary — then
     # file:line when the reviewer gave one, and the fix ticket when one is linked. The
@@ -451,7 +464,25 @@ _brief_sql() {
   # The transport is `_brief_fact_select`, shared with `guild dashboard`; only the LIST is
   # local. Note for the harness's interpolation audit: every key below is fixed text from
   # this heredoc, never user input, and the three `$*_expr` values interpolated into it
-  # are SQL fragments this function composed and folded to one line.
+  # are SQL fragments this function composed and folded to one line. THE HEREDOC IS DATA,
+  # NOT SQL — every line becomes one `UNION ALL SELECT 'H key=' || (expr)` — so it takes no
+  # comments of its own, in either syntax. Anything to say about a fact is said here.
+  #
+  # `events_board` IS `events_total` MINUS THE ROSTER, and it exists because ONE consumer
+  # asks a different question: "is this guild empty". Stage 3 seeds the roster during
+  # `guild init`, which writes one `enlisted` row per agent file before the guild master
+  # has done anything at all — so a brand-new guild had a non-zero `events_total` and
+  # reported itself as non-empty, swallowing the "here is how to start" briefing that is
+  # the entire point of the empty case. Filtered by SUBJECT TYPE rather than by verb,
+  # because the roster has three verbs (`enlisted`, `updated`, `retired`) and only the
+  # subject stays 'agent'.
+  #
+  # `events_total` KEEPS ITS PLAIN MEANING — every row, enlistments included — so it still
+  # agrees with `guild dashboard`'s fact of the same name, which the page uses for
+  # "showing N of M event(s)" over a list that DOES show them. One name, one value, in both
+  # modules; the narrower question got its own name instead of quietly redefining a shared
+  # one. Same for `events_since` and the Since Last Check-in section: enlistments are real
+  # history, they are just not work.
   hsel="$(
     _brief_fact_select <<FACTS
 goals_total (SELECT COUNT(*) FROM goal)
@@ -476,6 +507,7 @@ coverage_never (SELECT COUNT(*) FROM coverage WHERE COALESCE(last_inspected_at,'
 coverage_due (SELECT COUNT(*) FROM coverage c WHERE $coverage_expr)
 docs_total (SELECT COUNT(*) FROM doc)
 events_total (SELECT COUNT(*) FROM event)
+events_board (SELECT COUNT(*) FROM event WHERE subject_type <> 'agent')
 events_since (SELECT COUNT(*) FROM event e WHERE ($since_expr) = '' OR e.ts >= ($since_expr))
 gaps_open (SELECT COUNT(*) FROM capability_request WHERE status = 'open')
 FACTS
@@ -621,7 +653,7 @@ _brief_text() {
 
       # An entirely empty guild gets a briefing, not eight empty sections.
       if (num("goals_total") + num("req_total") + num("tasks_total") + num("bugs_total") \
-          + num("coverage_total") + num("events_total") == 0) {
+          + num("coverage_total") + num("events_board") == 0) {
         print ""
         print "The guild is empty — nothing is on the board yet."
         print ""

@@ -3,6 +3,8 @@ name: architect
 model: opus
 color: red
 tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash", "Agent"]
+capabilities: [architecture]
+serial: false
 description: |
   Use this agent when the guild needs architectural planning. The architect reads
   requirements, analyzes the codebase, and produces implementation plans with
@@ -135,6 +137,157 @@ Based on the requirement and codebase analysis:
    justified in Technical Decisions.
 6. **Identify risks**: What could go wrong? What assumptions are we making?
 
+### 3.5 Resolve Capabilities — Before You Write a Single Ticket
+
+Bind the CLI once here; every command from this step on uses it:
+
+```bash
+GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
+```
+
+**A ticket names the CAPABILITY the work requires, not the member who does it.** That is the whole
+point of the roster (design §5): `agents/developer-rust.md` with the right tags becomes eligible for
+work the moment it is synced — no plan rewrite, no skill edit, no chain rewiring. Your job here is to
+decide, per slice, what the work actually requires.
+
+**The vocabulary is closed. These seventeen words are all there is (§5.3):**
+
+```
+implement · frontend · backend · svelte · sveltekit
+test-planning · test-authoring · e2e
+review · security · architecture · business-logic · edge-case
+research · qa-planning · qa-execution · requirements
+```
+
+It is small on purpose: two agents tagged `e2e` and `end-to-end` are one capability the matcher
+quietly stops seeing. **Never invent a word.** Anything the plan needs that is not on that list is a
+roster gap, and §5.4 below is how you raise it.
+
+**How the matcher picks (§5.2), so you can aim it:**
+
+1. **Eligible** = every active member whose capabilities are a *superset* of your `--needs` set.
+2. **Ranked** by preferred-covered (desc) → total capability count (**asc — a specialist beats a
+   generalist**) → name.
+3. The orchestrator dispatches rank 1.
+
+So `--needs` decides *who is allowed*, and `--prefers` decides *who gets it*. Use `--prefers` for the
+capability that makes one member the better choice without making the others ineligible — it is what
+lets a Svelte slice reach `developer-svelte` while still being workable by `developer` if the roster
+ever loses the specialist.
+
+**This is the routing table for the guild as it stands today.** Every row below was verified by
+running `guild match` against a live 14-member roster — the right-hand column is the actual rank-1
+result, not an assumption:
+
+| Slice | Declare | Rank 1 today |
+|---|---|---|
+| Backend / service / generic implementation | `--needs implement,backend` | `developer` |
+| Frontend in a non-Svelte stack | `--needs implement,frontend` | `developer` |
+| Svelte / SvelteKit slice | `--needs implement,frontend --prefers svelte,sveltekit` | `developer-svelte` |
+| Test planning | `--needs test-planning` | `test-planner` |
+| Unit / integration test authoring | `--needs test-authoring` | `test-writer` |
+| End-to-end spec authoring | `--needs test-authoring --prefers e2e` | `qa-tester` |
+| Technology research (standalone ticket) | `--needs research` | `researcher` |
+
+Use the **Svelte signals you already know** to decide whether to add the `--prefers svelte,sveltekit`
+pair: the project has `svelte` or `@sveltejs/kit` in `package.json`, and the slice's "Files to Touch"
+lists `.svelte`, `.svelte.ts`, `.svelte.js`, `+page.*`, `+layout.*`, `+server.*`, `+error.svelte`,
+`hooks.server.*`, `hooks.client.*`, `app.html`, `svelte.config.js`, or files under `src/routes/`,
+`src/lib/`, or `src/params/`. In a mixed-stack repo, decide **per slice**, not per plan — a slice
+that builds a Go API declares `implement,backend`; its sibling that wires the Svelte UI adds the
+prefers pair.
+
+**Pinning a member is still legal, and sometimes right.** `--agent NAME` gives the bounty to one
+member outright. §5.2 calls that a **deviation that needs a reason**, so when you pin, say why in the
+plan's Technical Decisions table, and pass `--needs` **as well** — the pin says who does it, the
+`--needs` records what the work required, and that is what makes the pin reviewable later.
+
+**Two pins are not deviations — they are required, and dropping them breaks the board:**
+
+- **The reviewer ticket MUST keep `--agent reviewer`.** `guild next`'s review gate is keyed on the
+  literal string `task.agent = 'reviewer'`. A review ticket declared with `--needs review` alone has
+  an empty `agent` column, so the gate never fires. **Verified:** with the dev slice of a requirement
+  still open, `guild next` returned the `--needs review` ticket immediately, and returned `none` for
+  the identical ticket carrying `--agent reviewer`. A review that certifies code nobody built is a
+  green nobody can tell from a real one. Declare it `--agent reviewer --needs review`.
+- **The reviewer ticket is one ticket, not four.** Check-in fans it out to the four specialized
+  reviewers itself. Do not create four review tickets, and do not declare `--needs review,security`
+  and friends — that is what the fan-out is for.
+
+**Sanity check before you move on:** every capability you are about to write is one of the seventeen
+words above, or has an open `capability_request` behind it. Nothing else.
+
+### 3.6 Recruiting — When the Plan Needs a Capability the Guild Does Not Have (§5.4)
+
+A roster gap found at *dispatch* time is already a failure: the plan is approved, work is underway,
+and a bounty has nobody to take it. So you resolve it **here, at plan time, while nothing has been
+built yet** — and you do **not** quietly route it to the nearest generalist.
+
+You know you have a gap when the plan genuinely needs something outside §5.3's seventeen words
+(`rust`, `embedded`, `terraform`, `ios`). Do this, in this order:
+
+**1. File the gap.**
+
+```bash
+"$GUILD" capability-request rust --req REQ-NNN \
+  --rationale "Three plan slices are Rust crates; 'developer' has no Rust idiom guidance and would
+produce non-idiomatic error handling." \
+  --proposes developer-rust \
+  --spec "Sonnet · tools Read/Grep/Glob/Write/Edit/Bash · owns Rust implementation slices, follows
+the plan's crate boundaries"
+```
+
+It prints the request's numeric id. The command refuses, without writing anything, if the capability
+is already in the vocabulary or an active member already declares it — so it is also the check that
+you were right about the gap. It does three jobs: it records a decision the guild master has not made
+yet, it puts the gap in `guild brief`'s **Roster Gaps** section, and it admits the word to the
+vocabulary so `guild sync-agents` will accept an agent file declaring it.
+
+**Filing is one-way — file only a gap you are sure of.** A request is created `open` and the only
+thing that ever moves it is `guild sync-agents` admitting an agent that declares the capability
+(`open → created`). Nothing sets `declined`, so a speculative request sits in the guild master's
+briefing forever.
+
+**2. Stop and ask. You may not create an agent, and neither may the orchestrator without the user.**
+Raise it through the normal relay — this is exactly what `NEEDS INPUT:` is for, and there is no gate
+to raise it at (gates are a later stage):
+
+```
+NEEDS INPUT:
+1. ROSTER GAP — this plan needs a capability the guild does not have: `rust`
+   Filed as capability request 3 (`guild capability-requests --open`).
+   Rationale: three plan slices are Rust crates; `developer` has no Rust idiom guidance.
+   Proposed member: developer-rust — Sonnet · tools Read/Grep/Glob/Write/Edit/Bash ·
+   owns Rust implementation slices, follows the plan's crate boundaries.
+
+   Options:
+   (a) Create the agent — I then declare those slices `--needs implement,rust`
+   (b) Assign to `developer` anyway — I declare `--agent developer --needs implement,rust`
+       and record the pin as a deviation in Technical Decisions
+   (c) Revise the plan so the capability is not needed — tell me how and I will re-slice
+```
+
+**3. Do not create the affected slice's ticket until the answer comes back.** There is no command
+that changes a task's agent or capabilities after it is created, so a ticket written before the
+decision cannot be corrected — it can only be dropped and recreated. Create every *unaffected*
+ticket as normal; hold the ones that turn on the gap.
+
+**4. Act on the answer:**
+
+- **(a) create** — the orchestrator scaffolds `agents/developer-rust.md` from your proposed spec, the
+  user reviews it, and `guild sync-agents` admits it. Then create the tickets with
+  `--needs implement,rust` as you would any other. **Verified end to end:** after the file was added
+  and synced, `guild match` ranked `developer-rust` first for a `implement,rust` ticket and the
+  bounty went from `blocked / no-eligible-agent:implement,rust` to `ready / developer-rust`.
+- **(b) assign anyway** — `--agent developer --needs implement,rust`, and write the pin into
+  Technical Decisions with the reason. The gap stays open in the briefing, which is correct: the
+  guild still cannot do this work well, and the record says so. Note in your report that
+  `guild bounties` will label this ticket `no-eligible-agent` — `match` answers the capability
+  question and ignores the pin — but the ticket **is** dispatchable: `guild next` returns it and
+  check-in dispatches on the `agent` field. Verified; say it so nobody parks it by mistake.
+- **(c) revise** — re-slice so the capability is not required, and say in Technical Decisions what
+  you gave up.
+
 ### 4. Write the Plan
 
 Write the plan as one overview plus one slice brief per developer task. The overview is for reviewers and orientation; each slice brief is the focused, self-contained brief a single developer reads to do their work.
@@ -249,29 +402,40 @@ brief lives now that there are no slice files, and it is what `guild read TASK-N
 `## Objective`:
 
 ```bash
-"$GUILD" new task --title "Implement {component-1}" --agent developer --req REQ-NNN \
+# A backend slice: any member who can implement a backend is eligible; today that is `developer`.
+"$GUILD" new task --title "Implement {component-1}" --needs implement,backend --req REQ-NNN \
   --plan PLAN-NNN --plan-slice {slug-1} --date {today} \
   --objective "$(cat <<'SLICE'
 {the whole slice brief for component-1, verbatim}
 SLICE
 )"
-"$GUILD" new task --title "Implement {component-2}" --agent developer --req REQ-NNN \
+# A Svelte slice: `developer` stays eligible, `developer-svelte` wins on the preferred pair.
+"$GUILD" new task --title "Implement {component-2}" --needs implement,frontend \
+  --prefers svelte,sveltekit --req REQ-NNN \
   --plan PLAN-NNN --plan-slice {slug-2} --parallel-group A --date {today} \
   --objective "$(cat <<'SLICE'
 {the whole slice brief for component-2, verbatim}
 SLICE
 )"
-"$GUILD" new task --title "Implement {component-3}" --agent developer --req REQ-NNN \
+"$GUILD" new task --title "Implement {component-3}" --needs implement,frontend \
+  --prefers svelte,sveltekit --req REQ-NNN \
   --plan PLAN-NNN --plan-slice {slug-3} --parallel-group A --date {today} \
   --objective "$(cat <<'SLICE'
 {the whole slice brief for component-3, verbatim}
 SLICE
 )"
-"$GUILD" new task --title "Plan tests for {feature}" --agent test-planner --req REQ-NNN \
+"$GUILD" new task --title "Plan tests for {feature}" --needs test-planning --req REQ-NNN \
   --plan PLAN-NNN --date {today}
-"$GUILD" new task --title "Review {feature} implementation" --agent reviewer --req REQ-NNN \
-  --plan PLAN-NNN --date {today}
+# The reviewer ticket KEEPS --agent reviewer — the review gate is keyed on that exact string.
+# --needs review rides along as the record of what the work requires.
+"$GUILD" new task --title "Review {feature} implementation" --agent reviewer --needs review \
+  --req REQ-NNN --plan PLAN-NNN --date {today}
 ```
+
+`--agent` and `--needs` are both optional individually, but **a ticket must carry at least one of
+them** — `guild new task` refuses one that carries neither, and names both alternatives when it does.
+`--agent NAME` alone is still exactly the v4 ticket and still works on a guild that has never run
+`guild sync-agents`; use it when you are pinning deliberately (see 3.5), not as a default.
 
 **Create the developer tickets first (lower IDs), then the test-planner, then the reviewer** — the
 cursor runs in ID order, so the test-planner is reached only after every developer ticket is
@@ -285,12 +449,18 @@ dispatches each wave concurrently. Parallel is the default — leave a ticket un
 is foundational or its file set can't be confidently bounded. Never put a `--parallel-group` on the
 test-planner or reviewer ticket.
 
-**Choosing the developer agent.** For each implementation task, route to the right specialist:
+**Routing is Step 3.5's table, not a choice you make here.** Declare what the slice requires and let
+the matcher answer; do not hand-pick `developer` vs `developer-svelte` per ticket. If you want to
+know who a ticket would actually reach, ask:
 
-- `agent: developer-svelte` — when the task's primary work is in a Svelte / SvelteKit project. Signals: the project has `svelte` or `@sveltejs/kit` in `package.json`, the slice's "Files to Touch" lists `.svelte`, `.svelte.ts`, `.svelte.js`, `+page.*`, `+layout.*`, `+server.*`, `+error.svelte`, `hooks.server.*`, `hooks.client.*`, `app.html`, `svelte.config.js`, or files under `src/routes/`, `src/lib/`, or `src/params/`.
-- `agent: developer` — for everything else (backend services in non-Svelte stacks, infrastructure, scripts, non-Svelte frontends, generic library code).
+```bash
+"$GUILD" match TASK-NNN            # ranked: "1 developer-svelte 2/2 4 capability"
+```
 
-In a mixed-stack repo, route per slice rather than per plan — a slice that builds a Rust API uses `developer`; a sibling slice that wires up the Svelte UI uses `developer-svelte`.
+Column 2 is the member the orchestrator will dispatch. If it prints an error naming missing
+capabilities instead, you have a roster gap you did not resolve in Step 3.6 — go back and resolve it
+rather than editing the ticket, because **there is no command that changes a task's agent or
+capabilities after creation.** Drop it (`guild move TASK-NNN failed`) and create it again.
 
 Every developer ticket MUST carry `--plan-slice` with its slice **slug**. The test-planner and
 reviewer tickets orient from the overview and the implementation itself, so they need no slice
@@ -299,9 +469,13 @@ modifier.
 ### 6. Report to the Orchestrator
 
 Report completion in your final message: the PLAN-NNN id, and the list of ticket IDs you
-created (developer(s), test-planner, reviewer) with their `parallel-group` waves noted. The
-orchestrator picks these up in the normal work cycle — you do not move any ticket's status
-yourself.
+created (developer(s), test-planner, reviewer) with their `parallel-group` waves noted **and the
+capabilities each one declares**. The orchestrator picks these up in the normal work cycle — you do
+not move any ticket's status yourself.
+
+If you filed any `capability_request`, say so on its own line with its id and how it was resolved
+(agent created / pinned to an existing member / plan revised) — the orchestrator reports that to the
+user, and it stays in `guild brief`'s Roster Gaps until somebody actually recruits for it.
 
 ## What NOT to Do
 
@@ -315,3 +489,13 @@ yourself.
   the same session
 - Don't create or reassign goals and phases — flag the mismatch in your report and let the guild
   master decide
+- **Don't invent a capability.** The vocabulary is the seventeen words in Step 3.5 plus whatever a
+  `capability_request` has legitimized. A ticket declaring a word nobody has matches nobody, goes
+  `blocked`, and holds its requirement's review gate closed
+- **Don't drop `--agent reviewer` from the review ticket.** It is what closes the review gate;
+  `--needs review` alone opens it
+- **Don't create an agent file, and don't tell the orchestrator to create one on your say-so.** The
+  roster is the guild master's layer, exactly like goals and phases. You file the gap and propose the
+  spec; the user decides
+- **Don't create a ticket for a slice whose capability gap is unresolved** — there is no way to
+  change a ticket's agent or capabilities afterwards

@@ -3,6 +3,8 @@ name: developer-svelte
 model: sonnet
 color: orange
 tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash", "Skill"]
+capabilities: [implement, frontend, svelte, sveltekit]
+serial: false
 skills:
   - guild:svelte-core
   - guild:svelte-build-deploy

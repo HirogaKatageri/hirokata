@@ -175,7 +175,8 @@ no `set -e` (the dispatcher owns that).
 | `lib/quality.sh` | `coverage`: the quality areas the QA discipline maps, and the inspection clock that makes "what is due" a query |
 | `lib/brief.sh` | `brief`: the structured briefing, text and JSON |
 | `lib/dashboard.sh` + `dashboard.tmpl.html` | `dashboard`: the six-view self-contained HTML page and the data it inlines |
-| `lib/init.sh` | `init`, v4 archival, docs/qa carry-over, `rebuild`, `journal` subcommands |
+| `lib/roster.sh` | `sync-agents`, `match`, `bounties`, `capability-request(s)`: the roster, the deterministic matcher and recruiting |
+| `lib/init.sh` | `init`, v4 archival, docs/qa carry-over, roster seeding, `rebuild`, `journal` subcommands |
 
 **One answer per problem, and it lives in the module that owns it.** Stage 2 added four
 modules written independently, and the reconciliation that followed is a rule, not a
@@ -208,7 +209,7 @@ regexes are not an acceptable fix here.
 
 | Command | Purpose |
 |---------|---------|
-| `guild init [--mode local] [--url-env N] [--token-env N] [--yes] [DATE]` | Create `config.yaml`, schema, journal, `spool/`, `export/`, `docs/`, `qa/`, `reviews/`; archive a v4 board; carry over `docs/` + `qa/`. Idempotent and resumable. `--mode cloud` is refused |
+| `guild init [--mode local] [--url-env N] [--token-env N] [--yes] [DATE]` | Create `config.yaml`, schema, journal, `spool/`, `export/`, `docs/`, `qa/`, `reviews/`; archive a v4 board; carry over `docs/` + `qa/`; **seed the roster** from `agents/*.md`. Idempotent and resumable. `--mode cloud` is refused |
 | `guild goal new --title T [--body B] [--priority 1-5] [--date D]` | Create a goal; prints `<GOAL-ID> <title>` |
 | `guild goal list [status]` | `<GOAL-ID> <status> <priority> <phases-done>/<total> <title>`, by priority then ID |
 | `guild goal show <GOAL-ID>` | The goal, its phases, and their requirements, as markdown |
@@ -232,14 +233,19 @@ regexes are not an acceptable fix here.
 | `guild doc list` | `<slug> <updated> <title>` |
 | `guild doc search <query>` | Case-insensitive substring search over title and body (`LIKE`; no FTS5 on TursoDB) |
 | `guild new req --title T [--desc D \| --body B] [--date D]` | Create a requirement; prints the ID |
-| `guild new task --title T --agent A --req REQ-NNN [--plan PLAN-NNN] [--plan-slice slug] [--parallel-group LABEL] [--objective O \| --body B] [--date D]` | Create a task; prints the ID |
+| `guild new task --title T --req REQ-NNN (--agent A \| --needs cap,cap) [--prefers cap,cap] [--plan PLAN-NNN] [--plan-slice slug] [--parallel-group LABEL] [--objective O \| --body B] [--date D]` | Create a task; prints the ID. **One of `--agent` or `--needs` is required**; both together pin a member *and* record what the work needed |
 | `guild new plan --title T --req REQ-NNN [--desc D \| --body B] [--task TASK-NNN] [--date D]` | Create a plan; prints the ID |
 | `guild read <ID>` | Render the artifact as markdown, from the database |
 | `guild meta <ID> [field]` | Print the frontmatter block (or one field) — cheaper than `read` |
 | `guild status <ID>` | Print the artifact's status |
 | `guild slice <PLAN-ID> <slug>` | Print a plan slice's body |
 | `guild next-id <req\|task\|plan>` | Print the next available ID number (`NNN`) |
-| `guild move <ID> <status>` | Set status to `todo`\|`in-progress`\|`done`\[\|`failed`\]; prints the ID |
+| `guild move <ID> <status>` | Set status to `todo`\|`in-progress`\|`done`\|`failed`, and for a task also `blocked`; prints the ID. `blocked → done` is the one refused transition |
+| `guild sync-agents [--dry-run]` | Scan `agents/*.md` frontmatter into `agent` + `agent_capability`. Idempotent: new members added, removed members **deactivated** (never deleted), capability sets replaced. `$GUILD_AGENTS_DIR` overrides where it looks |
+| `guild match <TASK-ID> [--json]` | The ranked eligible members, `<rank> <agent> <preferred-covered>/<total> <capabilities> <source>`. Rank 1 is the dispatch target. Exits 1 naming the missing capabilities when nobody is eligible |
+| `guild bounties [--json]` | Open, dependency-satisfied tasks with their matched member — then everything that **cannot** be worked and why (`status-blocked`, `deps:<ids>`, `no-eligible-agent:<caps>`) |
+| `guild capability-request <cap> --req REQ-NNN --rationale "…" --proposes NAME [--spec "…"]` | File a roster gap; prints the request ID. Also **admits the capability to the vocabulary**, so a new agent file declaring it will sync |
+| `guild capability-requests [--open]` | `<id> <status> <capability> <req> <proposed-agent> <rationale>` |
 | `guild retitle <ID> "New title"` | Change the title (v4 edited the file's frontmatter); fixes up the body's `# ` heading when it still matches |
 | `guild checkin [YYYY-MM-DD]` | Record the check-in date — the **only** writer of `last-checkin` |
 | `guild log <TASK-ID> --agent A --entry "…"` | **Agent write.** Append one work-log entry to the task's spool |
@@ -259,7 +265,9 @@ regexes are not an acceptable fix here.
 
 Environment: `GUILD_DIR` (guild root, default `.guild`), `GUILD_ACTOR` (who mutations are
 attributed to, default `orchestrator`), `GUILD_SCHEMA` (override the path to `schema.sql`),
-`GUILD_ASSUME_YES` (skip the v4 archival prompt).
+`GUILD_AGENTS_DIR` (where `sync-agents` reads agent definitions; defaults to
+`$CLAUDE_PLUGIN_ROOT/agents`, then the checkout's own `agents/`), `GUILD_ASSUME_YES` (skip
+the v4 archival prompt).
 
 ### There is no `guild path`
 
@@ -297,15 +305,20 @@ orchestrator's own input.
   `guild doc put` is an upsert, and `guild bug` has `fix` / `close`.
 - **No `guild clear` / `guild delete` / `guild archive`.** `guild:clear-board` refuses rather than
   no-op'ing, and `guild:release` snapshots the export instead of moving files.
-- **Stage 3–5 tables have no writers yet**, by design (design §13): `agent`,
-  `agent_capability`, `task_capability`, `capability_request`, `graph_node`, `graph_edge`,
-  `graph_deviation`, `gate`, `task_dependency`, `inspection`, `inspection_coverage`. They
-  exist in `schema.sql` so no stage needs a migration. (`coverage` is **not** on this list:
-  it is Stage 2 and has `coverage set` / `coverage inspect`. `inspection` is Stage 4's
-  record of an inspection *pass* over several areas, which is a different table.) `guild brief` and `guild dashboard`
-  already read several of them — the Roster Gaps section, the Blocked section's `waiting on`,
-  and the dashboard's Graph view are wired and simply empty, which is why the Graph view says
-  so rather than drawing a blank chart.
+- **Stage 4–5 tables have no writers yet**, by design (design §13): `graph_node`,
+  `graph_edge`, `graph_deviation`, `gate`, `task_dependency`, `inspection`,
+  `inspection_coverage`. They exist in `schema.sql` so no stage needs a migration.
+  (`coverage` is **not** on this list: it is Stage 2 and has `coverage set` /
+  `coverage inspect`. `inspection` is Stage 4's record of an inspection *pass* over several
+  areas, which is a different table. The four roster tables — `agent`, `agent_capability`,
+  `task_capability`, `capability_request` — came off this list in Stage 3.) `guild brief`
+  and `guild dashboard` already read several of the remaining ones: the Blocked section's
+  `waiting on` and the dashboard's Graph view are wired and simply empty, which is why the
+  Graph view says so rather than drawing a blank chart.
+- **Nothing reads `task_dependency` into existence.** `guild bounties` reports `deps:<ids>`
+  and `guild brief` reports `waiting on`, both correctly — but no command *creates* a
+  dependency, so today every task's dependency set is empty and both clauses are inert.
+  The graph writes them in Stage 4.
 - **`guild export --json` still dumps Stage 1's tables only** (state, requirements, plans,
   slices, tasks, work log, findings). The dashboard does not read it — `guild dashboard --json`
   is its own document, with goals, phases, bugs, coverage and the activity feed. Two JSON
@@ -356,6 +369,182 @@ Unchanged from v4, now expressed as one query:
    actually file, the behavior is identical to v4.
 4. Prints `none` when nothing is actionable.
 
+`blocked` never appears here, and it needs no clause to stay out: steps 1 and 2 ask for
+`in-progress` and `todo`, and `blocked` is neither. Do not "fix" that by widening the query —
+a blocked task is one nobody can take, and handing it out is exactly the move the status
+exists to prevent. `guild bounties` is where it shows up, with the reason.
+
+## The roster: capabilities, matching, recruiting
+
+> **Tasks stop naming an agent and start naming a required capability.**
+
+That is the whole of Stage 3, and the payoff is concrete: adding `agents/developer-rust.md`
+with the right tags makes it eligible for work with **no skill edits and no chain rewiring**.
+
+### Declaring capability
+
+Agent frontmatter gains two optional fields:
+
+```yaml
+---
+name: developer-svelte
+model: sonnet
+capabilities: [implement, frontend, svelte, sveltekit]
+serial: false
+---
+```
+
+`capabilities:` accepts an inline array on one line or a block list of `- item` lines.
+`serial: true` marks a member that must never run concurrently (`qa-tester`). A key is a line
+at **column 0** — which is what keeps `product-reviewer.md`'s `<example>` block, whose
+indented lines read `user:` and `assistant:`, from being parsed as frontmatter.
+
+`capabilities:` is **optional, and that is load-bearing**: a member with none declared is a
+real member who simply cannot be reached by the matcher, only by a ticket naming them. That
+is exactly what every v4-era agent was, so "no capabilities" means "as before", never
+"broken". `guild sync-agents` refuses anything it cannot parse, naming the file — a
+mis-parsed roster does not fail, it silently matches the wrong work.
+
+### The vocabulary is closed
+
+```
+implement · frontend · backend · svelte · sveltekit
+test-planning · test-authoring · e2e · review · security
+architecture · business-logic · edge-case · research
+qa-planning · qa-execution · requirements
+```
+
+Kept small on purpose: "a sprawling vocabulary makes matching mushy", and the failure is
+concrete — two agents tagged `e2e` and `end-to-end`, and a matcher that quietly stops
+working. `guild sync-agents` **refuses** an agent file declaring a capability outside this
+list. The only door in is a `capability_request` (below), which admits its capability as a
+side effect, so the sequence is always *file the gap → write the agent file → sync*.
+
+The **task** side is deliberately not enforced: `--needs kotlin` is accepted, matches
+nobody, and reports itself as `no-eligible-agent:kotlin` on the bounty board. A typo there
+is loud within one dispatch, which beats a second copy of the vocabulary in
+`lib/artifacts.sh` that has to be kept in sync forever.
+
+### The matcher (`guild match`)
+
+Deterministic, in the CLI, no model judgment. In rank order:
+
+1. **A pin wins.** If the ticket names an agent (`--agent A`), that member is rank 1, source
+   `pin`. The capability-eligible members are still listed below it, so the deviation is
+   visible rather than merely obeyed.
+2. **Eligible** = active members whose capabilities are a **superset** of the task's
+   `required` set (`--needs`).
+3. **Ranked** by: preferred capabilities covered **desc** → total capability count **asc**
+   (so a specialist beats a generalist) → name **asc** (so ties are stable and the answer is
+   reproducible).
+4. **Nobody eligible** → exit 1, naming the missing capabilities. That is a roster gap and it
+   is loud, not a shrug.
+
+`guild bounties` uses the same fragments — not a second spelling of them — so it can never
+offer work `guild next` would refuse, nor name a different member than `guild match`.
+
+### The fallback, which is the whole of backward compatibility
+
+Every board built before Stage 3 has `task.agent = 'developer'` on every row, no
+`task_capability` rows at all, and an empty `agent` table.
+
+> **A task with no `task_capability` rows matches its `task.agent`, directly.**
+
+The switch is the **presence** of a capability row, not the emptiness of the required set —
+an empty required set is vacuously covered by *every* member, which would match all of them.
+So:
+
+| Ticket | `guild match` |
+|---|---|
+| `--agent A`, no capabilities | exactly one candidate, `A`, source `ticket`. The `agent` table is never consulted, so this works on a guild that never synced and on an agent with no file |
+| `--needs …`, no agent | the matcher, in full. `task.agent` is **not** a rescue: a ticket that declared capabilities and covers none of them is a roster gap, which is the point of declaring them |
+| both | `A` is rank 1, source `pin`; the eligible members follow |
+
+An existing guild therefore behaves exactly as it does today. Stage 3 is opt-**in**, one
+`--needs` at a time.
+
+### `blocked`, and why it is loud
+
+`blocked` is new, and it means **no guild member can take this bounty** — a roster gap, not a
+verdict on the work. `failed` is the adjudicated status; `blocked` has never been attempted.
+The distinction is what every surface is built on:
+
+- `guild next` does not hand out blocked tasks (it asks for `in-progress` then `todo`).
+- **For requirement completion `blocked` counts as open**, like `todo` and unlike `failed`.
+  A requirement cannot close over an un-attempted slice, and the review gate keeps waiting.
+- It is on **every** surface: its own `Blocked:` section on `guild board`, a `blocked` filter
+  on `guild list task`, the `guild brief` Blocked section, the bounty board, and the
+  dashboard.
+- `guild move <TASK> blocked` is how the orchestrator parks a gap. **`blocked → done` is
+  refused** — the one refused transition in the CLI — because marking it done would close a
+  requirement over work nobody ever tried. The refusal names three exits: back to `todo`
+  (you recruited), to `in-progress` (you are assigning it anyway), or to `failed` (you are
+  giving up, on the record).
+
+`guild bounties` reports the *condition* without acting on it: a task can appear as
+`blocked / no-eligible-agent` while its stored status is still `todo`. That is the board
+saying what it would do, one command before it does it — the orchestrator owns every status
+transition, here as everywhere.
+
+### Recruiting (`capability-request`)
+
+A roster gap found at *dispatch* time is already a failure: the plan is approved and a bounty
+has nobody to take it. So the architect resolves capabilities **at plan time** and files a
+request instead of routing to the nearest generalist:
+
+```console
+$ guild capability-request rust --req REQ-012 \
+    --rationale 'three plan slices are Rust crates; developer has no Rust idiom guidance' \
+    --proposes developer-rust
+1
+$ guild capability-requests --open
+1 open rust REQ-012 developer-rust three plan slices are Rust crates; …
+```
+
+One capability is **one** open request, however many requirements need it — a second filing
+is refused and points at the first. A request cannot be withdrawn: it is created `open` and
+only `guild sync-agents` closes it, by admitting an agent file that declares the capability.
+
+Design §5.4 surfaces this at `gate-plan`. **Gates are Stage 4**, so in Stage 3 there are two
+surfaces and no invented gate: `guild:new-requirement`, which is live and asks the user
+directly, and **`guild brief`'s Roster Gaps section**, which has existed since Stage 2 and
+was unreachable until this command started writing the table.
+
+An unattended shift may never create an agent (§5.4). Nothing here does — the command writes
+a row and stops. A human writes the agent file; `sync-agents` admits it.
+
+### When `sync-agents` runs
+
+**Both — at `guild init`, and on demand.** The two answers cover different failures:
+
+- **At init**, because an empty `agent` table makes `guild match` useless on every `--needs`
+  ticket. No guild created from Stage 3 onward is born with an empty roster. Design §4 asks
+  for it in as many words: *"guild init … check for `turso`; seed the roster"*.
+- **On demand**, because the roster is not static. "Adding an agent file is the entire
+  process of adding a guild member" is only true if admitting one needs no re-initialization,
+  so `guild:check-in` step 1 and `guild:new-requirement` both run it. It is idempotent and
+  says *"the roster is already up to date"* when nothing changed.
+
+Two properties keep the init half honest:
+
+- **It cannot fail init.** It runs last, after the schema, state and carry-over are
+  committed. A missing `agents/` directory or one malformed frontmatter block prints its
+  diagnostic on **stderr** and leaves a working guild; the summary line says
+  `roster: not loaded`. (Stderr, not stdout: init's stdout is a `key: value` block, and a
+  filesystem path folded into it could forge a field.)
+- **It stands down when the journal already carries the roster.** `.guild/guild.db` is
+  gitignored, so a fresh clone has the journal and no database; without this guard, `init`
+  would re-seed an empty database and append 40 duplicate lines to the journal *on every
+  clone*. `guild rebuild` is what belongs in that sequence, and it replays the roster. The
+  summary then reads `roster: 0 member(s) — the journal carries it; run 'guild rebuild'`.
+
+**A guild initialized before Stage 3** never runs init again, and needs neither half: every
+ticket on it names an agent, so the fallback dispatches all of it, and the first `--needs`
+ticket that cannot be placed makes the empty roster loud — `guild match` exits 1 and ends
+with *"check the roster is loaded at all: 'guild sync-agents'"*. A silent forever-fallback is
+not reachable; it would require a capability ticket, and a capability ticket on an unsynced
+board is an error message.
+
 ## Status transitions (who calls `move`)
 
 Carried over from v4 unchanged, and now load-bearing rather than stylistic — it is what
@@ -367,6 +556,8 @@ The **orchestrator** (the check-in skill) owns every status transition:
 - On success: `guild move TASK-NNN done`
 - On failure: `guild move TASK-NNN failed`
 - On retry:   `guild move TASK-NNN todo`
+- On a roster gap: `guild move TASK-NNN blocked` — no member can take the bounty. Tasks
+  only; `blocked → done` is refused (see *The roster* above)
 
 Sub-agents do **not** move their own work and do **not** write to the database. They do their
 work, report with `guild log` / `guild finding`, and let the orchestrator drain the spool and move
@@ -684,4 +875,31 @@ TASK=$("$GUILD" next)                        # e.g. TASK-001 — a bare ID, no p
 
 # Recovery: the database is derived; the journal is the truth
 rm -f .guild/guild.db && "$GUILD" rebuild
+```
+
+The roster, end to end — a ticket that names a capability, a gap, and the recruitment that
+closes it:
+
+```bash
+# init already seeded the roster; this re-reads it after any agents/*.md change
+"$GUILD" sync-agents                         # idempotent, quiet when nothing changed
+
+# A ticket that describes the WORK instead of naming a member
+T=$("$GUILD" new task --title "Token refresh UI" --req REQ-001 \
+      --needs implement,frontend --prefers svelte)
+"$GUILD" match "$T"                          # 1 developer-svelte 1/1 4 capability
+"$GUILD" bounties                            # who can take what, and why not
+
+# A capability nobody has: match exits 1, so the gap is impossible to miss
+T2=$("$GUILD" new task --title "Port the codec" --req REQ-001 --needs implement,rust)
+"$GUILD" match "$T2" || "$GUILD" move "$T2" blocked
+
+# Recruit for it. This also admits `rust` to the vocabulary, so the agent file can declare it
+"$GUILD" capability-request rust --req REQ-001 \
+  --rationale 'three plan slices are Rust crates' --proposes developer-rust
+"$GUILD" brief                               # the gap is now in "Roster Gaps"
+
+# ... a human writes agents/developer-rust.md with `capabilities: [implement, rust]` ...
+"$GUILD" sync-agents                         # admits it, and closes the request
+"$GUILD" move "$T2" todo                     # the bounty is claimable again
 ```

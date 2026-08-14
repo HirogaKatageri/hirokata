@@ -1582,11 +1582,18 @@ t2_records_survive_rebuild() {
     t_fail "the spool drains" "rc=$G_RC
 $G_ERR"; return 0; fi
 
-  before="$(printf "SELECT (SELECT COUNT(*) FROM work_log) || '/' || (SELECT COUNT(*) FROM review_finding) || '/' || (SELECT COUNT(*) FROM event);\n" | tsql "$db")"
+  before="$(printf "SELECT (SELECT COUNT(*) FROM work_log) || '/' || (SELECT COUNT(*) FROM review_finding) || '/' || (SELECT COUNT(*) FROM event WHERE subject_type <> 'agent');\n" | tsql "$db")"
   # 5 events: created req, created task, moved — plus the two the DRAIN now writes, one
   # `logged` and one `filed`. Those two are the point of a feed that can narrate agent work
   # at all: before them, a whole shift of logs and findings landed in the database and
   # "Since Last Check-in" showed nothing.
+  #
+  # `subject_type <> 'agent'` counts the events THIS TEST IS ABOUT. Stage 3 made `guild
+  # init` seed the roster, so every project starts with one `enlisted` row per agent file —
+  # 14 today. Counting them would not make this assertion stronger, it would tie it to the
+  # number of files in agents/, and adding a guild member would fail a test about the
+  # spool. The claim being made is unchanged: exactly these five board events exist, and
+  # exactly two of them came from the drain.
   want_eq "the records are in the database before the rebuild" "1/1/5" "$before"
   out="$(printf "SELECT group_concat(actor || ' ' || verb, ', ') FROM (SELECT actor, verb FROM event WHERE verb IN ('logged','filed') ORDER BY id);\n" | tsql "$db")"
   want_eq "the drain announced both entries, each under its own agent" \
@@ -1608,8 +1615,10 @@ $G_ERR"; return 0; fi
     t_fail "guild rebuild over a board with records" "rc=$G_RC
 $G_ERR"; return 0; fi
 
-  after="$(printf "SELECT (SELECT COUNT(*) FROM work_log) || '/' || (SELECT COUNT(*) FROM review_finding) || '/' || (SELECT COUNT(*) FROM event);\n" | tsql "$db")"
-  # THE REGRESSION: this was 0/0/0 before the fix.
+  after="$(printf "SELECT (SELECT COUNT(*) FROM work_log) || '/' || (SELECT COUNT(*) FROM review_finding) || '/' || (SELECT COUNT(*) FROM event WHERE subject_type <> 'agent');\n" | tsql "$db")"
+  # THE REGRESSION: this was 0/0/0 before the fix. Filtered exactly like `before`, because
+  # the assertion is that the two are EQUAL — counting different sets on the two sides
+  # would fail for a reason that has nothing to do with the rebuild.
   want_eq "every record row survived the rebuild" "$before" "$after"
 
   grun read TASK-001
@@ -7149,6 +7158,1623 @@ $G_ERR"; fi
   return 0
 }
 
+# ====================================================================================
+# STAGE 3 — THE ROSTER (design §5)
+# ====================================================================================
+#
+#   > Tasks stop naming an agent and start naming a required capability.
+#
+# Five commands are new (`sync-agents`, `match`, `bounties`, `capability-request`,
+# `capability-requests`), one status word is new (`blocked`), and two flags on an old
+# command are new (`new task --needs / --prefers`). None of that is what these sections
+# are mostly about.
+#
+# WHAT THEY ARE MOSTLY ABOUT IS THE BOARD THAT ALREADY EXISTS. Every guild in the world
+# right now has tickets carrying `task.agent = 'developer'`, not one `task_capability`
+# row, and an `agent` table that has never been written to. Stage 3's entire risk is that
+# one of those boards stops working — and no amount of testing of the NEW surface can see
+# that, because the new surface is not what those boards use. So the two backward
+# compatibility sections come FIRST and are the longest: they drive a v4-shaped board,
+# strip every byte Stage 3 ever wrote to it, and demand that seven surfaces come back
+# byte-identical; then they build a genuine Stage-1 database and run the whole new
+# command set against it.
+#
+# The rest is the new surface, each part held to the rules the earlier stages earned: a
+# refusal writes NOTHING, a value cannot impersonate a structural token in any channel,
+# every mutation writes an event AND a journal line, and one `db_exec` per logical
+# command however much data is on the board.
+
+# _r3_agent <dir> <name> <capabilities-csv> [serial] [model] — write one agent definition.
+#
+# The INLINE ARRAY form, which is what every real agent file uses. The block-list form is
+# exercised explicitly in `t2_roster_sync`, because "both YAML shapes parse to the same
+# roster" is a claim about the scanner and not something to pick up incidentally.
+#
+# An EMPTY capability list writes no `capabilities:` key at all rather than an empty one —
+# that is the v4-era agent file, and half of the fallback depends on it staying legal.
+_r3_agent() {
+  local dir="$1" name="$2" caps="$3" serial="${4:-false}" model="${5:-sonnet}"
+  {
+    printf -- '---\n'
+    printf 'name: %s\n' "$name"
+    printf 'model: %s\n' "$model"
+    [ -z "$caps" ] || printf 'capabilities: [%s]\n' "$caps"
+    printf 'serial: %s\n' "$serial"
+    printf -- '---\n'
+    printf '\nThe %s agent.\n' "$name"
+  } >"$dir/$name.md"
+}
+
+# _r3_match4 <match-output> — `guild match`'s rows with column 4 (the agent's total
+# capability count) dropped.
+#
+# That column is "how many tags does agents/developer.md carry", a number that changes the
+# day somebody edits an agent file — in a test that is not about that file. Assertions
+# that run against the REAL roster compare the four stable columns; the ones that run
+# against a FIXTURE roster compare all five, because there the count is the thing being
+# asserted.
+_r3_match4() {
+  printf '%s\n' "$1" | LC_ALL=C awk '{ print $1, $2, $3, $5 }'
+}
+
+# _r3_roster_state — the four roster tables as one comparable string. The subject of every
+# "the roster did not move" assertion.
+_r3_roster_state() {
+  printf "SELECT (SELECT COUNT(*) FROM agent) || '/' || (SELECT COUNT(*) FROM agent_capability) || '/' || (SELECT COUNT(*) FROM task_capability) || '/' || (SELECT COUNT(*) FROM capability_request);\n" | tsql "$(_t2_db)"
+}
+
+# _r3_diff <name> <expected-text> <actual-text> — byte comparison through temp files.
+# `diff` rather than `want_eq` so a failure prints the differing lines instead of two
+# forty-line blobs; temp files rather than process substitution, which nothing else in
+# this harness uses.
+_r3_diff() {
+  printf '%s\n' "$2" >"$T2/r3-a"
+  printf '%s\n' "$3" >"$T2/r3-b"
+  t_check "$1" "$(diff "$T2/r3-a" "$T2/r3-b" 2>&1 | head -8)"
+}
+
+# ---- the Stage 3 refusal helper ------------------------------------------------------
+#
+# `_s2_refused` in the Stage 2 sections asserts "the command failed, said the right thing,
+# and wrote no row" over the seven tables Stage 2 touches. Stage 3 writes four tables
+# Stage 2 does not, and `capability_request` in particular — so a leaked gap row would
+# pass `_s2_refused` unnoticed. This is the same helper over the whole board.
+R3_ROWS=""
+R3_ROSTER=""
+R3_JRN=""
+
+_r3_mark() {
+  R3_ROWS="$(_s2_state)"
+  R3_ROSTER="$(_r3_roster_state)"
+  R3_JRN="$(_s2_jrn)"
+}
+
+# _r3_refused <name> <needle> — the last `grun` failed, said <needle>, and moved nothing.
+_r3_refused() {
+  local name="$1" needle="$2" bad="" rows roster jrn
+  [ "$G_RC" -ne 0 ] || bad="${bad}the command SUCCEEDED (rc=0) instead of refusing
+"
+  case "$G_ERR" in
+    *"$needle"*) ;;
+    *) bad="${bad}stderr does not say '$needle'; it said: $(printf '%s' "$G_ERR" | head -2)
+" ;;
+  esac
+  rows="$(_s2_state)"
+  roster="$(_r3_roster_state)"
+  jrn="$(_s2_jrn)"
+  [ "$rows" = "$R3_ROWS" ] ||
+    bad="${bad}the refusal WROTE A BOARD ROW: goal/phase/req/bug/doc/coverage/event went $R3_ROWS -> $rows
+"
+  [ "$roster" = "$R3_ROSTER" ] ||
+    bad="${bad}the refusal MOVED THE ROSTER: agent/agent_capability/task_capability/capability_request went $R3_ROSTER -> $roster
+"
+  [ "$jrn" = "$R3_JRN" ] ||
+    bad="${bad}the refusal appended to journal.ndjson: $R3_JRN -> $jrn line(s)
+"
+  # Re-baseline, for `_s2_refused`'s reason: one command that really did write should be
+  # reported once, not rename itself as every check that follows it.
+  R3_ROWS="$rows"
+  R3_ROSTER="$roster"
+  R3_JRN="$jrn"
+  t_check "$name" "$bad"
+}
+
+# ---- S3.1 · BACKWARD COMPATIBILITY, part 1: the guild that never synced --------------
+#
+# The trap, stated as the two things that must not happen:
+#
+#   1. a ticket created with `--agent developer` and NO `--needs` stops dispatching to
+#      `developer`. It must not — `guild match` answers with the ticket's own agent
+#      WITHOUT consulting the `agent` table, so the answer cannot depend on whether the
+#      roster was ever loaded.
+#   2. a guild that has never run `guild sync-agents` behaves differently. It must not —
+#      `next`, `board`, `list`, `bounties`, `match` and the briefing's bounty section are
+#      compared BYTE FOR BYTE across a full wipe of everything Stage 3 writes.
+#
+# THE WIPE IS THE INTERESTING PART AND IT IS EXACT. `DELETE FROM agent_capability / agent
+# / capability_request`, `DELETE FROM event WHERE subject_type = 'agent'`, and the journal
+# filtered of its `"table":"agent"` lines is, byte for byte, the state Stage 1/2 left
+# behind — those four are the only places Stage 3 writes that Stage 1/2 did not have.
+t2_roster_backcompat() {
+  local db req t1 t2 t3 nob out n state
+  local b_board b_list b_listreq b_next b_bounties b_match b_brief
+  section "Tier 2 · Stage 3 · backward compatibility (the board that already exists)"
+
+  _t2_project s3compat 2026-01-01 || return 0
+  db="$(_t2_db)"
+
+  # A v4-shaped board: every ticket names an agent, not one declares a capability.
+  grun new req --title "Ship the exporter"
+  req="$G_OUT"
+  grun new task --title "Write the exporter" --agent developer --req "$req"
+  t1="$G_OUT"
+  grun new task --title "Plan the tests" --agent test-planner --req "$req"
+  t2="$G_OUT"
+  grun new task --title "Review the exporter" --agent reviewer --req "$req"
+  t3="$G_OUT"
+  if [ -n "$t1" ] && [ -n "$t2" ] && [ -n "$t3" ]; then
+    t_pass "a v4-shaped board seeds: three tickets, each naming an agent, none declaring a capability"
+  else
+    t_fail "a v4-shaped board seeds" "rc=$G_RC
+$G_ERR"
+    return 0
+  fi
+  out="$(printf "SELECT COUNT(*) FROM task_capability;\n" | tsql "$db")"
+  want_eq "and the board really holds no capability rows at all" "0" "$out"
+
+  # ---- 1 · the fallback: --agent with no --needs still dispatches ------------------
+  grun match "$t1"
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild match on a --agent-only ticket succeeds"; else
+    t_fail "guild match on a --agent-only ticket succeeds" "rc=$G_RC
+$G_ERR"; fi
+  n="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'END { print NR + 0 }')"
+  want_eq "it names exactly one candidate — the roster is not consulted at all" "1" "$n"
+  want_eq "and that candidate is the agent the ticket named, sourced 'ticket'" \
+    "1 developer 0/0 ticket" "$(_r3_match4 "$G_OUT")"
+  grun match "$t2"
+  want_eq "the same for a ticket naming a non-developer member" \
+    "1 test-planner 0/0 ticket" "$(_r3_match4 "$G_OUT")"
+
+  # THE FALLBACK IS THE TICKET'S TEXT, NOT A ROSTER LOOKUP. `--agent` is free text and
+  # v4 boards carry names that were never agent files; the matcher must still answer.
+  grun new task --title "A ticket naming somebody who has no file" --agent nobody-at-all --req "$req"
+  nob="$G_OUT"
+  grun match "$nob"
+  want_eq "a ticket naming an agent with NO definition file still matches it" \
+    "1 nobody-at-all 0/0 ticket" "$(_r3_match4 "$G_OUT")"
+  if [ "$G_RC" -eq 0 ]; then t_pass "and exits 0, so an orchestrator dispatches it"; else
+    t_fail "and exits 0, so an orchestrator dispatches it" "rc=$G_RC"; fi
+
+  # ---- 2 · seven surfaces, before and after a full Stage 3 wipe --------------------
+  grun board;       b_board="$G_OUT"
+  grun list task;   b_list="$G_OUT"
+  grun list req;    b_listreq="$G_OUT"
+  grun next;        b_next="$G_OUT"
+  grun bounties;    b_bounties="$G_OUT"
+  grun match "$t1"; b_match="$G_OUT"
+  grun brief;       b_brief="$(_t2_brief_section "$G_OUT" "Open Bounties:")"
+
+  state="$(_r3_roster_state)"
+  n="$(printf '%s\n' "$state" | LC_ALL=C awk -F/ '{ print ($1 > 0 && $2 > 0 && $3 == 0 && $4 == 0) ? "yes" : "no" }')"
+  want_eq "before the wipe the roster IS loaded and the tickets declare nothing" "yes" "$n"
+
+  {
+    printf "DELETE FROM agent_capability;\n"
+    printf "DELETE FROM agent;\n"
+    printf "DELETE FROM capability_request;\n"
+    printf "DELETE FROM event WHERE subject_type = 'agent';\n"
+  } | tsql "$db" >/dev/null 2>&1
+  LC_ALL=C awk '!/"table":"agent"/ && !/"table":"agent_capability"/' \
+    "$GUILD_DIR/journal.ndjson" >"$T2/s3-jrn"
+  cat "$T2/s3-jrn" >"$GUILD_DIR/journal.ndjson"
+  out="$(_r3_roster_state)"
+  want_eq "the wipe leaves exactly the state Stage 1/2 left behind" "0/0/0/0" "$out"
+  out="$(_t2_count "$GUILD_DIR/journal.ndjson" '"table":"agent')"
+  want_eq "and a journal with no roster line in it" "0" "$out"
+
+  grun board
+  _r3_diff "after the wipe, guild board is byte-identical" "$b_board" "$G_OUT"
+  grun list task
+  _r3_diff "guild list task is byte-identical" "$b_list" "$G_OUT"
+  grun list req
+  _r3_diff "guild list req is byte-identical" "$b_listreq" "$G_OUT"
+  grun next
+  want_eq "guild next answers the same ticket" "$b_next" "$G_OUT"
+  grun bounties
+  _r3_diff "guild bounties is byte-identical — the ticket's own agent is the answer" \
+    "$b_bounties" "$G_OUT"
+  grun match "$t1"
+  # `guild match` is the ONE surface that is not byte-identical across the wipe, and the
+  # difference is confined to column 4 — the matched member's total capability count, which
+  # `_roster_total` reads out of `agent_capability` even on the fallback path. Wipe the
+  # roster and `developer` is a name the guild knows nothing about, so the column reads 0.
+  #
+  # SO THE ASSERTION IS SPLIT RATHER THAN RELAXED. What a caller reads — the rank, the
+  # member, the preferred coverage and the source rule, which is every column
+  # `skills/check-in` documents anyone taking — is byte-identical, and that is the claim
+  # backward compatibility actually makes. The informational column is asserted separately,
+  # at its real value, so a future change to it is still caught rather than tolerated.
+  #
+  # (lib/roster.sh's header overstates this as "it does not consult the `agent` table at
+  # all". The BEHAVIOUR it promises holds — an unsynced guild still dispatches — but the
+  # mechanism sentence is not literally true, and this pair of checks is what pins which
+  # half is load-bearing.)
+  want_eq "guild match's dispatch columns are byte-identical on a guild that never synced" \
+    "$(_r3_match4 "$b_match")" "$(_r3_match4 "$G_OUT")"
+  want_eq "and the one informational column that DOES move is the capability count" \
+    "1 developer 0/0 0 ticket" "$G_OUT"
+  if [ "$G_RC" -eq 0 ]; then t_pass "and guild match still exits 0"; else
+    t_fail "and guild match still exits 0" "rc=$G_RC"; fi
+  grun brief
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild brief still runs on a guild that never synced"; else
+    t_fail "guild brief still runs on a guild that never synced" "rc=$G_RC
+$G_ERR"; fi
+  _r3_diff "and its Open Bounties section is byte-identical" \
+    "$b_brief" "$(_t2_brief_section "$G_OUT" "Open Bounties:")"
+  grun dashboard
+  if [ "$G_RC" -eq 0 ]; then t_pass "and so does guild dashboard"; else
+    t_fail "and so does guild dashboard" "rc=$G_RC
+$G_ERR"; fi
+  grun capability-requests
+  if [ "$G_RC" -eq 0 ] && [ -z "$G_OUT" ]; then
+    t_pass "guild capability-requests on such a guild is empty, not an error"
+  else
+    t_fail "guild capability-requests on such a guild is empty, not an error" "rc=$G_RC
+$G_ERR"
+  fi
+
+  unset GUILD_DIR
+  return 0
+}
+
+# ---- S3.2 · BACKWARD COMPATIBILITY, part 2: a real Stage-1/2 database ----------------
+#
+# Two things make it a Stage-1/2 database rather than a Stage-3 one with its rows removed:
+# the DDL is Stage 1's (the two Stage 3 covering indexes did not exist), and the roster was
+# never seeded because `guild init` could find no agent files. Both are true of every board
+# created before this stage, and the claim under test is "no migration, no re-init, no
+# manual step" — so every Stage 3 command is run against it and the engine is then asked
+# whether the file is still sound.
+t2_roster_stage1_db() {
+  local db schema empty req t1 t2 out n before
+  section "Tier 2 · Stage 3 · a Stage-1/2 database needs no migration"
+
+  schema="$T2/s3-stage1-schema.sql"
+  LC_ALL=C awk '!/agent_cap_by_cap|task_cap_by_cap/' "$SCHEMA_FILE" >"$schema"
+  empty="$T2/s3-empty-agents"
+  rm -rf "$empty"
+  mkdir -p "$empty"
+
+  export GUILD_SCHEMA="$schema"
+  export GUILD_AGENTS_DIR="$empty"
+  if ! _t2_project s3stage1 2026-01-01; then
+    unset GUILD_SCHEMA
+    unset GUILD_AGENTS_DIR
+    return 0
+  fi
+  db="$(_t2_db)"
+
+  # init MUST NOT have failed over the roster, and MUST NOT have been quiet about it.
+  want_contains "a guild whose roster cannot load still initializes, and says so" \
+    "not loaded" "$G_OUT"
+  want_contains "and stderr names the command that fixes it" "guild sync-agents" "$G_ERR"
+  out="$(printf "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name IN ('agent_cap_by_cap','task_cap_by_cap');\n" | tsql "$db")"
+  want_eq "the database really carries Stage 1's DDL — neither Stage 3 index exists" "0" "$out"
+  out="$(_r3_roster_state)"
+  want_eq "and an empty roster, exactly as a pre-Stage-3 board has" "0/0/0/0" "$out"
+
+  grun new req --title "Legacy requirement"
+  req="$G_OUT"
+  grun new task --title "Legacy ticket" --agent developer --req "$req"
+  t1="$G_OUT"
+  grun new task --title "A capability ticket on an old board" --req "$req" --needs implement,svelte
+  t2="$G_OUT"
+  if [ -n "$t1" ] && [ -n "$t2" ]; then
+    t_pass "a Stage-1 database accepts both ticket shapes, with no migration"
+  else
+    t_fail "a Stage-1 database accepts both ticket shapes, with no migration" "rc=$G_RC
+$G_ERR"
+    unset GUILD_SCHEMA
+    unset GUILD_AGENTS_DIR
+    unset GUILD_DIR
+    return 0
+  fi
+
+  grun match "$t1"
+  want_eq "the v4 ticket matches its own agent on a Stage-1 database" \
+    "1 developer 0/0 ticket" "$(_r3_match4 "$G_OUT")"
+
+  # THE ONE PLACE AN UNSYNCED BOARD DIFFERS, and it differs LOUDLY. A capability ticket
+  # has nobody, and the message ends by asking whether the roster is loaded at all — so
+  # the silent forever-fallback is not reachable.
+  grun match "$t2"
+  if [ "$G_RC" -ne 0 ]; then
+    t_pass "a --needs ticket on an unsynced board is an ERROR, not a silent shrug"
+  else
+    t_fail "a --needs ticket on an unsynced board is an ERROR, not a silent shrug" "rc=0: $G_OUT"
+  fi
+  want_contains "the refusal names the capabilities nobody has" \
+    "needs [implement, svelte]" "$G_ERR"
+  want_contains "and points at the roster itself, which is the actual cause here" \
+    "guild sync-agents" "$G_ERR"
+  if [ -z "$G_OUT" ]; then t_pass "and stdout is empty, so a caller reading it gets no winner"; else
+    t_fail "and stdout is empty, so a caller reading it gets no winner" "$G_OUT"; fi
+
+  # `blocked` NEEDED NO DDL, and this is the assertion behind that claim: the vocabulary
+  # is enforced in the CLI and the column carries no CHECK, so a Stage-1 database takes it.
+  grun move "$t2" blocked
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild move ... blocked works on a Stage-1 database"; else
+    t_fail "guild move ... blocked works on a Stage-1 database" "rc=$G_RC
+$G_ERR"; fi
+  out="$(printf "SELECT status FROM task WHERE id = '%s';\n" "$t2" | tsql "$db")"
+  want_eq "and the status is stored" "blocked" "$out"
+
+  grun bounties
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild bounties runs against a Stage-1 database"; else
+    t_fail "guild bounties runs against a Stage-1 database" "rc=$G_RC
+$G_ERR"; fi
+  n="$(_t2_lines "$G_OUT" "^$t1 ready developer ")"
+  want_eq "the legacy ticket is offered, with its own agent beside it" "1" "$n"
+  grun brief
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild brief runs against a Stage-1 database"; else
+    t_fail "guild brief runs against a Stage-1 database" "rc=$G_RC
+$G_ERR"; fi
+  grun dashboard
+  if [ "$G_RC" -eq 0 ]; then t_pass "and so does guild dashboard"; else
+    t_fail "and so does guild dashboard" "rc=$G_RC
+$G_ERR"; fi
+  grun capability-requests
+  if [ "$G_RC" -eq 0 ]; then t_pass "and guild capability-requests"; else
+    t_fail "and guild capability-requests" "rc=$G_RC
+$G_ERR"; fi
+
+  # ---- the file is still sound, and replays ---------------------------------------
+  out="$(printf "PRAGMA integrity_check;\n" | tsql "$db" | LC_ALL=C awk 'NR == 1 { print }')"
+  want_eq "the Stage-1 database is not corrupted by any of that" "ok" "$out"
+  grun board
+  before="$G_OUT"
+  grun rebuild
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild rebuild replays a Stage-1 board"; else
+    t_fail "guild rebuild replays a Stage-1 board" "rc=$G_RC
+$G_ERR"; fi
+  grun board
+  _r3_diff "and the board is byte-identical afterwards" "$before" "$G_OUT"
+  out="$(printf "SELECT COUNT(*) FROM task_capability WHERE task_id = '%s';\n" "$t2" | tsql "$db")"
+  want_eq "the capability rows survived the replay — they are journaled like any other row" "2" "$out"
+
+  unset GUILD_SCHEMA
+  unset GUILD_AGENTS_DIR
+  unset GUILD_DIR
+  return 0
+}
+
+# ---- S3.3 · guild sync-agents -------------------------------------------------------
+#
+# "Adding an agent file is the entire process of adding a guild member" (§5.1) is a claim
+# about a YAML reader written in awk with no YAML library — exactly the kind of claim that
+# is true for the four files somebody tested it on. So this section drives the
+# reconciliation in both directions and then spends most of its checks on the shapes that
+# must be REFUSED, because the failure mode of a guessing parser is not an error: it is an
+# agent that silently declares half its capabilities and quietly never matches the work.
+
+# _r3_sync_refused <name> <needle> — sync-agents failed, named the FILE, said it wrote
+# nothing, and left the roster where it was. Four assertions, one check, because they
+# apply identically to every malformed shape below.
+_r3_sync_refused() {
+  local name="$1" needle="$2" bad="" roster
+  [ "$G_RC" -ne 0 ] || bad="${bad}sync-agents SUCCEEDED (rc=0) on a file it cannot read
+"
+  case "$G_ERR" in
+    *"$needle"*) ;;
+    *) bad="${bad}stderr does not say '$needle'; it said: $(printf '%s' "$G_ERR" | head -3)
+" ;;
+  esac
+  case "$G_ERR" in
+    *'bad.md'*) ;;
+    *) bad="${bad}stderr does not name the FILE, so nobody knows which one to fix
+" ;;
+  esac
+  case "$G_ERR" in
+    *'NOT synced'* | *'Nothing was written'*) ;;
+    *) bad="${bad}stderr does not say the roster was left alone
+" ;;
+  esac
+  roster="$(_r3_roster_state)"
+  [ "$roster" = "$R3_ROSTER" ] ||
+    bad="${bad}the refusal MOVED THE ROSTER: $R3_ROSTER -> $roster
+"
+  R3_ROSTER="$roster"
+  t_check "$name" "$bad"
+}
+
+t2_roster_sync() {
+  local dir db out n jrn0
+  section "Tier 2 · Stage 3 · guild sync-agents (the roster reconciles, or refuses)"
+
+  dir="$T2/s3-agents"
+  rm -rf "$dir"
+  mkdir -p "$dir"
+  _r3_agent "$dir" alpha 'implement, backend'
+  # THE BLOCK-LIST FORM, with a description block scalar whose line ends in `;` — the exact
+  # shape §2.2.1 says tears a SQL literal in half — and a pipe, which is the `-m list`
+  # field separator. Both arrive through a FILE rather than a flag, which is a transport
+  # no earlier stage had.
+  {
+    printf -- '---\n'
+    printf 'name: beta\n'
+    printf 'model: opus\n'
+    printf 'capabilities:\n'
+    printf '  - implement\n'
+    printf '  - frontend\n'
+    printf '  - svelte\n'
+    printf 'serial: true\n'
+    printf 'description: |\n'
+    printf '  Use beta when the fix was:\n'
+    printf '    const x = 1;\n'
+    printf '  and it has a | pipe in it too.\n'
+    printf -- '---\n'
+    printf '\nBeta.\n'
+  } >"$dir/beta.md"
+  # A v4-ERA AGENT: no `capabilities:` key at all. It is a real member, and it is simply
+  # unreachable by the matcher — which is what all fourteen agent files were until now.
+  _r3_agent "$dir" gamma ''
+
+  export GUILD_AGENTS_DIR="$dir"
+  if ! _t2_project s3sync 2026-01-01; then
+    unset GUILD_AGENTS_DIR
+    return 0
+  fi
+  db="$(_t2_db)"
+
+  want_contains "guild init seeds the roster out of agents/*.md" "roster:" "$G_OUT"
+  out="$(printf "SELECT COUNT(*) FROM agent WHERE active = 1;\n" | tsql "$db")"
+  want_eq "all three definitions became members" "3" "$out"
+  out="$(printf "SELECT model || '/' || serial FROM agent WHERE name = 'beta';\n" | tsql "$db")"
+  want_eq "the block-list agent's scalar fields parsed" "opus/1" "$out"
+  out="$(printf "SELECT group_concat(capability, ',') FROM (SELECT capability FROM agent_capability WHERE agent = 'beta' ORDER BY capability);\n" | tsql "$db")"
+  want_eq "and its block-list capabilities parsed, all three of them" "frontend,implement,svelte" "$out"
+  out="$(printf "SELECT group_concat(capability, ',') FROM (SELECT capability FROM agent_capability WHERE agent = 'alpha' ORDER BY capability);\n" | tsql "$db")"
+  want_eq "the inline-array form parses to exactly the same shape" "backend,implement" "$out"
+  out="$(printf "SELECT COUNT(*) FROM agent_capability WHERE agent = 'gamma';\n" | tsql "$db")"
+  want_eq "an agent with no 'capabilities:' key is a member with no capabilities" "0" "$out"
+  out="$(printf "SELECT COUNT(*) FROM agent WHERE name = 'gamma' AND active = 1;\n" | tsql "$db")"
+  want_eq "and it is active, not an error" "1" "$out"
+  out="$(printf "SELECT CASE WHEN description LIKE '%%const x = 1;%%' AND description LIKE '%%| pipe%%' THEN 'both' ELSE description END FROM agent WHERE name = 'beta';\n" | tsql "$db")"
+  want_eq "a description with a line ending in ';' AND a pipe in it survives whole" "both" "$out"
+  n="$(_s2_events enlisted agent)"
+  want_eq "every enlistment wrote an event" "3" "$n"
+  out="$(_t2_count "$GUILD_DIR/journal.ndjson" '"table":"agent"')"
+  want_eq "and a journal line" "3" "$out"
+
+  # ---- idempotence, which is a claim about the JOURNAL as much as the database ------
+  jrn0="$(_s2_jrn)"
+  grun sync-agents
+  if [ "$G_RC" -eq 0 ]; then t_pass "a re-run with nothing changed succeeds"; else
+    t_fail "a re-run with nothing changed succeeds" "rc=$G_RC
+$G_ERR"; fi
+  want_contains "and says so rather than reporting phantom work" "already up to date" "$G_OUT"
+  want_eq "a no-op sync appends NOTHING to journal.ndjson (git carries that file)" \
+    "$jrn0" "$(_s2_jrn)"
+  out="$(_s2_events updated agent)"
+  want_eq "and writes no 'updated' event either" "0" "$out"
+
+  # ---- a member is added -----------------------------------------------------------
+  _r3_agent "$dir" delta 'review, security'
+  grun sync-agents
+  want_contains "adding a file adds a member, with no other ceremony at all" "new       delta" "$G_OUT"
+  out="$(printf "SELECT active FROM agent WHERE name = 'delta';\n" | tsql "$db")"
+  want_eq "and it is active" "1" "$out"
+
+  # ---- a member changes; capabilities are REPLACED, not merged ---------------------
+  _r3_agent "$dir" delta 'review, security, edge-case'
+  grun sync-agents
+  want_contains "editing a file updates the member" "changed   delta" "$G_OUT"
+  out="$(printf "SELECT COUNT(*) FROM agent_capability WHERE agent = 'delta';\n" | tsql "$db")"
+  want_eq "a widened capability set is stored whole" "3" "$out"
+  _r3_agent "$dir" delta 'review'
+  grun sync-agents
+  out="$(printf "SELECT group_concat(capability, ',') FROM (SELECT capability FROM agent_capability WHERE agent = 'delta' ORDER BY capability);\n" | tsql "$db")"
+  want_eq "and a capability deleted from the file stops matching — the file is the declaration" \
+    "review" "$out"
+  out="$(_t2_count "$GUILD_DIR/journal.ndjson" '"op":"delete","table":"agent_capability"')"
+  if [ "$out" -ge 1 ]; then
+    t_pass "the removal reaches the journal as a delete, so a replay cannot resurrect it"
+  else
+    t_fail "the removal reaches the journal as a delete, so a replay cannot resurrect it" \
+      "no delete op for agent_capability in journal.ndjson"
+  fi
+
+  # ---- a member is removed: DEACTIVATED, never deleted ------------------------------
+  #
+  # `task.claimed_by REFERENCES agent(name)`, and a finished ticket may name somebody whose
+  # file was deleted a year ago. A DELETE would either be refused by the constraint or
+  # orphan the history that explains the board.
+  rm -f "$dir/delta.md"
+  grun sync-agents
+  want_contains "removing a file retires the member" "retired   delta" "$G_OUT"
+  out="$(printf "SELECT COUNT(*) || '/' || COALESCE((SELECT active FROM agent WHERE name = 'delta'), 9) FROM agent WHERE name = 'delta';\n" | tsql "$db")"
+  want_eq "the row is still there with active = 0 — it is NOT deleted" "1/0" "$out"
+  out="$(_s2_events retired agent)"
+  want_eq "and the retirement wrote an event" "1" "$out"
+  _r3_agent "$dir" delta 'review'
+  grun sync-agents
+  out="$(printf "SELECT active FROM agent WHERE name = 'delta';\n" | tsql "$db")"
+  want_eq "putting the file back re-enlists the same row rather than leaving it retired" "1" "$out"
+  rm -f "$dir/delta.md"
+  grun sync-agents >/dev/null 2>&1
+
+  # ---- --dry-run reports and writes nothing ----------------------------------------
+  _r3_agent "$dir" epsilon 'research'
+  jrn0="$(_s2_jrn)"
+  grun sync-agents --dry-run
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild sync-agents --dry-run succeeds"; else
+    t_fail "guild sync-agents --dry-run succeeds" "rc=$G_RC
+$G_ERR"; fi
+  want_contains "it names the change it would make" "new       epsilon" "$G_OUT"
+  want_contains "and says it did not make it" "NOT written" "$G_OUT"
+  out="$(printf "SELECT COUNT(*) FROM agent WHERE name = 'epsilon';\n" | tsql "$db")"
+  want_eq "--dry-run wrote no agent row" "0" "$out"
+  want_eq "and no journal line" "$jrn0" "$(_s2_jrn)"
+  rm -f "$dir/epsilon.md"
+
+  # ---- MALFORMED INPUT: refused by name, and ALL AT ONCE ---------------------------
+  R3_ROSTER="$(_r3_roster_state)"
+
+  printf -- '---\nname: bad\ncapabilities: implement\n---\n' >"$dir/bad.md"
+  grun sync-agents
+  _r3_sync_refused "a bare scalar 'capabilities: implement' is refused, not guessed at" \
+    "must be an inline array"
+
+  printf -- '---\nname: bad\ncapabilities: [implement,\n  backend]\n---\n' >"$dir/bad.md"
+  grun sync-agents
+  _r3_sync_refused "a multi-line inline array is refused rather than silently truncated" \
+    "does not close on the same line"
+
+  printf -- '---\nname: bad\ncapabilities:\nmodel: sonnet\n---\n' >"$dir/bad.md"
+  grun sync-agents
+  _r3_sync_refused "an empty 'capabilities:' with no '- item' lines under it is refused" \
+    "no '- item' lines follow it"
+
+  printf -- '---\nname: bad\ncapabilities:\n  implement\n  backend\n---\n' >"$dir/bad.md"
+  grun sync-agents
+  _r3_sync_refused "a block list whose items are missing their '-' is refused" \
+    "must be '- item'"
+
+  printf -- '---\nname: bad\ncapabilities: [Implement]\n---\n' >"$dir/bad.md"
+  grun sync-agents
+  _r3_sync_refused "an uppercase capability is refused — 'E2E' and 'e2e' would be two tags" \
+    "lowercase letters, digits"
+
+  printf -- '---\nname: bad\ncapabilities: [qa_planning]\n---\n' >"$dir/bad.md"
+  grun sync-agents
+  _r3_sync_refused "and an underscore, for exactly the same reason" "lowercase letters, digits"
+
+  printf -- '---\nname: bad name with spaces\ncapabilities: [implement]\n---\n' >"$dir/bad.md"
+  grun sync-agents
+  _r3_sync_refused "a name that is not a usable key is refused, naming the file" \
+    "is not a usable agent name"
+
+  printf -- '---\nmodel: sonnet\ncapabilities: [implement]\n---\n' >"$dir/bad.md"
+  grun sync-agents
+  _r3_sync_refused "frontmatter with no 'name:' is refused" "no 'name:' field"
+
+  printf -- '---\nname: bad\ncapabilities: [implement]\n' >"$dir/bad.md"
+  grun sync-agents
+  _r3_sync_refused "frontmatter that is never closed is refused" "never closed"
+
+  printf 'just a markdown file\n' >"$dir/bad.md"
+  grun sync-agents
+  _r3_sync_refused "a file with no frontmatter at all is refused" "no YAML frontmatter"
+
+  : >"$dir/bad.md"
+  grun sync-agents
+  _r3_sync_refused "an EMPTY file is refused rather than silently skipped" "the file is empty"
+
+  printf -- '---\nname: bad\nserial: maybe\ncapabilities: [implement]\n---\n' >"$dir/bad.md"
+  grun sync-agents
+  _r3_sync_refused "'serial: maybe' is refused rather than read as false" "must be true or false"
+
+  # EVERY BAD FILE IS REPORTED AT ONCE. Fourteen agent files and one `die` per fault turns
+  # fixing a roster into a fourteen-round game.
+  printf -- '---\nname: bad\ncapabilities: [Implement]\n---\n' >"$dir/bad.md"
+  printf -- '---\nname: worse\ncapabilities: [Backend]\n---\n' >"$dir/worse.md"
+  grun sync-agents
+  n="$(_t2_lines "$G_ERR" 'bad\.md')"
+  out="$(_t2_lines "$G_ERR" 'worse\.md')"
+  if [ "$n" -ge 1 ] && [ "$out" -ge 1 ]; then
+    t_pass "two bad files are both named in one run, not one per round"
+  else
+    t_fail "two bad files are both named in one run, not one per round" "$G_ERR"
+  fi
+  rm -f "$dir/bad.md" "$dir/worse.md"
+
+  # ---- THE VOCABULARY GUARD is global and all-or-nothing ---------------------------
+  #
+  # §5.3's whole argument is that a vocabulary which grows by being typed into a file stops
+  # working. So one unknown word means NOTHING is written — not "that agent is skipped".
+  _r3_agent "$dir" rustdev 'implement, rust'
+  R3_ROSTER="$(_r3_roster_state)"
+  grun sync-agents
+  if [ "$G_RC" -ne 0 ]; then t_pass "a capability outside the vocabulary is refused"; else
+    t_fail "a capability outside the vocabulary is refused" "rc=0 — the vocabulary self-approved"; fi
+  want_contains "the refusal names the offending word" "rust" "$G_ERR"
+  want_contains "and says nothing at all was written" "Nothing was written" "$G_ERR"
+  want_contains "and points at §5.4, which is the only door into the vocabulary" \
+    "guild capability-request" "$G_ERR"
+  out="$(_r3_roster_state)"
+  want_eq "and the roster really did not move — not even for the VALID agents in that run" \
+    "$R3_ROSTER" "$out"
+  out="$(printf "SELECT COUNT(*) FROM agent WHERE name = 'rustdev';\n" | tsql "$db")"
+  want_eq "the offending agent is not half-admitted" "0" "$out"
+  out="$(printf "SELECT COUNT(*) FROM agent_capability WHERE agent = 'alpha';\n" | tsql "$db")"
+  want_eq "and an unrelated member's capabilities are intact" "2" "$out"
+  rm -f "$dir/rustdev.md"
+
+  # ---- an empty agents/ refuses rather than emptying the roster --------------------
+  rm -rf "$T2/s3-agents-empty"
+  mkdir -p "$T2/s3-agents-empty"
+  R3_ROSTER="$(_r3_roster_state)"
+  GUILD_AGENTS_DIR="$T2/s3-agents-empty" grun sync-agents
+  if [ "$G_RC" -ne 0 ]; then t_pass "sync-agents over an EMPTY agents/ refuses"; else
+    t_fail "sync-agents over an EMPTY agents/ refuses" "rc=0 — it deactivated the whole guild"; fi
+  want_contains "and says why: it would deactivate every member" "deactivate every member" "$G_ERR"
+  out="$(_r3_roster_state)"
+  want_eq "so the roster survives a mis-set \$GUILD_AGENTS_DIR" "$R3_ROSTER" "$out"
+  GUILD_AGENTS_DIR="$T2/s3-agents-nope" grun sync-agents
+  if [ "$G_RC" -ne 0 ]; then t_pass "and a \$GUILD_AGENTS_DIR that is not a directory refuses"; else
+    t_fail "and a \$GUILD_AGENTS_DIR that is not a directory refuses" "rc=0"; fi
+
+  # ---- flag handling ---------------------------------------------------------------
+  grun sync-agents --nope
+  if [ "$G_RC" -ne 0 ]; then t_pass "an unknown option to sync-agents is refused"; else
+    t_fail "an unknown option to sync-agents is refused" "rc=0"; fi
+  grun sync-agents alpha
+  if [ "$G_RC" -ne 0 ]; then t_pass "and so is a positional argument"; else
+    t_fail "and so is a positional argument" "rc=0"; fi
+
+  # ---- the roster replays out of the journal ---------------------------------------
+  out="$(printf "SELECT (SELECT COUNT(*) FROM agent) || '/' || (SELECT COUNT(*) FROM agent_capability);\n" | tsql "$db")"
+  grun rebuild
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild rebuild replays a roster"; else
+    t_fail "guild rebuild replays a roster" "rc=$G_RC
+$G_ERR"; fi
+  n="$(printf "SELECT (SELECT COUNT(*) FROM agent) || '/' || (SELECT COUNT(*) FROM agent_capability);\n" | tsql "$db")"
+  want_eq "and every member and capability row comes back" "$out" "$n"
+
+  # THE FRESH-CLONE SEQUENCE. `.guild/guild.db` is gitignored, so a clone has the journal
+  # and no database; if `guild init` re-seeded there, every clone would append the whole
+  # roster to a journal that already describes it.
+  jrn0="$(_s2_jrn)"
+  grun init
+  if [ "$G_RC" -eq 0 ]; then t_pass "re-running guild init over an initialized guild succeeds"; else
+    t_fail "re-running guild init over an initialized guild succeeds" "rc=$G_RC
+$G_ERR"; fi
+  want_eq "and appends nothing, because the journal already carries the roster" \
+    "$jrn0" "$(_s2_jrn)"
+
+  unset GUILD_AGENTS_DIR
+  unset GUILD_DIR
+  return 0
+}
+
+# ---- S3.4 · guild match -------------------------------------------------------------
+#
+# §5.2, clause by clause. The roster here is a FIXTURE rather than the real agents/
+# directory, because every clause is a statement about capability counts and alphabetical
+# order — and those must be pinned by the test, not by whatever somebody last typed into
+# agents/developer.md.
+t2_roster_match() {
+  local dir db req t out n
+  section "Tier 2 · Stage 3 · guild match (the deterministic matcher, §5.2)"
+
+  dir="$T2/s3-match-agents"
+  rm -rf "$dir"
+  mkdir -p "$dir"
+  # Five members chosen so that each ranking key decides exactly one comparison:
+  #   pref   covers the preferred capability   -> key 1 (preferred covered) puts it first
+  #   spec   two capabilities                  -> key 2 (total count, ASC) puts it above gen
+  #   zeta   two capabilities, name after spec -> key 3 (name) breaks that tie
+  #   gen    five capabilities                 -> the generalist, last
+  #   other  covers none of the required set   -> not eligible at all
+  _r3_agent "$dir" pref 'implement, svelte, sveltekit'
+  _r3_agent "$dir" spec 'implement, svelte'
+  _r3_agent "$dir" zeta 'implement, svelte'
+  _r3_agent "$dir" gen 'implement, svelte, frontend, backend, review'
+  _r3_agent "$dir" other 'research'
+
+  export GUILD_AGENTS_DIR="$dir"
+  if ! _t2_project s3match 2026-01-01; then
+    unset GUILD_AGENTS_DIR
+    return 0
+  fi
+  db="$(_t2_db)"
+
+  grun new req --title "Token refresh"
+  req="$G_OUT"
+
+  # ---- rule 1 · eligible = capabilities are a SUPERSET of the required set ---------
+  grun new task --title "Implement the refresh" --req "$req" --needs implement,svelte --prefers sveltekit
+  t="$G_OUT"
+  grun match "$t"
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild match on a --needs ticket succeeds"; else
+    t_fail "guild match on a --needs ticket succeeds" "rc=$G_RC
+$G_ERR"; fi
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk '{ printf "%s%s", (NR > 1 ? "|" : ""), $2 }')"
+  want_eq "§5.2 ranks: preferred covered DESC, capability count ASC, then name ASC" \
+    "pref|spec|zeta|gen" "$out"
+  want_eq "rank 1 carries its preferred coverage and its capability count" \
+    "1 pref 1/1 3 capability" "$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'NR == 1')"
+  want_eq "a specialist beats a generalist on equal preferred coverage" \
+    "2 spec 0/1 2 capability" "$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'NR == 2')"
+  want_eq "and the tie between two identical specialists breaks by name, stably" \
+    "3 zeta 0/1 2 capability" "$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'NR == 3')"
+  n="$(_t2_lines "$G_OUT" ' other ')"
+  want_eq "a member covering none of the required set is not eligible at all" "0" "$n"
+  n="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'END { print NR + 0 }')"
+  want_eq "four eligible members, four rows" "4" "$n"
+  # DETERMINISM IS THE PROPERTY THE ORCHESTRATOR DEPENDS ON: rank 1 is dispatched without
+  # model judgment, so two runs must not disagree.
+  out="$G_OUT"
+  grun match "$t"
+  want_eq "two runs of guild match agree exactly" "$out" "$G_OUT"
+
+  # ---- --json says the same thing, as a document ----------------------------------
+  grun match "$t" --json
+  out="$(printf "SELECT json_valid(CAST(x'%s' AS TEXT));\n" "$(_t2_hex "$G_OUT")" | tsql "$db")"
+  want_eq "guild match --json emits a valid JSON document" "1" "$out"
+  want_contains "which names the rule that produced rank 1" '"source": "capability"' "$G_OUT"
+  want_contains "and the required set" '"required": ["implement","svelte"]' "$G_OUT"
+  want_contains "and the preferred set" '"preferred": ["sveltekit"]' "$G_OUT"
+  want_contains "and ranks the first candidate 1, not the empty string" '{"rank":1,"agent":"pref"' "$G_OUT"
+  want_contains "and the last one 4" '{"rank":4,"agent":"gen"' "$G_OUT"
+
+  # ---- rule 4 · no eligible agent is LOUD, and mutates nothing ---------------------
+  grun new task --title "Port the codec" --req "$req" --needs implement,qa-execution
+  t="$G_OUT"
+  _r3_mark
+  grun match "$t"
+  if [ "$G_RC" -ne 0 ]; then t_pass "a bounty nobody can take exits non-zero"; else
+    t_fail "a bounty nobody can take exits non-zero" "rc=0: $G_OUT"; fi
+  want_contains "and says so in the design's own words" "no guild member can take this bounty" "$G_ERR"
+  want_contains "naming the capabilities, as a bracketed list" \
+    "needs [implement, qa-execution]" "$G_ERR"
+  want_contains "and offering the recruit exit ..." "guild capability-request" "$G_ERR"
+  want_contains "... and the park-it exit" "blocked" "$G_ERR"
+  if [ -z "$G_OUT" ]; then t_pass "nothing reaches stdout, so no caller reads a winner"; else
+    t_fail "nothing reaches stdout, so no caller reads a winner" "$G_OUT"; fi
+  # THE ORCHESTRATOR OWNS EVERY STATUS TRANSITION. A read command that moved the ticket
+  # would be a second writer, which the whole storage design forbids.
+  out="$(printf "SELECT status FROM task WHERE id = '%s';\n" "$t" | tsql "$db")"
+  want_eq "guild match does NOT move the ticket to blocked itself" "todo" "$out"
+  _r3_refused "and writes no row, no event and no journal line" "no guild member"
+  grun match "$t" --json
+  want_contains "--json says the same, as an empty eligible list" '"eligible": []' "$G_OUT"
+  if [ "$G_RC" -ne 0 ]; then t_pass "and still exits non-zero"; else
+    t_fail "and still exits non-zero" "rc=0"; fi
+
+  # ---- the pin: --agent AND --needs together --------------------------------------
+  #
+  # §5.2's last paragraph. The pin is what runs, and the members it displaced are printed
+  # under it so the deviation is visible rather than merely obeyed.
+  grun new task --title "Pinned to the generalist" --req "$req" --agent gen --needs implement,svelte
+  t="$G_OUT"
+  grun match "$t"
+  want_eq "a pinned ticket ranks its pin FIRST, sourced 'pin'" \
+    "1 gen 0/0 5 pin" "$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'NR == 1')"
+  # The displaced members follow, still in §5.2's order. This ticket declares no PREFERRED
+  # capability, so key 1 is a tie at 0 for everyone and key 2 decides: spec(2) and zeta(2)
+  # ahead of pref(3). That is not the same order as the ticket above, and it should not be
+  # — which is the point of computing the ranking for the displaced list rather than
+  # reusing an earlier answer.
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'NR > 1 { printf "%s%s", (n++ ? "|" : ""), $2 }')"
+  want_eq "and the members it displaced follow it, ranked, so the deviation is on screen" \
+    "spec|zeta|pref" "$out"
+  n="$(_t2_lines "$G_OUT" ' gen ')"
+  want_eq "the pinned member appears exactly once, not twice" "1" "$n"
+
+  grun new task --title "Pinned past a gap" --req "$req" --agent other --needs implement,qa-execution
+  t="$G_OUT"
+  grun match "$t"
+  if [ "$G_RC" -eq 0 ]; then t_pass "a pinned ticket is never a roster gap, however odd the pin"; else
+    t_fail "a pinned ticket is never a roster gap, however odd the pin" "rc=$G_RC
+$G_ERR"; fi
+  want_eq "and the pin is rank 1" "1 other 0/0 1 pin" "$G_OUT"
+
+  # ---- a ticket that names nobody and needs nothing -------------------------------
+  _r3_mark
+  grun new task --title "Nobody and nothing" --req "$req"
+  _r3_refused "a ticket with neither --agent nor --needs is refused at creation" \
+    "requires --agent or --needs"
+
+  # ---- a RETIRED member is not eligible -------------------------------------------
+  rm -f "$dir/pref.md"
+  grun sync-agents >/dev/null 2>&1
+  grun new task --title "After the retirement" --req "$req" --needs implement,svelte --prefers sveltekit
+  grun match "$G_OUT"
+  n="$(_t2_lines "$G_OUT" ' pref ')"
+  want_eq "a retired member is not offered work, though its row still exists" "0" "$n"
+  want_eq "and rank 1 becomes the best remaining specialist" \
+    "1 spec 0/1 2 capability" "$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'NR == 1')"
+
+  # ---- argument handling ------------------------------------------------------------
+  grun match
+  if [ "$G_RC" -ne 0 ]; then t_pass "guild match with no id is refused"; else
+    t_fail "guild match with no id is refused" "rc=0"; fi
+  grun match REQ-001
+  want_contains "guild match on a non-TASK id says which shape it wants" "expected TASK-NNN" "$G_ERR"
+  grun match TASK-404
+  want_contains "guild match on a missing task says so" "TASK-404 not found" "$G_ERR"
+  grun match TASK-001 TASK-002
+  if [ "$G_RC" -ne 0 ]; then t_pass "guild match takes exactly ONE id"; else
+    t_fail "guild match takes exactly ONE id" "rc=0"; fi
+  grun match TASK-001 --nope
+  if [ "$G_RC" -ne 0 ]; then t_pass "and refuses an unknown option"; else
+    t_fail "and refuses an unknown option" "rc=0"; fi
+
+  unset GUILD_AGENTS_DIR
+  unset GUILD_DIR
+  return 0
+}
+
+# ---- S3.5 · guild bounties ----------------------------------------------------------
+#
+# "What can be worked right now" and, immediately underneath, what cannot and why. The
+# second half is the part worth testing hardest: a board that lists only claimable work
+# answers "what is next" and hides "why is nothing next", which is the question a stalled
+# guild actually has.
+t2_roster_bounties() {
+  local dir db req impl rev gap dep blk pin out n
+  section "Tier 2 · Stage 3 · guild bounties (what can be worked, and what cannot)"
+
+  dir="$T2/s3-bounty-agents"
+  rm -rf "$dir"
+  mkdir -p "$dir"
+  _r3_agent "$dir" builder 'implement, backend'
+  _r3_agent "$dir" checker 'review'
+
+  export GUILD_AGENTS_DIR="$dir"
+  if ! _t2_project s3bounty 2026-01-01; then
+    unset GUILD_AGENTS_DIR
+    return 0
+  fi
+  db="$(_t2_db)"
+
+  grun new req --title "Delivery worker"
+  req="$G_OUT"
+  grun new task --title "Build the worker" --req "$req" --needs implement
+  impl="$G_OUT"
+  grun new task --title "Review the worker" --agent reviewer --req "$req"
+  rev="$G_OUT"
+  grun new task --title "Port the codec to Rust" --req "$req" --needs implement,qa-execution
+  gap="$G_OUT"
+  grun new task --title "Wire the codec in" --req "$req" --needs implement
+  dep="$G_OUT"
+  grun new task --title "Parked by hand" --req "$req" --needs implement
+  blk="$G_OUT"
+  grun move "$blk" blocked
+  if [ "$G_RC" -eq 0 ]; then t_pass "a five-ticket board seeds, one of them parked"; else
+    t_fail "a five-ticket board seeds, one of them parked" "rc=$G_RC
+$G_ERR"
+    unset GUILD_AGENTS_DIR
+    return 0
+  fi
+
+  # `task_dependency` has no CLI writer until Stage 4, so the harness seeds it — the same
+  # licence it takes for `plan_slice`. `guild bounties` reads it today, which is the point.
+  printf "INSERT INTO task_dependency (task_id, depends_on) VALUES ('%s','%s');\n" "$dep" "$gap" |
+    tsql "$db" >/dev/null 2>&1
+
+  grun bounties
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild bounties runs"; else
+    t_fail "guild bounties runs" "rc=$G_RC
+$G_ERR"
+    unset GUILD_AGENTS_DIR
+    return 0
+  fi
+
+  # ---- the ready half -------------------------------------------------------------
+  n="$(_t2_lines "$G_OUT" "^$impl ready builder $req - ")"
+  want_eq "a dependency-satisfied capability ticket is ready, with its rank-1 member" "1" "$n"
+  # THE REVIEW GATE IS HONORED: `_brief_bounty_where` IS `guild next`'s candidate rule, so
+  # bounties cannot offer work `guild next` would refuse to hand out.
+  n="$(_t2_lines "$G_OUT" "^$rev ready ")"
+  want_eq "a reviewer ticket held by the review gate is NOT offered" "0" "$n"
+  grun next
+  want_eq "and guild next agrees about who is next" "$impl" "$G_OUT"
+  grun bounties
+  # DEPENDENCY-SATISFIED ONLY.
+  n="$(_t2_lines "$G_OUT" "^$dep ready ")"
+  want_eq "a ticket waiting on an unfinished predecessor is NOT offered" "0" "$n"
+
+  # ---- the blocked half, each row with its own reason token -----------------------
+  n="$(_t2_lines "$G_OUT" "^$blk blocked .* $req status-blocked ")"
+  want_eq "an explicitly parked ticket reports 'status-blocked'" "1" "$n"
+  n="$(_t2_lines "$G_OUT" "^$dep blocked .* $req deps:$gap ")"
+  want_eq "a dependency-waiting ticket reports 'deps:<the ids it waits on>'" "1" "$n"
+  n="$(_t2_lines "$G_OUT" "^$gap blocked - $req no-eligible-agent:implement,qa-execution ")"
+  want_eq "and a roster gap reports 'no-eligible-agent:<capabilities>', with no agent" "1" "$n"
+  # THE REASON IS ONE BLANK-FREE TOKEN, which is what makes `awk '$5 ~ /^no-eligible/'` the
+  # roster-gap query the check-in skill documents.
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'NF > 0 && NF < 6 { bad = bad " " $1 } END { print bad }')"
+  t_check "every bounties row has at least six fields, so column 5 is always the reason" "$out"
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk '$2 == "blocked" && $5 == "-" { print $1 }')"
+  t_check "and no blocked row has an empty reason" "$out"
+
+  # ---- REPORTING IS NOT MUTATING --------------------------------------------------
+  #
+  # §5.2 says a bounty nobody can take moves to `blocked`; the ORCHESTRATOR does that. So a
+  # ticket can read `blocked / no-eligible-agent` here while its stored status is still
+  # `todo` — the board saying what it would do, one command before it does it.
+  out="$(printf "SELECT status FROM task WHERE id = '%s';\n" "$gap" | tsql "$db")"
+  want_eq "the roster-gap ticket's STORED status is untouched by the report" "todo" "$out"
+  _r3_mark
+  grun bounties >/dev/null
+  out="$(_s2_state)"
+  want_eq "guild bounties writes no row and no event" "$R3_ROWS" "$out"
+  want_eq "and no journal line" "$R3_JRN" "$(_s2_jrn)"
+
+  # ---- a pinned ticket is workable BY DEFINITION ----------------------------------
+  grun new task --title "Pinned past the gap" --req "$req" --agent builder --needs implement,qa-execution
+  pin="$G_OUT"
+  grun bounties
+  n="$(_t2_lines "$G_OUT" "^$pin ready builder ")"
+  want_eq "a pinned ticket is ready even when the roster cannot cover its capabilities" "1" "$n"
+  n="$(_t2_lines "$G_OUT" "^$pin blocked ")"
+  want_eq "and is never reported as a roster gap" "0" "$n"
+
+  # ---- the gate opens, and the bounty board follows -------------------------------
+  grun move "$impl" "done"
+  grun move "$gap" failed
+  grun move "$dep" "done"
+  grun move "$pin" "done"
+  grun move "$blk" failed
+  grun bounties
+  n="$(_t2_lines "$G_OUT" "^$rev ready ")"
+  want_eq "with every non-reviewer ticket adjudicated, the reviewer is finally offered" "1" "$n"
+
+  # ---- --json ---------------------------------------------------------------------
+  grun bounties --json
+  out="$(printf "SELECT json_valid(CAST(x'%s' AS TEXT));\n" "$(_t2_hex "$G_OUT")" | tsql "$db")"
+  want_eq "guild bounties --json emits a valid JSON document" "1" "$out"
+  want_contains "with a bounties array" '"bounties"' "$G_OUT"
+  want_contains "and a blocked array" '"blocked"' "$G_OUT"
+
+  grun bounties --nope
+  if [ "$G_RC" -ne 0 ]; then t_pass "an unknown option to bounties is refused"; else
+    t_fail "an unknown option to bounties is refused" "rc=0"; fi
+  grun bounties TASK-001
+  if [ "$G_RC" -ne 0 ]; then t_pass "and so is a positional argument"; else
+    t_fail "and so is a positional argument" "rc=0"; fi
+
+  unset GUILD_AGENTS_DIR
+  unset GUILD_DIR
+  return 0
+}
+
+# ---- S3.6 · the `blocked` status contract -------------------------------------------
+#
+# One new word in one vocabulary — and six things in this CLI read `task.status`. The
+# decisions the implementation made (lib/artifacts.sh, THE BLOCKED CONTRACT) are asserted
+# here one by one, in its numbering, because each of them is a judgment call a later change
+# could quietly reverse:
+#
+#   1. `guild next` never returns a blocked task
+#   2. a blocked task HOLDS the review gate closed, and `failed` does not
+#   3. for requirement completion `blocked` is like `todo`, not like `failed` — a rule the
+#      SKILLS must honor, since nothing in the CLI closes a requirement
+#   4. it is visible on every surface: list, board, brief, dashboard
+#   5. `blocked -> done` is the one refused transition
+#   6. `guild batch` still dispatches a parallel group without its blocked members
+#
+# ... and the rule under all six: a blocked ticket must never be a QUIET dead end.
+t2_roster_blocked() {
+  local db req a b rev g1 g2 out n before
+  section "Tier 2 · Stage 3 · the 'blocked' status, and everything that reads it"
+
+  _t2_project s3blocked 2026-01-01 || return 0
+  db="$(_t2_db)"
+
+  grun new req --title "Codec"
+  req="$G_OUT"
+  grun new task --title "Port the codec" --agent developer --req "$req"
+  a="$G_OUT"
+  grun move "$a" blocked
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild move TASK-NNN blocked is accepted"; else
+    t_fail "guild move TASK-NNN blocked is accepted" "rc=$G_RC
+$G_ERR"; return 0; fi
+  grun move "$a" nonsense
+  want_contains "the task status vocabulary now lists it, appended after v4's four" \
+    "allowed: todo in-progress done failed blocked" "$G_ERR"
+  grun move "$req" blocked
+  want_contains "'blocked' is a TASK status only — a requirement cannot be blocked" \
+    "allowed: todo in-progress done" "$G_ERR"
+
+  # ---- 5 · the one refused transition ---------------------------------------------
+  _r3_mark
+  grun move "$a" "done"
+  if [ "$G_RC" -ne 0 ]; then t_pass "blocked -> done is REFUSED"; else
+    t_fail "blocked -> done is REFUSED" "rc=0"; fi
+  want_contains "and the refusal explains what blocked means" "no guild member can take" "$G_ERR"
+  want_contains "and lists the three legal exits — todo ..." "move $a todo" "$G_ERR"
+  want_contains "... in-progress ..." "move $a in-progress" "$G_ERR"
+  want_contains "... and failed" "move $a failed" "$G_ERR"
+  _r3_refused "the refused transition wrote nothing at all" "cannot move straight to 'done'"
+  out="$(printf "SELECT status FROM task WHERE id = '%s';\n" "$a" | tsql "$db")"
+  want_eq "and the ticket is still blocked" "blocked" "$out"
+  # The two-step route stays open, deliberately: two commands and two events, rather than
+  # one that erases the gap.
+  grun move "$a" todo
+  grun move "$a" "done"
+  if [ "$G_RC" -eq 0 ]; then t_pass "blocked -> todo -> done remains available, in two recorded steps"; else
+    t_fail "blocked -> todo -> done remains available, in two recorded steps" "rc=$G_RC
+$G_ERR"; fi
+  out="$(_s2_events moved task)"
+  if [ "$out" -ge 3 ]; then t_pass "and every one of those transitions wrote an event"; else
+    t_fail "and every one of those transitions wrote an event" "moved events: $out"; fi
+
+  # ---- 1 · guild next never returns a blocked task --------------------------------
+  grun new task --title "Second slice" --agent developer --req "$req"
+  b="$G_OUT"
+  grun move "$b" blocked
+  grun next
+  want_eq "with only a blocked task left, guild next answers 'none'" "none" "$G_OUT"
+  if [ "$G_RC" -eq 0 ]; then t_pass "and does so as a clean answer, not an error"; else
+    t_fail "and does so as a clean answer, not an error" "rc=$G_RC"; fi
+
+  # ---- 2 · a blocked task holds the review gate -----------------------------------
+  grun new task --title "Review the codec" --agent reviewer --req "$req"
+  rev="$G_OUT"
+  grun next
+  want_eq "a reviewer ticket waits while a NON-reviewer task is blocked" "none" "$G_OUT"
+  # THE ASYMMETRY IS THE DECISION: `failed` has been adjudicated by a human, `blocked` has
+  # not, and a review that runs over an un-attempted slice produces a green that looks
+  # exactly like a real one.
+  grun move "$b" failed
+  grun next
+  want_eq "the same ticket, once FAILED, stops holding the gate" "$rev" "$G_OUT"
+  grun move "$b" blocked
+  grun next
+  want_eq "and moving it back to blocked closes the gate again" "none" "$G_OUT"
+
+  # ---- 4 · it is loud on every surface --------------------------------------------
+  grun list task blocked
+  n="$(_t2_lines "$G_OUT" "^$b ")"
+  want_eq "guild list task blocked finds it" "1" "$n"
+  grun board
+  out="$(_t2_brief_section "$G_OUT" "Blocked:")"
+  n="$(_t2_lines "$out" "$b")"
+  want_eq "guild board prints it in the Blocked section" "1" "$n"
+  n="$(_t2_lines "$out" '(none)')"
+  want_eq "which is therefore not the empty placeholder" "0" "$n"
+  grun brief
+  out="$(_t2_brief_section "$G_OUT" "Blocked:")"
+  n="$(_t2_lines "$out" "$b")"
+  want_eq "guild brief lists it under Blocked" "1" "$n"
+  grun brief --json
+  want_contains "brief --json counts it" '"blocked": 1' "$G_OUT"
+  grun dashboard --json
+  want_contains "and so does the dashboard's data" '"tasks_blocked": 1' "$G_OUT"
+
+  # THE ANTI-WEDGE ASSERTION. `guild next` saying `none` is only safe because the same
+  # session's briefing names the ticket that is stalling it — a "nothing to do" with no
+  # explanation anywhere is the silent failure this whole contract exists to avoid.
+  grun next
+  want_eq "guild next is 'none' ..." "none" "$G_OUT"
+  grun brief
+  n="$(_t2_lines "$G_OUT" "$b")"
+  if [ "$n" -ge 1 ]; then t_pass "... and the same briefing names the ticket that is stalling it"; else
+    t_fail "... and the same briefing names the ticket that is stalling it" \
+      "the blocked ticket appears nowhere in the brief"; fi
+  grun bounties
+  n="$(_t2_lines "$G_OUT" "^$b blocked ")"
+  want_eq "and guild bounties reports it with a reason" "1" "$n"
+
+  # ---- 3 · requirement completion: blocked is like todo, not like failed ----------
+  #
+  # Nothing in the CLI closes a requirement — the skills do, with `guild move REQ-NNN done`
+  # — so the assertion is that the rule is WRITTEN DOWN where the orchestrator reads it,
+  # and that the board still shows the hole after a requirement is closed over one.
+  n="$(_t2_count "$SCRIPT_DIR/../skills/check-in/SKILL.md" 'blocked')"
+  if [ "$n" -ge 1 ]; then
+    t_pass "skills/check-in documents what 'blocked' does to the rest of the board"
+  else
+    t_fail "skills/check-in documents what 'blocked' does to the rest of the board" \
+      "the orchestrator's own instructions never mention the status"
+  fi
+  n="$(_t2_count "$SCRIPT_DIR/../skills/check-in/references/task-lifecycle.md" 'blocked')"
+  if [ "$n" -ge 1 ]; then
+    t_pass "and the task-lifecycle reference carries the status itself"
+  else
+    t_fail "and the task-lifecycle reference carries the status itself" "not mentioned"
+  fi
+  grun move "$req" "done"
+  grun board
+  out="$(_t2_brief_section "$G_OUT" "Blocked:")"
+  n="$(_t2_lines "$out" "$b")"
+  want_eq "a requirement closed over a blocked task STILL shows the blocked task" "1" "$n"
+
+  # ---- 6 · guild batch dispatches a group without its blocked members -------------
+  grun new req --title "Parallel work"
+  req="$G_OUT"
+  grun new task --title "Slice one" --agent developer --req "$req" --parallel-group pg
+  g1="$G_OUT"
+  grun new task --title "Slice two" --agent developer --req "$req" --parallel-group pg
+  g2="$G_OUT"
+  grun batch "$g1"
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk '{ printf "%s%s", (NR > 1 ? " " : ""), $0 }')"
+  want_eq "a parallel group of two dispatches both" "$g1 $g2" "$out"
+  grun move "$g2" blocked
+  grun batch "$g1"
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk '{ printf "%s%s", (NR > 1 ? " " : ""), $0 }')"
+  want_eq "and with one member blocked the other still runs, alone" "$g1" "$out"
+
+  # ---- a replay preserves it --------------------------------------------------------
+  grun board
+  before="$G_OUT"
+  grun rebuild
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild rebuild replays a board carrying blocked tasks"; else
+    t_fail "guild rebuild replays a board carrying blocked tasks" "rc=$G_RC
+$G_ERR"; fi
+  grun board
+  _r3_diff "and the board is byte-identical afterwards" "$before" "$G_OUT"
+
+  unset GUILD_DIR
+  return 0
+}
+
+# ---- S3.7 · recruiting (§5.4) --------------------------------------------------------
+#
+# The round trip the design describes, end to end: the architect files a gap, the gap
+# surfaces where a human will see it, the agent file is written, `sync-agents` admits it,
+# and the gap closes ITSELF rather than needing a verb nobody would remember.
+#
+# TWO THINGS HERE ARE EASY TO MISS. First, `guild brief`'s Roster Gaps section has existed
+# since Stage 2 and has been UNREACHABLE the whole time, because nothing wrote
+# `capability_request`; this command is what makes it reachable, so "the section renders"
+# is a Stage 3 assertion and not a Stage 2 one. Second, filing the request EXTENDS THE
+# VOCABULARY — which is the only reason `sync-agents` can admit an agent tagged `rust`
+# afterwards while refusing it before. That before/after pair is §5.4's enforcement, and it
+# is asserted in both directions.
+t2_roster_recruit() {
+  local dir db req id out n
+  section "Tier 2 · Stage 3 · recruiting: capability-request, and the Roster Gaps surface"
+
+  dir="$T2/s3-recruit-agents"
+  rm -rf "$dir"
+  mkdir -p "$dir"
+  _r3_agent "$dir" builder 'implement, backend'
+
+  export GUILD_AGENTS_DIR="$dir"
+  if ! _t2_project s3recruit 2026-01-01; then
+    unset GUILD_AGENTS_DIR
+    return 0
+  fi
+  db="$(_t2_db)"
+
+  grun new req --title "Port the codec"
+  req="$G_OUT"
+
+  # ---- before: an unknown tag cannot simply be typed into an agent file -----------
+  _r3_agent "$dir" rustdev 'implement, rust'
+  grun sync-agents
+  if [ "$G_RC" -ne 0 ]; then
+    t_pass "BEFORE the gap is filed, an agent tagged 'rust' is refused"
+  else
+    t_fail "BEFORE the gap is filed, an agent tagged 'rust' is refused" \
+      "rc=0 — the vocabulary approved itself"
+  fi
+  rm -f "$dir/rustdev.md"
+
+  # ---- file the gap ---------------------------------------------------------------
+  grun capability-request rust --req "$req" \
+    --rationale "three plan slices are Rust crates; 'builder' has no Rust idiom guidance and would produce non-idiomatic error handling." \
+    --proposes developer-rust \
+    --spec "Sonnet · tools Read/Grep/Glob/Write/Edit/Bash · owns Rust implementation slices"
+  id="$G_OUT"
+  if [ "$G_RC" -eq 0 ] && [ -n "$id" ]; then
+    t_pass "guild capability-request files the gap and prints its id"
+  else
+    t_fail "guild capability-request files the gap and prints its id" "rc=$G_RC
+$G_ERR"
+    unset GUILD_AGENTS_DIR
+    return 0
+  fi
+  n="$(printf '%s\n' "$id" | LC_ALL=C awk 'END { print NR + 0 }')"
+  want_eq "the id is exactly one line" "1" "$n"
+  out="$(printf "SELECT status || '/' || capability || '/' || requirement_id || '/' || proposed_agent FROM capability_request WHERE id = %s;\n" "$id" | tsql "$db")"
+  want_eq "the row is stored open, against the requirement that needed it" \
+    "open/rust/$req/developer-rust" "$out"
+  out="$(printf "SELECT CASE WHEN proposed_spec LIKE '%%Read/Grep/Glob%%' THEN 'kept' ELSE 'LOST' END FROM capability_request WHERE id = %s;\n" "$id" | tsql "$db")"
+  want_eq "and the architect's draft spec with it" "kept" "$out"
+  out="$(_s2_events requested capability_request)"
+  want_eq "filing a gap writes an event — brief and the dashboard both read that table" "1" "$out"
+  out="$(_t2_count "$GUILD_DIR/journal.ndjson" '"table":"capability_request"')"
+  if [ "$out" -ge 1 ]; then t_pass "and a journal line, so it survives a rebuild"; else
+    t_fail "and a journal line, so it survives a rebuild" "no capability_request line"; fi
+
+  # ---- it surfaces where a human will see it --------------------------------------
+  grun capability-requests
+  n="$(_t2_lines "$G_OUT" "^$id open rust $req developer-rust ")"
+  want_eq "guild capability-requests lists it: five columns, then the rationale LAST" "1" "$n"
+  n="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'END { print NR + 0 }')"
+  want_eq "and exactly one line, though the rationale contains quotes and a semicolon" "1" "$n"
+  grun capability-requests --open
+  n="$(_t2_lines "$G_OUT" "^$id open ")"
+  want_eq "--open finds it too" "1" "$n"
+
+  # THE SECTION THAT HAS BEEN UNREACHABLE SINCE STAGE 2.
+  grun brief
+  n="$(_t2_lines "$G_OUT" '^Roster Gaps:$')"
+  want_eq "guild brief renders the Roster Gaps section — reachable at last" "1" "$n"
+  out="$(_t2_brief_section "$G_OUT" "Roster Gaps:")"
+  n="$(_t2_lines "$out" 'rust')"
+  want_eq "and the gap is in it, by capability" "1" "$n"
+  n="$(_t2_lines "$out" 'proposed developer-rust')"
+  want_eq "with the member the architect proposes" "1" "$n"
+  n="$(printf '%s\n' "$out" | LC_ALL=C awk 'END { print NR + 0 }')"
+  want_eq "one gap is one line, whatever the rationale contains" "1" "$n"
+  grun brief --json
+  want_contains "brief --json counts it" '"gaps_open": 1' "$G_OUT"
+  want_contains "and carries the gap itself" '"roster_gaps"' "$G_OUT"
+
+  # ---- the refusals, each of which writes nothing ---------------------------------
+  _r3_mark
+  grun capability-request rust --req "$req" --rationale "again" --proposes developer-rust
+  _r3_refused "a SECOND open request for one capability is refused — one gap, one decision" \
+    "already an open roster gap"
+  want_contains "and names the request that already exists" "CAP-REQ $id" "$G_ERR"
+  grun capability-request implement --req "$req" --rationale "x" --proposes developer-x
+  # A word that is BOTH a seed capability and one an active member declares is refused by
+  # the seed rule, which runs first — and that ordering is right, because "it is already in
+  # the vocabulary" is the more fundamental of the two answers. The other refusal, for a
+  # RECRUITED capability the roster has since grown, is asserted after the admission below,
+  # where it is the only one that can fire.
+  _r3_refused "a SEED capability an active member declares is refused by the seed rule first" \
+    "already in the guild's capability vocabulary"
+  grun capability-request go --req REQ-404 --rationale "x" --proposes developer-go
+  _r3_refused "a request against a requirement that does not exist is refused" "REQ-404 not found"
+  grun capability-request security --req "$req" --rationale "x" --proposes developer-sec
+  _r3_refused "a SEED capability is refused — §5.3's list is not re-litigated one row at a time" \
+    "already in the guild's capability vocabulary"
+  grun capability-request "e2e drift" --req "$req" --rationale "x" --proposes developer-x
+  _r3_refused "a malformed capability word is refused" "not a valid capability"
+  grun capability-request rust2 --req "$req" --proposes developer-rust2
+  _r3_refused "a request with no --rationale is refused — that sentence IS the record" "--rationale"
+  grun capability-request rust2 --req "$req" --rationale "x"
+  _r3_refused "and one with no --proposes" "--proposes"
+  grun capability-request rust2 --rationale "x" --proposes developer-rust2
+  _r3_refused "and one with no --req" "--req"
+  grun capability-request --req "$req" --rationale x --proposes p
+  _r3_refused "and one whose capability is missing entirely" "requires a capability"
+  grun capability-request rust2 --req "$req" --rationale x --proposes "not a name"
+  _r3_refused "a --proposes that is not a usable key is refused, naming the flag" "--proposes"
+  grun capability-requests --nope
+  if [ "$G_RC" -ne 0 ]; then t_pass "an unknown option to capability-requests is refused"; else
+    t_fail "an unknown option to capability-requests is refused" "rc=0"; fi
+  grun capability-requests extra
+  if [ "$G_RC" -ne 0 ]; then t_pass "and so is a positional argument"; else
+    t_fail "and so is a positional argument" "rc=0"; fi
+
+  # ---- ... and now the same agent file is admitted --------------------------------
+  _r3_agent "$dir" developer-rust 'implement, rust'
+  grun sync-agents
+  if [ "$G_RC" -eq 0 ]; then
+    t_pass "AFTER the gap is filed, the same agent file is admitted"
+  else
+    t_fail "AFTER the gap is filed, the same agent file is admitted" "rc=$G_RC
+$G_ERR"
+  fi
+  want_contains "and reported as a new member" "new       developer-rust" "$G_OUT"
+  out="$(printf "SELECT status FROM capability_request WHERE id = %s;\n" "$id" | tsql "$db")"
+  want_eq "admission CLOSES the gap by itself — there is no verb to remember" "created" "$out"
+  out="$(_s2_events recruited capability_request)"
+  want_eq "and writes a 'recruited' event" "1" "$out"
+  grun brief
+  n="$(_t2_lines "$G_OUT" '^Roster Gaps:$')"
+  want_eq "so the briefing stops reporting a gap the guild has closed" "0" "$n"
+  # THE ROW OUTLIVES THE RECRUITMENT, because it is what keeps the word legal.
+  out="$(printf "SELECT COUNT(*) FROM capability_request WHERE capability = 'rust';\n" | tsql "$db")"
+  want_eq "the request row is NOT deleted — it is what legitimizes the word" "1" "$out"
+  grun sync-agents
+  if [ "$G_RC" -eq 0 ]; then t_pass "and a later sync still admits 'rust', so the vocabulary held"; else
+    t_fail "and a later sync still admits 'rust', so the vocabulary held" "rc=$G_RC
+$G_ERR"; fi
+
+  # THE THIRD REFUSAL, which only becomes reachable here: `rust` is not a seed word and no
+  # open request for it remains, so the ONLY thing that can refuse a second request for it
+  # is "an active member already declares this". Filing one would put a permanent entry in
+  # `guild brief` for work the guild can already do.
+  _r3_mark
+  grun capability-request rust --req "$req" --rationale "again, now that we have one" --proposes developer-rust2
+  _r3_refused "a capability an ACTIVE member already declares is refused" "the guild already has"
+  want_contains "and names the member, since not knowing they exist is the likely cause" \
+    "developer-rust" "$G_ERR"
+
+  # ---- the bounty becomes claimable, which is the whole point ---------------------
+  grun new task --title "Port the codec to Rust" --req "$req" --needs implement,rust
+  out="$G_OUT"
+  grun match "$out"
+  if [ "$G_RC" -eq 0 ]; then
+    t_pass "the bounty that had nobody now matches — no skill edit, no chain rewiring"
+  else
+    t_fail "the bounty that had nobody now matches — no skill edit, no chain rewiring" "rc=$G_RC
+$G_ERR"
+  fi
+  want_eq "and rank 1 is the recruited member" \
+    "1 developer-rust 0/0 capability" "$(_r3_match4 "$G_OUT")"
+  grun bounties
+  n="$(_t2_lines "$G_OUT" "^$out ready developer-rust ")"
+  want_eq "and guild bounties offers it" "1" "$n"
+
+  # ---- a replay ---------------------------------------------------------------------
+  grun capability-requests
+  out="$G_OUT"
+  grun rebuild
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild rebuild replays the recruiting record"; else
+    t_fail "guild rebuild replays the recruiting record" "rc=$G_RC
+$G_ERR"; fi
+  grun capability-requests
+  _r3_diff "and the gaps come back exactly as they were" "$out" "$G_OUT"
+
+  unset GUILD_AGENTS_DIR
+  unset GUILD_DIR
+  return 0
+}
+
+# ---- S3.8 · the adversarial matrix over Stage 3's flags -----------------------------
+#
+# Every earlier stage's rule, restated for the flags Stage 3 adds — because a rule enforced
+# only on the commands that were reviewed is not enforced. The channels are new:
+#
+#   capability-requests   six whitespace columns read with awk, free text LAST
+#   brief Roster Gaps     one line per gap, in a section a reader counts
+#   agent frontmatter     free text that reaches SQL WITHOUT passing through argv
+#
+# And the flags split into two kinds, which is itself the thing worth asserting:
+# `--rationale` and `--spec` are FREE TEXT and must survive anything, while the capability
+# word, the agent name and the ids are CLOSED ALPHABETS and must refuse it. A flag on the
+# wrong side of that line either loses data or lets `E2E` into the vocabulary.
+t2_roster_matrix() {
+  local dir db req i v label out n took budget mult id open want
+  section "Tier 2 · Stage 3 · the adversarial matrix on every new flag"
+
+  dir="$T2/s3-matrix-agents"
+  rm -rf "$dir"
+  mkdir -p "$dir"
+  _r3_agent "$dir" builder 'implement, backend'
+
+  export GUILD_AGENTS_DIR="$dir"
+  if ! _t2_project s3matrix 2026-01-01; then
+    unset GUILD_AGENTS_DIR
+    return 0
+  fi
+  db="$(_t2_db)"
+
+  grun new req --title "carrier requirement"
+  req="$G_OUT"
+
+  # ---- the 13-case matrix on the two free-text flags ------------------------------
+  i=1
+  while [ "$i" -le "$(_adv_count)" ]; do
+    v="$(_adv_value "$i")"
+    label="$(_adv_label "$i")"
+
+    grun capability-request "cap-$i" --req "$req" --rationale "$v" --proposes "member-$i" --spec "$v"
+    id="$G_OUT"
+    if [ "$G_RC" -eq 0 ] && [ -n "$id" ]; then
+      t_pass "[$label] capability-request accepts the value in --rationale and --spec"
+    else
+      t_fail "[$label] capability-request accepts the value in --rationale and --spec" "rc=$G_RC
+$(printf '%s' "$G_ERR" | head -3)"
+      i=$((i + 1))
+      continue
+    fi
+
+    # BYTE FIDELITY, asked of the ENGINE rather than of a rendering: the columnar surfaces
+    # below legitimately flatten newlines, so this is the assertion that nothing was lost.
+    out="$(printf "SELECT CASE WHEN rationale = CAST(x'%s' AS TEXT) THEN 'same' ELSE 'DIFFERENT' END FROM capability_request WHERE id = %s;\n" "$(_t2_hex "$v")" "$id" | tsql "$db")"
+    want_eq "[$label] the rationale is stored byte-exactly" "same" "$out"
+    out="$(printf "SELECT CASE WHEN proposed_spec = CAST(x'%s' AS TEXT) THEN 'same' ELSE 'DIFFERENT' END FROM capability_request WHERE id = %s;\n" "$(_t2_hex "$v")" "$id" | tsql "$db")"
+    want_eq "[$label] and so is the spec" "same" "$out"
+
+    # ONE ROW IS ONE LINE. A newline in free text forged rows on three earlier surfaces.
+    grun capability-requests
+    n="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'END { print NR + 0 }')"
+    out="$(printf "SELECT COUNT(*) FROM capability_request;\n" | tsql "$db")"
+    want_eq "[$label] capability-requests prints exactly one line per row" "$out" "$n"
+    n="$(_t2_lines "$G_OUT" "^$id open cap-$i $req member-$i ")"
+    want_eq "[$label] and the row's five leading columns survive as five fields" "1" "$n"
+
+    # The briefing counts gaps and lists them (LIMIT 10); a value must not add a line.
+    grun brief
+    n="$(_t2_lines "$G_OUT" '^Roster Gaps:$')"
+    want_eq "[$label] the value cannot forge a second Roster Gaps heading" "1" "$n"
+    out="$(_t2_brief_section "$G_OUT" "Roster Gaps:")"
+    n="$(printf '%s\n' "$out" | LC_ALL=C awk 'END { print NR + 0 }')"
+    open="$(printf "SELECT COUNT(*) FROM capability_request WHERE status = 'open';\n" | tsql "$db")"
+    # The section lists ten gaps and then one `… and N more` line, so its length is a
+    # FUNCTION of the open count rather than equal to it. Asserting that function — and,
+    # past ten, the overflow count itself — is what catches a value that adds a line: a
+    # forged row would push the total up by one while N stayed where it was.
+    if [ "$open" -le 10 ]; then
+      want="$open"
+    else
+      want=11
+    fi
+    want_eq "[$label] the Roster Gaps section is one line per listed gap" "$want" "$n"
+    if [ "$open" -gt 10 ]; then
+      want_eq "[$label] and the overflow line counts the gaps it did not print" \
+        "1" "$(_t2_lines "$out" "and $((open - 10)) more\$")"
+    fi
+    grun brief --json
+    out="$(printf "SELECT json_valid(CAST(x'%s' AS TEXT));\n" "$(_t2_hex "$G_OUT")" | tsql "$db")"
+    want_eq "[$label] brief --json is still a valid document" "1" "$out"
+
+    i=$((i + 1))
+  done
+
+  # ---- the same values on the CLOSED alphabets, which must REFUSE them -------------
+  #
+  # The refusal is the feature: a capability is compared for equality and never normalized,
+  # so a value that is not a capability word must never become one.
+  i=1
+  while [ "$i" -le "$(_adv_count)" ]; do
+    v="$(_adv_value "$i")"
+    label="$(_adv_label "$i")"
+    _r3_mark
+    grun capability-request "$v" --req "$req" --rationale x --proposes p
+    _r3_refused "[$label] a capability WORD carrying it is refused, and writes nothing" "capability"
+    grun capability-request "safe-$i" --req "$req" --rationale x --proposes "$v"
+    _r3_refused "[$label] and so is a --proposes carrying it" "agent name"
+    grun new task --title "t" --req "$req" --needs "$v"
+    _r3_refused "[$label] and a --needs carrying it" "capability"
+    grun new task --title "t" --req "$req" --needs implement --prefers "$v"
+    _r3_refused "[$label] and a --prefers carrying it" "capability"
+    i=$((i + 1))
+  done
+
+  # `--req` is prefix-checked and only then travels as free text, so it refuses on the id
+  # shape rather than on an alphabet — but it must still refuse, and write nothing.
+  _r3_mark
+  grun capability-request safe-req --req "$(_adv_value 2)" --rationale x --proposes p
+  _r3_refused "a --req carrying a newline is refused" "unrecognized id"
+  grun match "$(_adv_value 1)"
+  if [ "$G_RC" -ne 0 ]; then t_pass "and guild match refuses an id carrying a pipe"; else
+    t_fail "and guild match refuses an id carrying a pipe" "rc=0"; fi
+
+  # ---- invalid UTF-8 on every new flag --------------------------------------------
+  #
+  # Same contract as Stage 1 and 2: the command FAILS, the message names the FLAG and the
+  # offending BYTE, and nothing is written. The two closed alphabets are the exception, and
+  # the exception is right — the alphabet check runs first and its message is the useful
+  # one, exactly as it is for a doc slug.
+  i=1
+  while [ "$i" -le "$(_u8_count)" ]; do
+    v="$(_u8_value "$i")"
+    label="$(_u8_label "$i")"
+    grun capability-request "safe-u$i" --req "$req" --rationale "$v" --proposes "member-u$i"
+    _u8_refused "[$label] capability-request --rationale is refused, naming the flag and the byte" \
+      '--rationale' "$(_u8_byte "$i")"
+    i=$((i + 1))
+  done
+  v="$(_u8_value 5)"
+  grun capability-request safe-u10 --req "$req" --rationale ok --proposes member-u10 --spec "$v"
+  _u8_refused "[latin-1] --spec is refused" '--spec' 'E9'
+  grun capability-request safe-u11 --req "$(printf 'REQ-\351')" --rationale ok --proposes member-u11
+  _u8_refused "[latin-1] --req is refused" '--req' 'E9'
+  grun match "$(printf 'TASK-\351')"
+  _u8_refused "[latin-1] the guild match id is refused" 'TASK id' 'E9'
+  _r3_mark
+  grun capability-request "$v" --req "$req" --rationale ok --proposes member-u12
+  _r3_refused "[latin-1] an invalid-UTF-8 capability is refused as a bad capability word" \
+    "not a valid capability"
+  grun capability-request safe-u13 --req "$req" --rationale ok --proposes "$v"
+  _r3_refused "[latin-1] and an invalid-UTF-8 --proposes as a bad agent name" "not a valid agent name"
+  out="$(printf "SELECT COUNT(*) FROM capability_request WHERE rationale LIKE '%%' || char(65533) || '%%' OR proposed_spec LIKE '%%' || char(65533) || '%%';\n" | tsql "$db")"
+  want_eq "no stored gap contains a U+FFFD replacement character" "0" "$out"
+
+  # AN AGENT FILE is the one text that reaches the roster without passing through argv.
+  printf -- '---\nname: badbytes\nmodel: sonnet\ndescription: Le caf\351 est pr\352t\ncapabilities: [research]\n---\n' >"$dir/badbytes.md"
+  grun sync-agents
+  if [ "$G_RC" -ne 0 ]; then t_pass "an agent FILE carrying invalid UTF-8 is refused"; else
+    t_fail "an agent FILE carrying invalid UTF-8 is refused" "rc=0 — a U+FFFD entered the roster"; fi
+  out="$(printf "SELECT COUNT(*) FROM agent WHERE name = 'badbytes';\n" | tsql "$db")"
+  want_eq "and no member was created from it" "0" "$out"
+  out="$(printf "SELECT COUNT(*) FROM agent WHERE description LIKE '%%' || char(65533) || '%%';\n" | tsql "$db")"
+  want_eq "and no member's description carries a replacement character" "0" "$out"
+  rm -f "$dir/badbytes.md"
+
+  # ---- a 500 KB rationale: correctness AND time -----------------------------------
+  #
+  # A rationale is a paragraph a human pastes, and the quadratic round 3 found was
+  # invisible below 100 KB. The budget is an order of magnitude above the reference
+  # machine's cost, so a reintroduced quadratic FAILS the suite instead of feeling slow.
+  mult="${GUILD_TEST_BUDGET:-1}"
+  case "$mult" in '' | *[!0-9]*) mult=1 ;; esac
+  [ "$mult" -ge 1 ] || mult=1
+  budget=$((60 * mult))
+  v="$(_t2_bigval 500000)"
+  SECONDS=0
+  grun capability-request big-cap --req "$req" --rationale "$v" --proposes member-big --spec "$v"
+  id="$G_OUT"
+  if [ "$G_RC" -eq 0 ] && [ -n "$id" ]; then
+    t_pass "capability-request accepts a 500 KB --rationale AND a 500 KB --spec"
+  else
+    t_fail "capability-request accepts a 500 KB --rationale AND a 500 KB --spec" "rc=$G_RC
+$(printf '%s' "$G_ERR" | head -3)"
+  fi
+  grun capability-requests >/dev/null
+  grun brief >/dev/null
+  grun bounties >/dev/null
+  took="$SECONDS"
+  _t2_budget "a 500 KB roster gap's whole life stays inside its budget" "$took" "$budget"
+  if [ -n "$id" ]; then
+    out="$(printf "SELECT length(rationale) || '/' || length(proposed_spec) FROM capability_request WHERE id = %s;\n" "$id" | tsql "$db")"
+    want_eq "and both are stored at their exact byte length" "500000/500000" "$out"
+    grun capability-requests
+    n="$(_t2_lines "$G_OUT" "^$id open big-cap ")"
+    want_eq "the 500 KB gap is still exactly one row on the columnar surface" "1" "$n"
+    out="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk -v ID="$id" '$1 == ID { print length($0) }')"
+    case "$out" in
+      '' | *[!0-9]*) t_fail "and its rationale is CLIPPED, so one gap cannot flood a listing" \
+        "could not measure the row" ;;
+      *)
+        if [ "$out" -lt 1000 ]; then
+          t_pass "and its rationale is CLIPPED, so one gap cannot flood a listing"
+        else
+          t_fail "and its rationale is CLIPPED, so one gap cannot flood a listing" \
+            "the row is $out bytes long"
+        fi
+        ;;
+    esac
+  fi
+
+  # ---- ONE db_exec PER LOGICAL COMMAND (§2.2) -------------------------------------
+  #
+  # The board now holds two dozen gaps and a roster, so a trip count that grows with the
+  # DATA would show here and nowhere else — a command composed from twelve round trips
+  # prints exactly the same text as one composed from one.
+  grun new task --title "For the count" --req "$req" --needs implement
+  out="$G_OUT"
+  if ! _t2_exec_shim "$T2/s3execshim" "$T2/s3execs"; then
+    t_skip "the round-trip count for the Stage 3 commands" "tursodb has no absolute path"
+  else
+    : >"$GUILD_EXEC_COUNT"
+    PATH="$T2/s3execshim:$PATH" grun match "$out"
+    want_eq "guild match starts the engine exactly ONCE" "1" "$(_t2_execs)"
+    : >"$GUILD_EXEC_COUNT"
+    PATH="$T2/s3execshim:$PATH" grun match "$out" --json
+    want_eq "and so does guild match --json" "1" "$(_t2_execs)"
+    : >"$GUILD_EXEC_COUNT"
+    PATH="$T2/s3execshim:$PATH" grun bounties
+    want_eq "guild bounties starts the engine exactly ONCE" "1" "$(_t2_execs)"
+    : >"$GUILD_EXEC_COUNT"
+    PATH="$T2/s3execshim:$PATH" grun bounties --json
+    want_eq "and so does guild bounties --json" "1" "$(_t2_execs)"
+    : >"$GUILD_EXEC_COUNT"
+    PATH="$T2/s3execshim:$PATH" grun capability-requests
+    want_eq "guild capability-requests starts the engine exactly ONCE" "1" "$(_t2_execs)"
+    : >"$GUILD_EXEC_COUNT"
+    PATH="$T2/s3execshim:$PATH" grun capability-request one-more --req "$req" --rationale r --proposes member-one-more
+    want_eq "guild capability-request starts the engine exactly ONCE" "1" "$(_t2_execs)"
+    # SYNC-AGENTS IS THE ONE THAT COULD HAVE LOOPED: it reads a whole directory. Its
+    # statement count grows with the ROSTER and never with the board, and it is one trip.
+    _r3_agent "$dir" second 'research'
+    _r3_agent "$dir" third 'e2e'
+    : >"$GUILD_EXEC_COUNT"
+    PATH="$T2/s3execshim:$PATH" grun sync-agents
+    want_eq "guild sync-agents starts the engine exactly ONCE, over a whole directory" \
+      "1" "$(_t2_execs)"
+    : >"$GUILD_EXEC_COUNT"
+    PATH="$T2/s3execshim:$PATH" grun sync-agents --dry-run
+    want_eq "and so does --dry-run" "1" "$(_t2_execs)"
+  fi
+
+  unset GUILD_AGENTS_DIR
+  unset GUILD_DIR
+  return 0
+}
+
 tier2() {
   section "Tier 2 · live database"
   if ! command -v tursodb >/dev/null 2>&1; then
@@ -7234,6 +8860,20 @@ tier2() {
   # `guild next` returning a bare id while check-in's §3.1 promised `TASK-NNN <path>` is
   # the shape of failure no other section in this file can see.
   t2_skill_contract
+
+  # Stage 3 (design §5) — the roster. The two backward-compatibility sections run FIRST
+  # and deliberately so: they are the only ones that can see the failure this stage
+  # actually risks, which is an existing board quietly changing behaviour. Everything
+  # after them tests a surface no current guild uses yet.
+  t2_roster_backcompat
+  t2_roster_stage1_db
+  t2_roster_sync
+  t2_roster_match
+  t2_roster_bounties
+  t2_roster_blocked
+  t2_roster_recruit
+  t2_roster_matrix
+
   unset GUILD_DIR
   return 0
 }

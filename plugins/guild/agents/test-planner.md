@@ -3,6 +3,8 @@ name: test-planner
 model: sonnet
 color: yellow
 tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
+capabilities: [test-planning]
+serial: false
 description: |
   Use this agent when the guild needs a test plan after development completes.
   The test-planner inventories what was implemented, maps acceptance criteria

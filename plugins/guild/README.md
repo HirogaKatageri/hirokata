@@ -2,10 +2,10 @@
 
 A Claude Code plugin for continuous agent orchestration through a persistent, database-backed work cycle.
 
-**Status: v5.0.0-beta — Stages 1 and 2 of 5 are shipped.** Storage and visibility are done; the
-roster, the execution graph and unattended operation are not. See
-[What is not built yet](#what-is-not-built-yet) — this README describes what runs today, not the
-design doc's endpoint (`docs/v5-design.md`).
+**Status: v5.0.0-beta.3 — Stages 1, 2 and 3 of 5 are shipped.** Storage, visibility and the
+roster are done; the execution graph, gates, the maintenance cycle and unattended operation are
+not. See [What is not built yet](#what-is-not-built-yet) — this README describes what runs today,
+not the design doc's endpoint (`docs/v5-design.md`).
 
 ## Overview
 
@@ -31,6 +31,19 @@ generated `export/*.md` snapshot that is the PR-reviewable record.
 - **Direction above the board.** Goals → phases → requirements → plans → tasks. A goal is
   long-lived intent with a priority; a phase is an ordered stage of one goal. Attaching a
   requirement to a phase is optional and reversible — unaffiliated work is a first-class choice.
+- **A ticket names a capability, not a member.** `guild new task --needs implement,svelte`, and
+  any agent whose declared capabilities cover it is eligible; `guild match` ranks them
+  deterministically (preferred covered, then *fewest* total capabilities so a specialist beats a
+  generalist, then name). Adding `agents/developer-rust.md` with the right tags makes it eligible
+  for work with **no skill edits and no chain rewiring** — which is the point of the whole stage.
+  A ticket that still names an agent keeps working exactly as before, so nothing on an existing
+  board changed.
+- **A roster gap is loud, and it recruits.** No eligible member means `guild match` exits 1 naming
+  the missing capabilities and the bounty board says `no-eligible-agent:rust`; the task parks in
+  `blocked`, which counts as *open* for requirement completion, so nothing ever closes over work
+  nobody attempted. The architect files the gap at **plan** time with `guild capability-request`,
+  it surfaces in the brief's *Roster Gaps*, and once you add the agent file `guild sync-agents`
+  admits it and closes the request. The roster accretes toward the shape of your projects.
 - **Bugs and quality areas are rows, not prose.** The QA discipline files defects with
   `guild bug new` and maps risk with `guild coverage set`, so "what is still broken?" and "what has
   nobody looked at in a month?" are queries instead of someone's memory.
@@ -163,9 +176,17 @@ plus a header carrying the same `Next:` answer `guild next` gives. **Read-only**
 nothing, moves nothing and writes nothing, not even a journal line.
 
 A section with no rows is not printed; an empty guild gets a short "nothing is on the board yet"
-with three next steps rather than eight `(none)` blocks. (*Blocked* and *Roster Gaps* read
-Stage 3–4 tables, so they stay empty until those stages land. *Open Bounties* is a Stage 1
-surface — it is `guild next`'s rule, and it prints today.)
+with three next steps rather than eight `(none)` blocks. (*Roster Gaps* became reachable in
+Stage 3 — `guild capability-request` is what writes the table it reads. *Blocked* prints tasks
+whose status is `blocked`; its `waiting on <ids>` clause reads `task_dependency`, which nothing
+writes until Stage 4. Seeding the roster at `guild init` is deliberately *not* counted as
+board activity, so a brand-new guild still reads as empty.)
+
+**Where the roster shows up.** The brief is the recruiting surface: a gap the architect filed at
+plan time is in *Roster Gaps* with its rationale and the member it proposes. For "who can take
+what, and why not", `guild bounties` is the sharper tool — it prints the matched member per
+open task and, underneath, everything that cannot be worked with a one-token reason
+(`status-blocked`, `deps:<ids>`, `no-eligible-agent:<caps>`).
 
 **Trigger Phrases:**
 - "guild status"
@@ -481,17 +502,19 @@ every `<` before it reaches the page.
 
 ## What is not built yet
 
-Stages 3–5 of the v5 design are **not shipped**. Their tables exist in `schema.sql` so no stage
+Stages 4 and 5 of the v5 design are **not shipped**. Their tables exist in `schema.sql` so no stage
 needs a migration, and a few read surfaces are already wired against them — which is why they render
 as empty sections rather than as errors.
 
 | Not shipped | Stage | What you see today |
 |---|---|---|
-| **Capabilities and bounties** — agents declaring capability, tasks naming a capability instead of an agent, `sync-agents` / `match` / recruiting | 3 | The brief's *Roster Gaps* section is empty; tasks still name an agent directly (*Open Bounties* works today — it reads `task`, not capabilities) |
-| **The execution graph** — templates, `graph`/`segment`, architect deviation, workflow compilation, gates, the thinned check-in | 4 | The dashboard's Graph view says so rather than drawing a blank chart; the brief's *Blocked* section is empty and the review gate is still the only gate |
+| **The execution graph** — the `standard` and `maintenance` templates, `guild graph` / `graph validate` / `segment`, architect deviation with reasons, workflow compilation, the thinned check-in | 4 | The dashboard's Graph view says so rather than drawing a blank chart. The chain is still the fixed one the skills drive, and `guild next` is still the cursor |
+| **Gates** — `guild gate --approve/--reject`, `gate-plan` and `gate-repairs` as records | 4 | The review gate in `guild next` is still the only gate, and the two human approvals happen in the skills' conversation rather than as `gate` rows. A `capability_request` therefore surfaces in `guild brief` and `guild:new-requirement`, **not** at `gate-plan` |
+| **Task dependencies** — nothing writes `task_dependency` | 4 | `guild bounties` reports `deps:<ids>` and the brief reports `waiting on` correctly, but every dependency set is empty, so both clauses are inert |
+| **The maintenance cycle** — `inspection` as a turn of QA over the coverage map, on the same machinery as a build | 4 | `guild coverage` maps and stamps areas; nothing records an inspection *pass* over several of them |
 | **The unattended shift** — `guild shift`, failure and budget policy, git safety, gate notifications | 5 | Not present. Every session is driven by you |
 
-Shipped-but-honest gaps in Stage 1–2 (`scripts/README.md` lists these in full):
+Shipped-but-honest gaps in Stage 1–3 (`scripts/README.md` lists these in full):
 
 - **No writer for `plan_slice`.** `guild slice` reads one; the architect puts each slice brief in
   its developer ticket's `--objective` instead.
@@ -538,6 +561,11 @@ GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
 "$GUILD" phase new --goal GOAL-001 --title "Foundations"       # → PHASE-001
 REQ=$("$GUILD" new req --title "User Authentication" --desc "Login & signup")
 "$GUILD" req assign "$REQ" PHASE-001
+
+# A ticket describes the WORK; the roster answers who takes it (init already seeded it)
+"$GUILD" new task --title "Login form" --req "$REQ" --needs implement,frontend --prefers svelte
+"$GUILD" match TASK-001                      # ranked candidates; rank 1 is the dispatch target
+"$GUILD" bounties                            # what can be worked now — and what cannot, and why
 
 TASK=$("$GUILD" next)                        # a bare ID, no path
 "$GUILD" move "$TASK" in-progress            # dispatch

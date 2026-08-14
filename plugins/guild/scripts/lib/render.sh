@@ -183,6 +183,46 @@ _render_col() {
   printf "replace(%s, ' ', '_')" "$e"
 }
 
+# ---- who a bounty is for (§5.1-5.2) -----------------------------------------------
+
+# _render_task_who <task-id-expression> — the SQL expression for the "(agent)" column:
+# the named agent, else the required capabilities as `needs:a+b`, else `-`.
+#
+# THIS EXISTS BECAUSE STAGE 3 MADE `task.agent` OPTIONAL, and an empty agent is not a
+# cosmetic problem on either surface that prints it.
+#
+#   * `guild list task` is documented as `awk '$3 == "reviewer" && $4 == "REQ-001"'`.
+#     An EMPTY third field does not print as an empty field — it collapses, `$3` becomes
+#     the requirement id and `$4` vanishes. Every existing filter would start silently
+#     mis-reading every capability-routed ticket on the board. `_render_col` guarantees no
+#     field CONTAINS a separator; this guarantees no field IS empty, and the two together
+#     are what make "the field count is always the column count" true.
+#   * `guild board` would print `TASK-005: Build the parser ()`, which tells the reader
+#     nothing at the exact moment they need to know who the work is waiting for.
+#
+# So an unassigned bounty reports what it is waiting FOR instead of who it is waiting ON.
+# Only REQUIRED capabilities appear: preferred ones rank candidates, they do not decide
+# eligibility, and this column answers "who could take this".
+#
+# `+` as the separator, never a comma or a space: the value has to survive a
+# whitespace-separated row (so no space) and it is already comma-free by construction.
+# The capability alphabet is [a-z0-9-], so nothing here can impersonate a column — but
+# the caller still wraps the whole expression in `_render_col` / `_render_flat`, because
+# `agent` is free text on the other branch of the CASE.
+#
+# The inner ORDER BY is a derived table rather than an argument to group_concat: aggregate
+# ORDER BY is not on §3.0's verified-portable list, and a board line whose field order
+# depends on the query planner is a diff that changes for no reason.
+_render_task_who() {
+  local id="${1-}"
+  printf "CASE WHEN COALESCE(agent,'') <> '' THEN agent
+            ELSE COALESCE((SELECT 'needs:' || group_concat(c.capability, '+')
+                             FROM (SELECT capability FROM task_capability
+                                    WHERE task_id = %s AND required = 1
+                                    ORDER BY capability) c), '-')
+       END" "$id"
+}
+
 # ---- YAML ------------------------------------------------------------------------
 #
 # The frontmatter `guild meta <ID>` and `guild read <ID>` print is YAML, and every skill
@@ -287,6 +327,9 @@ _render_query() {
 #   In Progress:
 #     TASK-003: Implement auth service (developer)
 #
+#   Blocked:                      <- only when at least one task is `blocked`
+#     TASK-011: Port the codec (needs:implement+rust)
+#
 #   Backlog:
 #     (none)
 #
@@ -301,22 +344,37 @@ _render_query() {
 #
 #   Last check-in: 2026-08-13
 #
-# ONE query. Six statements in a single script, each tagging its rows with a leading
+# ONE query. Seven statements in a single script, each tagging its rows with a leading
 # section digit; statement order fixes section order, each statement's own ORDER BY
 # fixes row order within a section. Free text is the tail of the single output column,
 # so pipes in titles are harmless — and every free-text expression is wrapped in
 # `_render_flat`, so newlines in titles are harmless too: a row is always exactly one
 # line and the leading digit can only ever be the one the SQL put there.
 #
-# v4 PARITY NOTE: the four statuses v4 could express (todo, in-progress, done, failed)
-# are the four the board renders. `task.status` also admits `blocked` and `waived` — a
-# task in either is invisible here, exactly as it would have been in v4, which had no
-# directory for it. Surfacing those is a later stage's job (§5.2 roster gaps), not a
-# silent widening of a command whose output is specified as identical to v4's.
+# WHERE `Blocked:` SITS, AND WHY IT IS NOT NEXT TO `Failed:`. It is directly under
+# `In Progress:` — above the backlog, near the top — because §5.2 says a roster gap
+# "should be loud", and the bottom of a board that also carries every completed task is
+# not loud. It reads correctly there too: a blocked task is work that WOULD be in flight
+# if the guild had someone to give it to. `Failed:` stays at the bottom because failure
+# has already been adjudicated by a human; `blocked` is waiting for one.
+#
+# Both are conditional sections, printed only when non-empty, so a board with no blocked
+# work is byte-identical to Stage 2's.
+#
+# AND THE ROW SAYS WHAT IS MISSING. "TASK-011: Port the codec ()" would be a section that
+# announces a problem and withholds the one fact needed to fix it; `_render_task_who`
+# puts `needs:implement+rust` in the parenthetical, so the board itself names the agent
+# file that would unblock the board. `waived` remains unrendered — no command writes it
+# (see lib/artifacts.sh art_statuses).
 
 _render_board_sql() {
   # 1 in-progress · 2 todo (Backlog) · 3 done (newest 20) · 4 failed
-  # 5 requirements (with live N/M counters) · 6 last check-in
+  # 5 requirements (with live N/M counters) · 6 last check-in · 7 blocked
+  #
+  # Section 7 is emitted LAST but PRINTED SECOND: statement order fixes the order rows
+  # arrive in the buffer, and the awk below prints sections in whatever order it likes.
+  # Appending it keeps the six existing statements, and their digits, exactly as they
+  # were — a renumbering would have been a diff across every one of them for nothing.
   #
   # Every textual column is flattened. Ids are flattened too, cheaply: they are
   # generated by `guild new` today, but `guild rebuild` replays them from a file that
@@ -324,7 +382,9 @@ _render_board_sql() {
   local tid_expr ttitle_expr tagent_expr rid_expr rtitle_expr rstatus_expr checkin_expr
   tid_expr="$(_render_flat 'id')"
   ttitle_expr="$(_render_flat 'title')"
-  tagent_expr="$(_render_flat "COALESCE(agent, '')")"
+  # `_render_task_who`, not `COALESCE(agent,'')`: Stage 3 made `--agent` optional, so a
+  # capability-routed ticket has no agent to print and would render as an empty `()`.
+  tagent_expr="$(_render_flat "$(_render_task_who 'task.id')")"
   rid_expr="$(_render_flat 'r.id')"
   rtitle_expr="$(_render_flat 'r.title')"
   rstatus_expr="$(_render_flat 'r.status')"
@@ -360,6 +420,9 @@ SELECT '5 ' || '  ' || $rid_expr || ': ' || $rtitle_expr || ' — ' || $rstatus_
           END, r.id;
 
 SELECT '6 ' || $checkin_expr FROM guild_state WHERE key = 'last-checkin';
+
+SELECT '7 ' || '  ' || $tid_expr || ': ' || $ttitle_expr || ' (' || $tagent_expr || ')'
+  FROM task WHERE status = 'blocked' ORDER BY id;
 SQL
 }
 
@@ -395,20 +458,32 @@ render_board() {
       for (i = 1; i <= n[s]; i++) print buf[s, i]
     }
 
+    # emit_if(heading, s) — a section that appears ONLY when it has rows. `Failed:` has
+    # always behaved this way; `Blocked:` joins it. Both are exceptional states, and a
+    # permanent empty heading for each would be two lines of noise on every board a
+    # healthy guild ever prints — which is how a reader learns to skip the region where
+    # the important thing will eventually appear.
+    function emit_if(heading, s,   i) {
+      if (n[s] + 0 == 0) return
+      print ""
+      print heading
+      for (i = 1; i <= n[s]; i++) print buf[s, i]
+    }
+
     END {
       print "Guild Board"
       print "==========="
       print ""
       emit("In Progress:", 1)
+      # Blocked sits directly under In Progress, not down with Failed: §5.2 asks for a
+      # roster gap to be LOUD, and section 7 is printed second for that reason alone —
+      # it is the last statement in the SQL and the first thing after the work in flight.
+      emit_if("Blocked:", 7)
       print ""
       emit("Backlog:", 2)
       print ""
       emit("Recently Completed:", 3)
-      if (n[4] + 0 > 0) {
-        print ""
-        print "Failed:"
-        for (i = 1; i <= n[4]; i++) print buf[4, i]
-      }
+      emit_if("Failed:", 4)
       print ""
       emit("Requirements:", 5)
       print ""

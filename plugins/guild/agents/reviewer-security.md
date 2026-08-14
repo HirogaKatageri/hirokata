@@ -3,6 +3,8 @@ name: reviewer-security
 model: haiku
 color: red
 tools: ["Read", "Grep", "Glob", "Bash"]
+capabilities: [review, security]
+serial: false
 description: |
   Use this agent for security-focused code review. Evaluates implementation
   against OWASP Top 10, checks for injection risks, authentication/authorization

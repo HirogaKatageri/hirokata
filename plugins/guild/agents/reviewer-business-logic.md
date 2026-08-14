@@ -3,6 +3,8 @@ name: reviewer-business-logic
 model: haiku
 color: orange
 tools: ["Read", "Grep", "Glob", "Bash"]
+capabilities: [review, business-logic]
+serial: false
 description: |
   Use this agent for business logic code review. Verifies that acceptance
   criteria are met, business rules are correctly implemented, and the code

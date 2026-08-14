@@ -9,7 +9,7 @@ description: >
   real briefing — direction, what is in flight, the open bugs, which tickets
   failed and why, the unresolved review findings, what moved since the last
   check-in, and what to do next — without starting a work session.
-version: 5.2.0
+version: 5.3.0
 user-invocable: true
 ---
 
@@ -169,19 +169,46 @@ Read that capture for what it teaches, because it is what the surface really is:
 **An absent section is good news stated by its absence.** No `Bugs:` block means nothing is
 open. Do not announce empty categories, and do not invent a section the command did not print.
 
-### Two sections cannot print yet — do not narrate them
+### Two sections the roster made real — `Blocked:` and `Roster Gaps:`
 
-`guild brief` has slots for `Blocked:` and `Roster Gaps:`, and in Stage 2 **neither can ever
-have a row**:
+Both used to be structurally unreachable. **They are not any more**, and when they print they
+are usually the most important thing on the page, because neither resolves on its own and
+neither will `guild next` ever hand out. A real capture:
 
-| Section | Why it is unreachable today |
-|---|---|
-| `Blocked:` | Needs `status='blocked'` or a `task_dependency` row. `guild move` rejects `blocked` (`allowed: todo in-progress done failed`) and nothing writes `task_dependency` — Stage 4. |
-| `Roster Gaps:` | Reads `capability_request`, which Stage 3 fills. No writer exists. |
+```
+Blocked:
+  TASK-005  Port the codec to Rust  ·  blocked  ·  waiting on nothing recorded
 
-Treat their absence as structural, not as news. Do not tell the user "nothing is blocked" —
-the guild cannot currently express that anything is. When Stage 3/4 lands, they become two
-more beats in Step 4's order (blocked work right after in-flight; roster gaps with risks).
+Roster Gaps:
+  rust  ·  REQ-001  ·  proposed developer-rust  ·  Three plan slices are Rust crates;
+  developer has no Rust idiom guidance.
+```
+
+- **`Blocked:` is `id · title · status · waiting-on`.** A task is blocked for one reason in
+  v5: **no guild member's capabilities cover what it requires**. The orchestrator writes it,
+  only after `guild match` found nobody eligible. It is not a general "stuck" flag, so read
+  it as exactly one thing — *this bounty has no taker*. Say what it is waiting for, not who:
+  the capability is the answer, and it is on the `Roster Gaps:` line.
+- **`waiting on nothing recorded` is the normal reading today, not a defect.** The clause
+  reports `task_dependency` rows, and nothing writes that table yet (Stage 4). Do not narrate
+  it as a missing dependency or a data problem; ignore the clause and report the block.
+- **`Roster Gaps:` is `capability · REQ · proposed member · rationale`,** one row per **open**
+  `capability_request`. Each one is a decision the guild master has not made yet: the architect
+  hit a capability the guild does not have, filed it rather than routing to the nearest
+  generalist, and proposed a new member.
+- **A gap disappears from this section when it is filled, not when it is dismissed.** The only
+  thing that closes a request is `guild sync-agents` admitting an agent file that declares the
+  capability (`open → created`). Nothing writes `declined`. So a gap that has been on the brief
+  for a week means nobody recruited for it — including when the user chose to hand the work to a
+  generalist anyway. Report it as standing, and never as stale.
+- **The two are usually one story.** A `Blocked:` row and a `Roster Gaps:` row on the same
+  board are the bounty and its cause; narrate them together in a single sentence.
+- **When blocked work is all that is left**, the brief says so itself, in place of `Next:`'s
+  recommendation: `Nothing actionable — N task(s) are blocked.` That line is the headline. It
+  is not "all caught up", and it must never be narrated as if it were.
+
+`Blocked:` still has one absence worth knowing: it counts `blocked` tasks and dependency-held
+`todo` tasks, and only the first kind can exist today.
 
 Two lines are always there and always matter:
 
@@ -211,6 +238,12 @@ user wants it. Skip any part the data does not support.
 2. **In flight** — what is being worked on and for how long. Call out anything that has
    been in flight implausibly long (days, when tasks normally take hours); an unusually old
    in-progress task is usually a crashed dispatch, not work in progress.
+2a. **Blocked — immediately after in-flight, by name, never as a count.** Every `Blocked:` row
+   is a bounty with no taker. Give the ticket, the title, and the capability nobody has (from
+   the matching `Roster Gaps:` row), then the one fact that makes it urgent: *nothing will pick
+   this up on its own, and it holds its requirement open.* "TASK-005, Port the codec to Rust,
+   is blocked — no guild member has `rust`, so REQ-001 cannot complete." If `Blocked:` is
+   absent, say nothing; there is no good news to announce here.
 3. **Risks — named, never counted.** In the order the output prints them. Open bugs
    worst-severity first, every `critical` one by ID and title. Then `Failed Tasks:` — the
    `[unresolved]` ones by ID, with the reason from their last Work Log entry and the fact
@@ -219,7 +252,10 @@ user wants it. Skip any part the data does not support.
    what + where. Finish with coverage areas that are overdue or never inspected. "Two
    unresolved findings" is not a briefing; "reviewer-security flagged an unsigned callback
    token at src/queue/consume.ts:61" is — and that sentence is now a copy of one line of the
-   output, not something you had to go and assemble.
+   output, not something you had to go and assemble. **End the risk beat with `Roster Gaps:`** —
+   each open gap as `capability`, the requirement that needed it, and the member the architect
+   proposed. A gap is a risk with a known remedy, which is the most useful kind to state:
+   "`rust` has been an open gap since REQ-001; the architect proposed `developer-rust`."
 4. **What moved** — summarize the activity feed rather than reciting it. Name subjects, not
    timestamps: "since your last check-in, TASK-001 and TASK-002 completed, reviewer-security
    filed a major finding on TASK-003, BUG-001 was filed critical, TASK-007 failed." Each row
@@ -227,8 +263,12 @@ user wants it. Skip any part the data does not support.
    state the from→to and the actor, both of which are printed. Never invent one that is not.
 5. **What to do next** — a concrete recommendation, with the reason. Default to `Next:`.
    Deviate only for something the numbers justify — a critical bug with no fix task, a
-   failed task nothing will retry on its own, a goal at priority 1 whose phase has no open
-   work — and say which fact changed your mind.
+   failed task nothing will retry on its own, an open roster gap holding a requirement, a
+   goal at priority 1 whose phase has no open work — and say which fact changed your mind.
+   If the brief printed `Nothing actionable — N task(s) are blocked.`, the recommendation is
+   **recruiting**, and it is the only one: `/guild:new-requirement` is where a new guild member
+   is created, on the user's say-so. Do not suggest reassigning the ticket yourself; you cannot,
+   and neither can the orchestrator without asking.
 
 End by offering the obvious follow-ups, once, without doing them:
 
@@ -250,4 +290,10 @@ End by offering the obvious follow-ups, once, without doing them:
 - **Do not paste the whole block and call it a briefing.** The block is evidence; the
   narration is the deliverable. Show the raw output only if asked, or if it is short enough
   that quoting it *is* the shortest honest answer.
+- **A blocked bounty and an open roster gap are never omitted for brevity.** Everything else on
+  this page eventually resolves by someone doing their job; these two only resolve when the guild
+  master decides to grow the roster. If the briefing has to lose a beat to fit on a screen, lose
+  the activity feed.
+- **Read-only extends to the roster.** `guild sync-agents` writes rows; it is `guild:check-in`'s
+  to run, not yours. Never write an `agents/*.md` file from here.
 - **Keep it to a screen.** This is a glance, not a report.

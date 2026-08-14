@@ -3,6 +3,8 @@ name: qa-strategist
 model: sonnet
 color: green
 tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash", "Skill"]
+capabilities: [qa-planning]
+serial: false
 skills:
   - guild:qa-mindset
   - guild:qa-artifacts

@@ -15,9 +15,11 @@
 -- STRICT tables accept only INT, INTEGER, REAL, TEXT, BLOB and ANY column types.
 -- Every column below is TEXT or INTEGER. Keep it that way.
 --
--- Tables the CLI does not use yet (goal, phase, capability_request, coverage,
--- inspection, inspection_coverage, bug, doc, graph_*, gate, event, agent_*, ...) are
--- created now so later stages need no migration.
+-- Tables the CLI does not use yet (inspection, inspection_coverage, graph_*, gate, ...)
+-- are created now so later stages need no migration. Stage 2 took up goal, phase, bug,
+-- doc and coverage; Stage 3 takes up agent, agent_capability, task_capability and
+-- capability_request — none of which needed a DDL change to become live, which is the
+-- whole point of creating them up front.
 
 -- ---------- pragmas ----------
 -- journal_mode is persisted in the database header; busy_timeout and foreign_keys are
@@ -118,6 +120,21 @@ CREATE TABLE IF NOT EXISTS task (
   body           TEXT NOT NULL DEFAULT '',
   status         TEXT NOT NULL DEFAULT 'todo',
                  -- todo | in-progress | done | failed | blocked | waived
+                 --
+                 -- STAGE 3 NOTE — `blocked` NEEDED NO DDL, AND THAT IS LOAD-BEARING.
+                 -- There is no CHECK constraint on this column and there never was:
+                 -- the status vocabulary is enforced in the CLI (lib/artifacts.sh
+                 -- art_statuses), which is what lets `guild move TASK-001 blocked`
+                 -- start working the moment that list grows, on a database created by
+                 -- Stage 1. An EXISTING BOARD NEEDS NOTHING DONE TO IT — no migration,
+                 -- no re-init, no rebuild. Had the vocabulary been a CHECK, widening it
+                 -- would have meant rewriting the table on every live guild, because
+                 -- SQLite cannot alter a CHECK in place.
+                 --
+                 -- `waived` is still CLI-unreachable: it is the Stage 4 gate's word for
+                 -- "deliberately skipped", and lib/brief.sh already reads it in the
+                 -- dependency predicate. Do not add it to art_statuses until the gate
+                 -- that writes it exists.
   priority       INTEGER NOT NULL DEFAULT 3,
   agent          TEXT,                    -- v4 parity: `new task --agent A` (free text)
   claimed_by     TEXT REFERENCES agent(name),
@@ -296,3 +313,16 @@ CREATE INDEX IF NOT EXISTS task_by_req     ON task(requirement_id, status);
 CREATE INDEX IF NOT EXISTS node_by_req     ON graph_node(requirement_id, status);
 CREATE INDEX IF NOT EXISTS event_recent    ON event(ts DESC);
 CREATE INDEX IF NOT EXISTS finding_by_task ON review_finding(task_id, disposition);
+
+-- Stage 3. Both capability tables are keyed (owner, capability), so "what does this
+-- agent/task declare" is already an index seek. The matcher (§5.2) and `guild bounties`
+-- ask the OTHER question — "who can cover `rust`", "which bounties want a capability
+-- nobody has" — which is a scan on the second key column. These are the covering
+-- indexes for that direction.
+--
+-- They are OPTIMIZATION ONLY: every Stage 3 query is correct without them, which is why
+-- they are safe to ship as a plain schema addition. An existing board picks them up the
+-- next time schema.sql is applied — `guild init` (idempotent, safe to re-run) or
+-- `guild rebuild` — and is CORRECT, just doing a 14-row scan, until then.
+CREATE INDEX IF NOT EXISTS agent_cap_by_cap ON agent_capability(capability);
+CREATE INDEX IF NOT EXISTS task_cap_by_cap  ON task_capability(capability, required);

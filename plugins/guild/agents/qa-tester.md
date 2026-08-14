@@ -3,6 +3,8 @@ name: qa-tester
 model: sonnet
 color: yellow
 tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash", "Skill"]
+capabilities: [qa-execution, test-authoring, e2e]
+serial: true
 skills:
   - guild:qa-mindset
   - guild:qa-artifacts

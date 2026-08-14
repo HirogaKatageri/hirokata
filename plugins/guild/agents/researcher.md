@@ -3,6 +3,8 @@ name: researcher
 model: haiku
 color: cyan
 tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash", "WebFetch", "WebSearch"]
+capabilities: [research]
+serial: false
 description: |
   Use this agent when the guild needs documentation research, API investigation,
   or technology evaluation. The researcher gathers information and writes

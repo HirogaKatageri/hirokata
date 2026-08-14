@@ -102,7 +102,8 @@ Status is the `task.status` column; transitions are `guild move` calls performed
 
 ```
 todo  →  in-progress  →  done
-                      →  failed
+  ↑                   →  failed
+  └───  blocked   ←──────  (guild match found no eligible member)
 ```
 
 | Status | Meaning |
@@ -111,8 +112,22 @@ todo  →  in-progress  →  done
 | `in-progress` | An agent is actively working on it |
 | `done` | Successfully completed |
 | `failed` | User-adjudicated: the agent failed and the user chose not to retry (waived). Does not block the review gate or requirement completion; waived tickets are reported in the completion summary. |
+| `blocked` | **No guild member's capabilities cover this bounty.** Written only by the orchestrator, only after `guild match TASK-NNN` exited 1 (check-in 3.2a). Not a general "stuck" flag. |
 
-(There is no `blocked` status — without a dependency graph there is nothing to block on.)
+`blocked` is the one status word v5 added, and it behaves like `todo`, **not** like `failed`:
+
+- `guild next` never returns it, so it cannot be dispatched.
+- It **holds its requirement's review gate closed** — a `reviewer` ticket waits while any
+  non-reviewer task for the requirement is `todo`, `in-progress` or `blocked`.
+- It **keeps its requirement open** at completion (check-in 3.6). `failed` was adjudicated by a
+  human; `blocked` means nothing was ever attempted, and closing over it ships an un-attempted
+  slice silently.
+- `guild move TASK-NNN done` on a blocked ticket is **refused by the CLI**. The three legal exits
+  are `todo` (someone can take it now), `in-progress` (handing it over in spite of the gap) and
+  `failed` (giving up on it).
+- `guild batch` excludes blocked members; the rest of a parallel group still dispatches.
+
+The fix for a blocked ticket is **recruiting**, not a status edit — see `guild:new-requirement`.
 
 **The orchestrator owns every transition.** On dispatch it runs `guild move TASK-NNN in-progress`;
 on the agent's completion `guild move TASK-NNN done`; on failure `guild move TASK-NNN failed`; on

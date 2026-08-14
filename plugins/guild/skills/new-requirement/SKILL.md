@@ -9,7 +9,7 @@ description: >
   deliberately leaves it unaffiliated), then writes the requirement doc, the
   implementation plan, and the developer/test-planner/reviewer tickets — all
   before this skill returns.
-version: 3.1.0
+version: 3.2.0
 user-invocable: true
 arguments:
   - name: title
@@ -110,6 +110,35 @@ If both print nothing, the guild has no direction yet. That is normal on a young
 **Do not create a goal or a phase here.** Direction is the guild master's call — Step 6.5 is where
 the user makes it.
 
+### 2.6. Load the Roster
+
+The architect writes tickets that name a **capability**, not a member (design §5), and the matcher
+can only see members that have been synced. Run this before spawning it:
+
+```bash
+"$GUILD" sync-agents
+```
+
+It scans `agents/*.md` and reconciles the roster. It is **idempotent and quiet** — a second run with
+nothing changed prints `the roster is already up to date — nothing was written` and appends no
+journal line, so it is safe on every invocation. New files are enlisted, changed ones updated,
+removed ones deactivated (never deleted — a finished task may still name one).
+
+**Why this is not optional:** on an unsynced guild the roster is empty, so a ticket declaring
+`--needs implement` matches nobody and lands `blocked` the moment check-in reaches it. Verified: the
+same ticket that matches `developer` on a synced board reports
+`no guild member can take this bounty` on an unsynced one. (A ticket that names `--agent NAME`
+directly is unaffected and works with no roster at all — that is the v4 path, and it still works.)
+
+Two failures worth recognizing rather than working around:
+
+- **`could not find the agents/ directory`** — the CLI looks at `$GUILD_AGENTS_DIR`, then
+  `$CLAUDE_PLUGIN_ROOT/agents`, then `scripts/../../agents`. Report it; do not guess a path.
+- **`the roster declares N capability(ies) the guild's vocabulary does not have`** — an agent file
+  carries a tag with no `capability_request` behind it, and **nothing was written**. This is the
+  vocabulary guard (§5.3) working, not a bug. Show the message; the fix is either to file the gap
+  (Step 6.6) or to correct the typo in the agent file.
+
 ### 3. Do NOT Create the Requirement Yet
 
 **The product-owner creates it, at the end of the interview.** In v4 the requirement was a FILE,
@@ -188,6 +217,11 @@ Agent(
            requirement is finalized before your Design/Write-Plan steps. I will also tell you
            which phase (if any) the requirement lands on; goals and phases are the guild
            master's to set, so never run goal new / phase new / req assign yourself.
+           The roster is loaded ({N} active members) — declare each ticket's capabilities with
+           --needs / --prefers per your Step 3.5. If the plan needs a capability outside the
+           §5.3 vocabulary, follow your Step 3.6: file the capability-request, then raise it as
+           a `NEEDS INPUT: ROSTER GAP` block and hold that slice's ticket until I answer. You
+           may not create an agent file; only the guild master can.
            Today's date: {today}."
 )
 ```
@@ -198,7 +232,8 @@ Both agents may pause with a `NEEDS INPUT:` block (same relay protocol as the re
 this can happen from either one, in any order, since they run concurrently:
 
 1. Whichever agent's completion notification carries `NEEDS INPUT:`, call **AskUserQuestion**
-   yourself with exactly those questions.
+   yourself with exactly those questions. **One kind of question is not a plain question — an
+   architect block whose first line reads `ROSTER GAP` is handled by Step 6.6.**
 2. `SendMessage` the answers back to that same agent instance to resume it.
 3. **`relay` mode only**: if the answer (or the agent's own framing) reveals something the *other*
    agent should know — a scope decision, a technical constraint — send a short FYI to the other
@@ -264,6 +299,106 @@ does not need a goal.
   FYI (`"FYI: {REQ} is on PHASE-002 (Cart & coupon rework), under GOAL-001 …"`) so the plan can stay
   consistent with that phase's other requirements.
 
+### 6.6. Recruiting — the Architect Hit a Roster Gap (§5.4)
+
+This step runs **only** when the architect's `NEEDS INPUT:` block opens with `ROSTER GAP`. It means
+the plan needs a capability no guild member has, the architect has already filed a
+`capability_request` recording it, and it is now the **guild master's decision** — the roster is
+their layer, exactly like goals and phases.
+
+> **Nothing here creates an agent without the user saying so.** Not you, not the architect, not on a
+> "reasonable inference". An agent file is a permanent addition to the guild.
+
+**1. Read the gap back before you ask.** The architect's block is a claim; this is the record:
+
+```bash
+"$GUILD" capability-requests --open
+# "<id> <status> <capability> <req> <proposed-agent> <why>"
+# 1 open rust REQ-001 developer-rust Three plan slices are Rust crates; developer has no Rust idiom…
+```
+
+**2. Ask once, with AskUserQuestion**, offering §5.4's three answers. Put the rationale and the
+proposed spec in the question body so the decision is informed:
+
+| Choice | What it means |
+|---|---|
+| **Create `{proposed-agent}`** | The guild grows a permanent new member. The next requirement needing this capability finds it already there. |
+| **Assign to `{existing member}` anyway** | The work goes to a generalist. The gap stays on the record, because the guild still cannot do this work well. |
+| **Revise the plan** | The architect re-slices so the capability is not needed. Collect what the user wants changed. |
+
+**3a. On "create":**
+
+1. Scaffold the agent file from the architect's proposed spec. It goes in the guild's agents
+   directory — `$GUILD_AGENTS_DIR` if set, otherwise `${CLAUDE_PLUGIN_ROOT}/agents/{name}.md`. The
+   frontmatter shape the scanner supports is narrow and it **refuses** anything else rather than
+   guessing; keys must sit at column 0:
+
+   ```markdown
+   ---
+   name: developer-rust
+   model: sonnet
+   color: orange
+   tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
+   capabilities: [implement, backend, rust]
+   serial: false
+   description: |
+     Use this agent when the guild needs idiomatic Rust implementation. …
+   ---
+
+   # Rust Developer — Guild Agent
+   {the role, the workflow, the close-out protocol — mirror an existing agent of the same shape}
+   ```
+
+   `plugin-dev:agent-development` is the skill to load if you want help writing the body well.
+2. **Show the user the file and get their sign-off before syncing.** They asked for a member, not
+   for whatever you wrote; this is a review, not a notification.
+3. Admit it to the roster:
+
+   ```bash
+   "$GUILD" sync-agents
+   ```
+
+   Expect `new  developer-rust` in the output. `sync-agents` also moves the capability request from
+   `open` to `created`, which is what removes it from `guild brief`'s Roster Gaps — confirm with
+   `"$GUILD" capability-requests`.
+4. `SendMessage` the architect: `"Roster gap resolved: developer-rust is on the roster and declares
+   [implement, backend, rust]. Create the held tickets with --needs implement,rust."`
+
+   **If `sync-agents` refuses** with `the roster declares N capability(ies) the guild's vocabulary
+   does not have`, the file carries a tag the request did not legitimize (a typo, or a second
+   capability nobody filed for). **Nothing was written.** Fix the file's `capabilities:` line to
+   match the filed capability and sync again — do not file a second request to paper over a typo.
+
+   **A newly added agent file is on the roster immediately, but the `Agent` tool resolves
+   `subagent_type: "guild:{name}"` from the plugin manifest the session loaded at startup.** If a
+   later dispatch reports an unknown subagent type, that is what happened: tell the user to restart
+   Claude Code, and until they do, the ticket is dispatchable only by pinning it to an existing
+   member.
+
+**3b. On "assign anyway":** `SendMessage` the architect the member's name and let *it* create the
+tickets — `--agent developer --needs implement,rust`, so the board records both the pin and what the
+work actually required. **You do not create these tickets and you do not edit the ones it made:
+there is no command that changes a task's agent or capabilities after creation.**
+
+Two things to say out loud, because both look like problems later and neither is:
+
+- **The request stays open.** Nothing sets a request to `declined`, so `rust` keeps appearing under
+  **Roster Gaps** in every `guild brief` until somebody recruits for it. That is the design working —
+  the guild still cannot do this work well.
+- **`guild bounties` will call the pinned ticket blocked.** `match` answers the capability question
+  and ignores the pin, so the row reads `blocked - REQ-001 no-eligible-agent:implement,rust`.
+  Verified: the ticket is still dispatchable — `guild next` returns it and `guild brief` lists it as
+  a normal `developer` bounty. Check-in dispatches on the `agent` field and never parks a pinned
+  ticket, so nothing is actually stuck.
+
+**3c. On "revise the plan":** `SendMessage` the architect what the user wants changed and let it
+re-slice. The same note about the request staying open applies.
+
+**4. Never do any of these:** write an agent file the user did not approve; run
+`guild capability-request` yourself (the architect files it — you resolve it); create or re-create a
+ticket to work around a gap; or treat "the user did not answer" as consent. If the answer is
+ambiguous, ask again rather than picking.
+
 ### 7. Confirm
 
 ```
@@ -273,13 +408,23 @@ Requirement planned!
   Direction: {PHASE-NNN — phase title (GOAL-NNN — goal title)}
              (or "unaffiliated — not attached to a goal")
   Plan: {PLAN-NNN} (or "none — simple fix, no plan needed")
-  Tickets created: {list of TASK-NNN — title (agent)}
+  Tickets created: {list of TASK-NNN — title (needs: cap,cap | agent NAME)}
+  Roster: {"developer-rust added on your approval — 15 members" | omit the line}
 
 Run /guild:check-in to start building.
 ```
 
 Report a new goal or phase you created on the user's instruction on its own line, so they can see
-what the answer actually produced.
+what the answer actually produced. Do the same for a new guild member: adding to the roster is the
+other thing this skill can do that outlives the requirement.
+
+**If any roster gap was left unresolved** (the user chose "assign anyway" or "revise"), add one line
+so it is not a surprise later:
+
+```
+  Open roster gap: `rust` — assigned to `developer` for now. It stays in `guild brief`
+  under Roster Gaps until a member declares it.
+```
 
 ## Rules
 
@@ -300,6 +445,14 @@ what the answer actually produced.
   anything under a goal, and neither do you without being told to.
 - **A requirement with no phase is a finished requirement** — `phase_id` is nullable by design.
   Never block, re-ask, or apologise because the user chose to leave one unaffiliated.
-- **`--parallel-group` and `--plan-slice` are the architect's to set** — it designs the developer
-  ticket waves itself; you only need to relay questions and forward context, not manage ticket
-  frontmatter.
+- **`--parallel-group`, `--plan-slice`, `--needs` and `--prefers` are the architect's to set** — it
+  designs the developer ticket waves and decides what each slice requires; you only need to relay
+  questions and forward context, not manage ticket frontmatter.
+- **The roster is the guild master's layer, like goals and phases** — `guild sync-agents` is yours to
+  run (Step 2.6, idempotent, safe); writing an `agents/*.md` file is the **user's decision alone**
+  (Step 6.6). The architect proposes a member and files the gap; neither of you enlists one.
+- **A capability request cannot be withdrawn** — it is created `open` and only `guild sync-agents`
+  admitting a matching agent moves it (`open → created`). Nothing writes `declined`. So say plainly
+  when a gap is being left open rather than letting it appear unexplained in the next brief.
+- **A ticket's agent and capabilities are fixed at creation** — there is no `guild assign`. If a
+  ticket is wrong, it is dropped and recreated by whoever created it, not edited.

@@ -960,17 +960,107 @@ rotate it — it is already in your git history."
 #   4. Apply schema.sql.
 #   5. Carry over docs/ and qa/ in one composed script, guarded so a re-run inserts
 #      nothing and overwrites nothing.
-#   6. Print a summary: mode, what was archived, what carried over.
+#   5.5 Seed the roster from agents/*.md (Stage 3, §4: "seed the roster").
+#   6. Print a summary: mode, what was archived, what carried over, roster size.
 #
 # Idempotent: re-running on an initialized guild archives nothing, overwrites no file
 # and inserts no row. Also RESUMABLE: the carry-over is guarded on whether the row is
 # actually in the database, not on whether some previous run said it had done the work,
 # so a lost or rebuilt database re-imports what is missing from the archive.
+
+# _init_seed_roster — step 5.5. Print the seeded member count on stdout, or nothing when
+# the roster did not load. NEVER FATAL, and never exits non-zero.
+#
+# WHEN DOES `guild sync-agents` RUN? BOTH — here, and on demand. Two answers, because they
+# cover two different failures and neither covers the other:
+#
+#   at init      no guild is ever BORN with an empty roster. An empty `agent` table makes
+#                `guild match` useless on every `--needs` ticket, so the "make it
+#                impossible" half is this line. Design §4 asks for it in as many words:
+#                "guild init … check for `turso`; SEED THE ROSTER".
+#   on demand    the roster is not static, and that is the entire point of Stage 3.
+#                "Adding an agent file is the entire process of adding a guild member"
+#                (§5.1) is only true if admitting one needs no re-initialization, so
+#                `guild:check-in` step 1 and `guild:new-requirement` both run the command,
+#                which is idempotent and says "already up to date" when nothing changed.
+#
+# A GUILD INITIALIZED BEFORE STAGE 3 never runs init again, so neither half reaches it —
+# and it does not need one. Every ticket on such a board names an agent, so the matcher's
+# fallback dispatches all of it exactly as it did before, and the first `--needs` ticket
+# that cannot be placed makes the empty roster loud: `guild match` exits 1 and ends with
+# "check the roster is loaded at all: 'guild sync-agents'". The silent forever-fallback
+# the seeding exists to prevent is therefore not reachable — it would require a capability
+# ticket, and a capability ticket on an unsynced board is an error message, not a shrug.
+#
+# THIS RUNS LAST, AND IT CANNOT FAIL INIT. By the time it is called, config.yaml, the
+# schema, the journal and the carry-over are all committed — a fully working guild. A
+# missing `agents/` directory (guild vendored without its agent files, or
+# $CLAUDE_PLUGIN_ROOT unset at that moment) or one malformed frontmatter block must not
+# turn that into "init failed", because the board is not what failed and re-running init is
+# not the fix. `cmd_sync_agents` dies on all of those; the command substitution is a
+# subshell, so its exit ends the subshell and `|| rc=$?` catches it.
+#
+# THE DIAGNOSTIC GOES TO STDERR, VERBATIM. init's stdout is a `key: value` summary block,
+# and folding a multi-line error containing filesystem paths into it would let a path forge
+# a summary field — the output-channel rule (§2.2.1), which forged board sections and
+# frontmatter three times in Stage 1. So stdout gets a number or nothing, the caller turns
+# that into one of two fixed sentences, and the reason travels on the stream where it
+# cannot impersonate anything.
+_init_seed_roster() {
+  local out rc
+  # THE GUARD, AND IT IS THE WHOLE REASON THIS IS NOT A BARE `cmd_sync_agents` CALL.
+  #
+  # `sync-agents` is idempotent against the DATABASE — it compares the roster it read from
+  # agents/*.md with the `agent` rows and writes only differences. It is NOT idempotent
+  # against the JOURNAL when the two disagree, and there is one routine way to make them
+  # disagree: the fresh-clone sequence. `.guild/guild.db` is gitignored, so a clone has the
+  # journal and no database; `guild init` re-creates an EMPTY database, and a seed there
+  # would find the roster missing, write all 14 members, and append 40 more lines to a
+  # journal that already describes exactly those members. Every clone would do it again.
+  # `guild rebuild` — the command that actually belongs in that sequence — replays the
+  # roster from the journal, so nothing is lost by standing down.
+  #
+  # So: seed only when the journal does not already carry the roster. That is precise
+  # rather than conservative. It still seeds a brand-new guild (empty journal), and it
+  # still seeds a Stage 1/2 guild whose journal predates the `agent` table, which is the
+  # upgrade path — so "a guild born with an empty roster" stays impossible in both. The
+  # closing quote in the pattern is load-bearing: without it `"table":"agent` also matches
+  # every `agent_capability` line, which is true here but would not be if the capability
+  # rows ever outlived their agent.
+  #
+  # Standing down still REPORTS: the count comes from the database instead, so the summary
+  # says `0 member(s)` on a clone that has not rebuilt yet — which is true, and is the
+  # line that sends the reader to `guild rebuild` rather than to a wrong "not loaded".
+  if [ -f "$(journal_path)" ] &&
+     LC_ALL=C grep -q '"table":"agent"' "$(journal_path)"; then
+    out="$(printf 'SELECT COUNT(*) FROM agent WHERE active = 1;\n' | db_exec 2>/dev/null || true)"
+    printf '%s\n' "$out" |
+      LC_ALL=C awk '/^[0-9]+$/ { n = $0 } END { print (n == "" ? 0 : n) }'
+    return 0
+  fi
+  rc=0
+  out="$(cmd_sync_agents 2>&1)" || rc=$?
+  if [ "$rc" != 0 ]; then
+    printf '%s\n' "$out" >&2
+    printf 'guild: the board is initialized and fully usable — this is the ROSTER only.\n' >&2
+    printf "       Every ticket that names an agent still dispatches; 'guild match' and\n" >&2
+    printf "       'guild bounties' cannot place a --needs ticket until you run:\n" >&2
+    printf '         guild sync-agents\n' >&2
+    return 0
+  fi
+  # The count is the report's own last line, `guild: N active member(s)`. Read with awk
+  # rather than a shell pattern: `${v##*<space>}` over a multi-line string is the quadratic
+  # idiom bash 3.2 punishes, and the field is a bare integer by construction.
+  printf '%s\n' "$out" |
+    LC_ALL=C awk '/^guild: [0-9]+ active member\(s\)$/ { n = $2 } END { if (n != "") print n }'
+  return 0
+}
+
 cmd_init() {
   local mode_flag="" url_flag="" token_flag="" date_arg=""
   local cfg existing_mode mode url_env token_env
   local schema tmpd marker last_checkin carried wrote_cfg fresh_db carry_ts dbpath
-  local line tag val docset covset ins_docs ins_cov d out
+  local line tag val docset covset ins_docs ins_cov d out roster_n
 
   guild_root >/dev/null
   cfg="$GUILD_DIR/config.yaml"
@@ -1195,6 +1285,9 @@ If it is not, unset GUILD_DIR (the default is ./.guild) or point it somewhere el
     journal_append guild_state upsert "$(journal_row key last-checkin value "$last_checkin")"
   fi
 
+  # ---- 5.5 seed the roster (Stage 3, design 4: "seed the roster") ----
+  roster_n="$(_init_seed_roster)"
+
   # ---- 6. summary ----
   printf 'Guild initialized at %s\n' "$GUILD_DIR"
   if [ "$mode" = "local" ]; then
@@ -1215,6 +1308,18 @@ If it is not, unset GUILD_DIR (the default is ./.guild) or point it somewhere el
   printf '  spool:        %s/\n' "$GUILD_DIR/spool"
   printf '  export:       %s/\n' "$GUILD_DIR/export"
   printf '  last-checkin: %s\n' "${last_checkin:-null}"
+  # A NUMBER OR A FIXED SENTENCE, never anything read off the filesystem — the reason a
+  # seed did not happen went to stderr, where it cannot forge a line of this block.
+  if [ -z "$roster_n" ]; then
+    printf "  roster:       not loaded — see above, then run 'guild sync-agents'\n"
+  elif [ "$roster_n" = 0 ]; then
+    # Only reachable from the stand-down path: the journal carries the roster and this
+    # database has not replayed it yet. Naming `rebuild` here is the difference between
+    # a fresh clone that works and one that reports an empty guild it cannot explain.
+    printf "  roster:       0 member(s) — the journal carries it; run 'guild rebuild'\n"
+  else
+    printf '  roster:       %s member(s)\n' "$roster_n"
+  fi
 
   if [ -n "$GUILD_V4_ARCHIVE_DIR" ]; then
     printf '\nArchived the v4 board to %s/\n' "$GUILD_V4_ARCHIVE_DIR"

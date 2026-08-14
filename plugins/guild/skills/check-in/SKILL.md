@@ -8,7 +8,7 @@ description: >
   orchestrator: opens with the guild brief, gathers input, and drives the continuous
   work cycle. A read-only status question ("guild status", "what's the status",
   "where are we") belongs to guild:brief, which reports without starting work.
-version: 5.0.0
+version: 5.3.0
 user-invocable: true
 ---
 
@@ -31,7 +31,11 @@ path (Steps 1–4). Read a reference only when its trigger fires:
 `"$GUILD" checkin`. **Nothing hands out a writable path** — `guild path` is gone, because
 `guild export` regenerates `.guild/export/` wholesale and anything edited there is discarded. You
 read with `read`/`meta` and write with `move`/`retitle`/`checkin`/`new`; agents write with
-`log`/`finding`. The board is rendered live. **Development runs in parallel by default**: the architect groups dev tickets into
+`log`/`finding`. The board is rendered live. **A ticket names the CAPABILITY the work requires, not
+the member who does it** — `"$GUILD" match TASK-NNN` derives the member, rank 1 wins, and a ticket
+nobody is eligible for goes `blocked` and is reported out loud (3.2a). A ticket that names
+`--agent NAME` still dispatches to that member exactly as it did in v4, so a guild that has never run
+`sync-agents` behaves identically to before. **Development runs in parallel by default**: the architect groups dev tickets into
 `parallel-group` waves (verified disjoint files) that dispatch concurrently; an ungrouped ticket
 runs solo. Reviews fan out 4-wide.
 
@@ -58,7 +62,12 @@ GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
 | Next actionable ticket | `"$GUILD" next` → `TASK-NNN` or `none` |
 | Expand a parallel-group dev batch | `"$GUILD" batch TASK-NNN` → the TASK IDs to dispatch together |
 | Dispatch / complete / fail / retry | `"$GUILD" move TASK-NNN in-progress\|done\|failed\|todo` |
-| Create a follow-up task | `"$GUILD" new task --title "…" --agent A --req REQ-NNN [--plan PLAN-NNN] [--plan-slice slug] [--parallel-group L]` |
+| Create a follow-up task | `"$GUILD" new task --title "…" (--agent A \| --needs cap,cap) --req REQ-NNN [--prefers cap,cap] [--plan PLAN-NNN] [--plan-slice slug] [--parallel-group L]` |
+| Load the roster | `"$GUILD" sync-agents` — idempotent and quiet; run once at Step 1 |
+| Who should take a ticket | `"$GUILD" match TASK-NNN` → ranked `<rank> <agent> <pref> <caps> <source>`; **rank 1 is the dispatch target**. Exits 1 naming the missing capabilities when nobody is eligible |
+| What can be worked, and what cannot | `"$GUILD" bounties` → `<id> <ready\|blocked> <agent\|-> <req> <reason> <title>` |
+| Park an unclaimable ticket | `"$GUILD" move TASK-NNN blocked` |
+| Standing roster gaps | `"$GUILD" capability-requests --open` |
 | Read a ticket | `"$GUILD" read ID` (there is no `path`, and `slice` has no writer — the brief lives in the ticket's `## Objective`) |
 | Fold an agent's reports into the board | `"$GUILD" spool drain TASK-NNN` — run before reading a ticket back |
 | Stamp the check-in date | `"$GUILD" checkin {today}` |
@@ -106,6 +115,17 @@ Check for `.guild/config.yaml` — that file, not `state.yaml`, is what says a v
    retirement — do not branch on them.)
 2. Stamp the check-in date: `"$GUILD" checkin {today's date}`. This is the only writer of
    `last-checkin`; there is no `state.yaml` to edit.
+2a. **Load the roster: `"$GUILD" sync-agents`.** Tickets name a **capability**, not a member (design
+   §5), and the matcher can only see synced members. It is idempotent and quiet — an unchanged
+   roster prints `the roster is already up to date — nothing was written` and appends no journal
+   line — so run it on every check-in without ceremony. Mention the output only when it says
+   something: a `new` / `deactivated` line is a roster change the user should hear about.
+   **Skipping it is what turns a good board into a wall of blocked tickets**: on an unsynced guild
+   the roster is empty, so every `--needs` ticket matches nobody. (Tickets that name `--agent`
+   directly are unaffected — that is the v4 path and it works with no roster at all.)
+   If it refuses with `the roster declares N capability(ies) the guild's vocabulary does not have`,
+   **nothing was written** and the vocabulary guard caught an agent file with an unfiled tag. Report
+   it; the fix belongs to `guild:new-requirement`'s recruiting step or to the typo in the file.
 3. **Stale `in-progress` triage:** for each ticket in `"$GUILD" list task in-progress`, first fold
    in anything its agent reported but that was never drained —
    `"$GUILD" spool drain TASK-NNN` — then `"$GUILD" read TASK-NNN` and pick one of three cases:
@@ -184,6 +204,11 @@ here to work, not to read a report):
   crashed dispatch, not work in progress; say so;
 - anything the `Summary:` line flags — open bugs worst-severity first (name every `critical` one),
   failed tasks, unresolved review findings;
+- **anything under `Blocked:` and `Roster Gaps:`, by name.** Both sections became reachable in v5
+  Stage 3. A `Blocked:` row is a bounty no guild member can take; a `Roster Gaps:` row is the
+  capability behind it, with the member the architect proposed. Neither will resolve on its own and
+  neither will `guild next` ever hand out — say so, and say what would fix it. If the brief prints
+  `Nothing actionable — N task(s) are blocked.`, that line **is** the headline;
 - what moved since the last check-in, summarized by subject, not recited by timestamp. Each row
   carries the subject's title, the actor that did it (`orchestrator` for board moves, the agent's
   own name for the `logged`/`filed` rows a `spool drain` folded in) and, for a `moved` row, both
@@ -258,12 +283,54 @@ If it prints `none`: report "All caught up!" and go to **Step 4**.
    member). If the requirement is still `todo` (`"$GUILD" status REQ-NNN`), advance it too:
    `"$GUILD" move REQ-NNN in-progress`.
 3. Get each ticket's metadata with `"$GUILD" meta TASK-NNN` (frontmatter only — do NOT `guild read`
-   the full ticket at dispatch; the agent reads its own ticket). You need the `agent`,
-   `requirement`, `plan` and `plan-slice` fields. **Pass IDs, not paths** — there are no paths, and
-   the agent resolves what it needs itself with `guild read`.
-4. Spawn with the **Agent tool** — a single call for a solo ticket; for a parallel-group batch, **one
-   Agent call per ticket in the same message** so they run concurrently. Each agent's own definition
-   carries its close-out protocol; the prompt stays minimal:
+   the full ticket at dispatch; the agent reads its own ticket). You need the `requirement`, `plan`
+   and `plan-slice` fields. **Pass IDs, not paths** — there are no paths, and the agent resolves
+   what it needs itself with `guild read`.
+4. **Decide WHO gets it — this is `guild match`'s job now, not the `agent` field's.** A v5 ticket
+   names the capability the work requires; the member is derived. The rule, in order:
+
+   ```bash
+   "$GUILD" meta TASK-NNN agent      # empty  -> the ticket declares capabilities
+   "$GUILD" match TASK-NNN           # "1 developer-svelte 2/2 4 capability"  -> rank 1 wins
+   ```
+
+   **Read the `agent` field first, and only consult `match` when it is empty.** The three cases are
+   exclusive, in this order:
+
+   - **`agent` is `reviewer`** → the 4-reviewer fan-out below. This case is decided by the name and
+     nothing else; **do not** dispatch `guild match`'s rank 1 for it. (Rank 1 for `--needs review`
+     is `product-reviewer`, which is not one of the four — verified. The name wins.)
+   - **`agent` is any other name** → that is a deliberate pin (§5.2 calls it a deviation the
+     architect had to justify). Dispatch that member and **do not run `match` at all**. The ticket
+     may *also* declare capabilities as a record of what the work needed; the pin still wins.
+   - **`agent` is empty** → run `"$GUILD" match TASK-NNN` and dispatch **rank 1**: the second
+     whitespace-separated column of the first line. `awk 'NR == 1 { print $2 }'` is the whole parse.
+     If `match` **exits 1**, nobody on the roster can take this bounty — go to **3.2a**, and do not
+     improvise a substitute agent.
+
+   **A pinned ticket is never blocked, however `guild bounties` labels it.** `match` ignores the pin
+   and answers the capability question, so a ticket carrying *both* `--agent developer` and
+   `--needs implement,rust` shows up on `guild bounties` as
+   `blocked - REQ-001 no-eligible-agent:implement,rust` while being perfectly dispatchable — verified:
+   `guild next` returns it, `guild list` and `guild brief` both show it as a normal `developer`
+   bounty. **Never park a ticket whose `agent` field is set.** 3.2a applies only to the empty-agent
+   case.
+
+   Column 5 of `match` tells you which rule produced the list: `capability` (§5.2 ran) or `ticket`
+   (the ticket named an agent and the roster was not consulted). You never have to infer it.
+
+   `guild meta` has **no** `needs` field — the capability set is not on the frontmatter surface. If
+   you need it (for a message to the user, or for 3.2a's report), it is
+   `"$GUILD" match TASK-NNN --json` under `required` / `preferred`, and it is in `match`'s error text
+   when there is no eligible member.
+
+   `match --json` also carries each candidate's `serial` flag. **`serial: 1` means never run this
+   member concurrently** — today that is `qa-tester`, and it is the machine-readable form of the
+   "never batch qa-tester tickets" rule below.
+5. Spawn with the **Agent tool**, using the member resolved in step 4 as `subagent_type` — a single
+   call for a solo ticket; for a parallel-group batch, **one Agent call per ticket in the same
+   message** so they run concurrently. Each agent's own definition carries its close-out protocol;
+   the prompt stays minimal:
 
    ```
    Agent(
@@ -347,6 +414,65 @@ normal way, you do not need `run_in_background: false` or any special waiting):
 A `NEEDS INPUT:` pause is neither a completion nor a failure — don't move the ticket, don't
 process follow-ups, and never answer on the user's behalf.
 
+### 3.2a No Eligible Agent — Block It, Loudly
+
+When `"$GUILD" match TASK-NNN` exits 1, no member's capabilities cover what the ticket requires.
+That is a **roster gap**, and §5.2 is explicit that it should be loud. The error names the missing
+set:
+
+```
+guild: no guild member can take this bounty: TASK-005 needs [implement, rust]
+```
+
+Do this, in this order:
+
+1. **Park the ticket** so it stops reading as claimable:
+   ```bash
+   "$GUILD" move TASK-005 blocked
+   ```
+   `blocked` is a real task status in v5, and it means one specific thing — **no guild member can
+   take this bounty**. It is not a general "stuck" flag: never use it for a ticket waiting on a
+   person, a decision, or another ticket.
+2. **Record why**, so the board explains itself after you are gone:
+   ```bash
+   "$GUILD" log TASK-005 --agent orchestrator \
+     --entry "Blocked on {date}: no roster member covers [implement, rust]"
+   "$GUILD" spool drain TASK-005
+   ```
+3. **Tell the user now — do not batch it into the wrap-up.** Name the ticket, the missing
+   capabilities, and the one thing that fixes it:
+   ```
+   TASK-005 "Port the codec to Rust" is blocked: no guild member has [implement, rust].
+   Nothing will pick it up until the roster covers it. Run /guild:new-requirement to
+   recruit for it, or reassign the work.
+   ```
+4. **Continue the loop.** Go back to 3.1 — `"$GUILD" next` never returns a blocked ticket, so the
+   cycle moves on to whatever else is workable rather than wedging.
+
+**What `blocked` does to the rest of the board, and why you must not paper over it:**
+
+- **It holds the requirement's review gate closed.** A `reviewer` ticket waits while any non-reviewer
+  task for its requirement is `todo`, `in-progress` **or `blocked`**. That is deliberate: a review
+  certifying a requirement whose implementation slice was never dispatched is a green nobody can tell
+  from a real one. A held gate at least shouts.
+- **It keeps the requirement open at 3.6.** `blocked` is like `todo`, **not** like `failed` —
+  `failed` means an agent tried and the user adjudicated it; `blocked` means nothing was ever
+  attempted. Completing a requirement over a blocked task ships an un-attempted slice silently.
+- **`guild move TASK-NNN done` on a blocked ticket is refused** by the CLI, and the error lists the
+  three legal ways out (`todo` once someone can take it, `in-progress` to hand it over in spite of
+  the gap, `failed` to give up on it). Take the refusal at face value; do not route around it.
+- **A parallel-group batch still dispatches without its blocked members** — `guild batch` excludes
+  them. Run the members that can run; the gate is where the blocked slice is accounted for.
+
+**Unblocking.** Once the roster covers it (an agent file added and `"$GUILD" sync-agents` run, via
+`guild:new-requirement`'s recruiting step), put the bounty back: `"$GUILD" move TASK-NNN todo`, then
+confirm with `"$GUILD" match TASK-NNN`. **Verified end to end:** a ticket needing `implement,rust`
+went from `blocked / no-eligible-agent:implement,rust` to `ready / developer-rust` on `guild
+bounties` after the agent file was synced.
+
+**Never** substitute a member you think is "close enough" to avoid a block. If the user wants the
+work done by a generalist anyway, that is their call to make out loud — ask.
+
 ### 3.3 Process Completion
 
 After the agent(s) return:
@@ -406,6 +532,9 @@ For each such line in the drained Work Log:
 1. **Parse**: title, agent, and the optional `plan: PLAN-NNN`, `plan-slice: {slug}`,
    `parallel-group: {label}` modifiers. When `plan:` is absent, the new ticket inherits the parent
    ticket's `plan` (from `"$GUILD" meta TASK-NNN plan`).
+   **`agent:` stays `--agent` — do not translate it into `--needs`.** A working agent naming a
+   member is the pin case (§5.2): it knows who should pick the thread up, and guessing a capability
+   set on its behalf can only be less accurate than what it wrote.
 2. **Skip already-materialized lines.** A Work Log is append-only and you cannot edit an entry, so
    the idempotence check is against the BOARD, not an annotation: before creating, check
    `"$GUILD" list task todo` (and `in-progress`) for an existing ticket with the same title and the
@@ -492,6 +621,19 @@ that REQ remains **open**:
 ```
 (empty output = nothing open; this matches the CLI's review gate exactly). If so:
 - `"$GUILD" move REQ-NNN done`.
+
+**A `blocked` task counts as OPEN here, and the awk above already gets that right** — `blocked` is
+neither `done` nor `failed`, so it prints and the requirement stays open. Do not "fix" the filter by
+adding `&& $2!="blocked"`. The asymmetry is the point: `failed` is a failure the user already
+adjudicated (3.3 asked retry-or-skip), while `blocked` is a machine verdict nobody has looked at.
+Closing a requirement over a blocked task ships an un-attempted slice and nobody ever finds out.
+If a blocked task is what is holding a requirement open, say so by name rather than letting it sit:
+that is the 3.2a report again, and the fix is recruiting, not a status edit.
+
+**One column note for any awk you write over `guild list task`:** column 3 is the **agent when the
+ticket names one**, and `needs:cap+cap` when it does not — so `$3=="reviewer"` still selects pinned
+reviewer tickets exactly as before, and a capability ticket is recognizable by its `needs:` prefix.
+Columns 1, 2 and 4 (id, status, requirement) are unchanged.
 - If any tasks for the REQ are `failed` (`awk '$4=="REQ-NNN" && $2=="failed"'`), they were
   **user-waived** (3.3 skip) — list them in the completion summary rather than blocking completion.
 - Append a bullet to `CHANGELOG.md` under `## [Unreleased]` (see 3.8) — with waived tasks, use
@@ -515,6 +657,8 @@ TASK-NNN done: {title} → {N} follow-ups created
 **Pause and ask the user only at these checkpoints:**
 
 - **A ticket failed** (3.3 already asks retry/skip)
+- **A ticket blocked on a roster gap** (3.2a) — report it immediately, then keep looping; only stop
+  if it is the *last* thing on the board
 - **A review report is ready for a fix-approval decision** (3.5 already asks)
 - **A parallel-batch file collision** (3.3 already asks)
 - **A requirement just completed** (3.6) → summarize the requirement and ask: continue with the next
@@ -572,6 +716,25 @@ When the work cycle ends (user stops, or nothing actionable):
      {output of `"$GUILD" next`}
    ```
 
+2. **If anything is blocked, the summary does not end without it.** `guild board` prints a Blocked
+   section and `guild next` prints `none` when blocked work is all that remains — neither is a
+   caught-up board. Close with the gap and its fix:
+   ```
+   Blocked (nothing will pick these up on its own):
+     TASK-005  Port the codec to Rust — no member has [implement, rust]
+
+   Open roster gap: `rust` (proposed: developer-rust). Run /guild:new-requirement to
+   recruit for it.
+   ```
+   Where each fact comes from, so you do not go looking in the wrong place:
+   - `"$GUILD" board` — the wrap-up render already has a **Blocked** section, and it is the one
+     surface that prints the capability set inline: `TASK-005: Rust codec (needs:implement+rust)`.
+   - `"$GUILD" bounties` — both halves at once: what is claimable, and what is not with the reason
+     as a single blank-free token. **A ticket you already parked reports `status-blocked`, not
+     `no-eligible-agent:cap,cap`** — the second form is what it says *before* the move, which is
+     why 3.2a tells you to log the capability set at the moment you block it.
+   - `"$GUILD" capability-requests --open` — the standing gaps, with the proposed member.
+
 ## Key Rules
 
 1. **Status is a COLUMN** — there are no status directories and no ticket files. Change status
@@ -611,7 +774,18 @@ When the work cycle ends (user stops, or nothing actionable):
 12. **Follow-ups before the terminal move** — materialize first (and log ` → TASK-MMM` on the
     parent), then `guild move done`; a crash then lands in a recoverable state, never a silent
     dead-end.
-13. **Subagents can't ask the user** — `AskUserQuestion` only works in the orchestrator session
+13. **Tickets name a capability; `guild match` names the member** — dispatch rank 1 when the `agent`
+    field is empty, honor the pin when it is set, and let the name `reviewer` mean the 4-way fan-out
+    regardless of what `match` would rank. Never invent a member for a ticket `match` refused.
+14. **`blocked` means "no guild member can take this bounty" and nothing else** — it is written only
+    by you, only after `guild match` exits 1 (3.2a), and it is reported to the user the moment it
+    happens. It holds the review gate closed and keeps its requirement open on purpose; `guild move
+    TASK-NNN done` on a blocked ticket is refused by the CLI. Recruiting is the fix, not a status
+    edit.
+15. **The roster is the guild master's layer** — `guild sync-agents` is yours to run at Step 1
+    (idempotent, quiet), but **you never write an `agents/*.md` file**. Creating a guild member
+    happens in `guild:new-requirement`, on an explicit answer from the user, and nowhere else.
+16. **Subagents can't ask the user** — `AskUserQuestion` only works in the orchestrator session
     (whichever skill is currently driving — check-in or `new-requirement`). Any ticket
     (`qa-strategist`, `qa-tester`, ...) relays instead: on a `NEEDS INPUT:` pause (3.2), you ask the
     user and `SendMessage` the answers back to resume it. `product-owner` and `architect` use the

@@ -3,6 +3,8 @@ name: developer
 model: sonnet
 color: blue
 tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
+capabilities: [implement, backend, frontend]
+serial: false
 description: |
   Use this agent when the guild needs code implementation. The developer reads
   the task, its linked plan and requirement, implements the code, and reports

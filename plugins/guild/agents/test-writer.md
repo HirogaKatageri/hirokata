@@ -3,6 +3,8 @@ name: test-writer
 model: sonnet
 color: white
 tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash"]
+capabilities: [test-authoring]
+serial: false
 description: |
   Use this agent when the guild needs unit or integration tests written for
   implemented code. The test-writer implements the test-planner's test plan —

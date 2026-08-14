@@ -3,6 +3,8 @@ name: product-reviewer
 model: haiku
 color: magenta
 tools: ["Read", "Grep", "Glob", "Bash"]
+capabilities: [review, requirements]
+serial: false
 description: |
   Use this agent when you need to verify that recent code changes satisfy all requirements from a plan document. Examples:
 

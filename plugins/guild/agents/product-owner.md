@@ -3,6 +3,8 @@ name: product-owner
 model: sonnet
 color: pink
 tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash", "Agent"]
+capabilities: [requirements]
+serial: false
 description: |
   Use this agent when the guild needs to gather, refine, or document requirements.
   The product-owner interviews the user, creates requirement documents, and

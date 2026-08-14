@@ -27,6 +27,8 @@
 #   lib/quality.sh    coverage — the quality areas the QA discipline maps and inspects
 #   lib/brief.sh      brief — the structured briefing behind the guild:brief skill
 #   lib/dashboard.sh  dashboard — the six-view self-contained HTML page
+#   lib/roster.sh     sync-agents / match / bounties / capability-request(s) — the roster,
+#                     the deterministic matcher and recruiting (Stage 3)
 #
 # THERE IS NO `guild path`. In v4 the path WAS the storage, so an agent could resolve a
 # path and Edit it. In v5 only requirements get an export file, that file is generated
@@ -58,7 +60,7 @@ GUILD_SCRIPT_DIR="$(cd -P "$(dirname "$_guild_self")" && pwd)"
 unset _guild_self _guild_dir
 
 GUILD_LIB_DIR="$GUILD_SCRIPT_DIR/lib"
-for _guild_mod in db journal artifacts render init direction records brief quality dashboard; do
+for _guild_mod in db journal artifacts render init direction records brief quality dashboard roster; do
   if [ ! -f "$GUILD_LIB_DIR/$_guild_mod.sh" ]; then
     printf 'guild: missing module %s/%s.sh — is the plugin checkout complete?\n' \
       "$GUILD_LIB_DIR" "$_guild_mod" >&2
@@ -99,7 +101,9 @@ Setup:
   guild init [--mode local] [--url-env NAME] [--token-env NAME] [--yes] [DATE]
                                  Create config.yaml, schema, journal, spool/, export/,
                                  docs/, qa/, reviews/; archive an existing v4 board
-                                 (moved, never deleted); carry over docs/ + qa/.
+                                 (moved, never deleted); carry over docs/ + qa/; seed the
+                                 roster from agents/*.md (never fatal — the summary says
+                                 so, and `guild sync-agents` is the retry).
                                  Cloud mode is NOT yet verified and is refused.
 
 Direction (goals and phases sit ABOVE requirements; a requirement's phase is optional):
@@ -115,8 +119,11 @@ Direction (goals and phases sit ABOVE requirements; a requirement's phase is opt
 
 Create (templates, IDs derived in SQL) — each prints the new ID:
   guild new req  --title T [--desc D | --body B] [--date YYYY-MM-DD]
-  guild new task --title T --agent A --req REQ-NNN [--plan PLAN-NNN] [--plan-slice slug]
+  guild new task --title T --req REQ-NNN (--agent A | --needs cap,cap) [--prefers cap,cap]
+                 [--plan PLAN-NNN] [--plan-slice slug]
                  [--parallel-group LABEL] [--objective O | --body B] [--date YYYY-MM-DD]
+      --agent pins a member; --needs describes the WORK and lets the roster answer
+      ('guild match'). Both together pin AND record what the work needed. One is required.
   guild new plan --title T --req REQ-NNN [--desc D | --body B] [--task TASK-NNN]
                  [--date YYYY-MM-DD]
       --desc / --objective fill one section of the template; --body REPLACES it, and is
@@ -130,7 +137,11 @@ Read (the v4 `path` command is REMOVED — nothing hands out a writable path now
   guild next-id <req|task|plan> Print the next available ID number (NNN)
 
 Orchestrator writes (agents never move their own work):
-  guild move    <ID> <status>   Set status to todo|in-progress|done[|failed]
+  guild move    <ID> <status>   Set status to todo|in-progress|done|failed — and for a
+                                TASK also `blocked`, which means no guild member can take
+                                the bounty. `blocked` counts as OPEN for requirement
+                                completion (so nothing closes over un-attempted work) and
+                                `blocked -> done` is refused.
   guild retitle <ID> "New title"
   guild checkin [YYYY-MM-DD]    Record today's check-in (default: today, UTC)
 
@@ -162,6 +173,29 @@ Knowledge base (evergreen — survives releases and board resets; the architect 
   guild doc get   <slug>        Print the body VERBATIM (round-trips byte for byte)
   guild doc list                "<slug> <updated> <title>"
   guild doc search <query>      Case-insensitive substring search over title and body
+
+The roster (a task names a CAPABILITY; any member whose capabilities cover it is eligible.
+A task that declares none still matches its own --agent, so every existing board is
+unaffected. `guild init` seeds the roster; this is how you refresh it):
+  guild sync-agents [--dry-run]  Scan agents/*.md frontmatter into the roster. Idempotent:
+                                 new members added, removed members DEACTIVATED (never
+                                 deleted — a finished task may name one), capability sets
+                                 replaced. $GUILD_AGENTS_DIR overrides where it looks.
+  guild match <TASK-ID> [--json] The ranked eligible members: preferred covered (desc),
+                                 then total capabilities (asc, so a specialist beats a
+                                 generalist), then name. Rank 1 is the dispatch target.
+                                 Exits 1 and names the missing capabilities when nobody
+                                 is eligible — that is a roster gap, and it is loud.
+  guild bounties [--json]        Open, dependency-satisfied tasks with their matched
+                                 member, then everything that CANNOT be worked and why
+                                 (status-blocked, deps:<ids>, no-eligible-agent:<caps>).
+  guild capability-request <capability> --req REQ-NNN --rationale "..." --proposes NAME
+                          [--spec "..."]
+                                 File a roster gap. Surfaces in `guild brief` -> Roster
+                                 Gaps, and admits the capability to the vocabulary so the
+                                 new agent file syncs.
+  guild capability-requests [--open]
+                                 "<id> <status> <capability> <req> <proposed-agent> <why>"
 
 Query:
   guild list <req|task|plan> [status]   List "<ID> <status>" lines (tasks add "<agent> <req>"
@@ -243,6 +277,11 @@ main() {
     list)      cmd_list "$@" ;;
     next)      cmd_next "$@" ;;
     batch)     cmd_batch "$@" ;;
+    sync-agents)         cmd_sync_agents "$@" ;;
+    match)               cmd_match "$@" ;;
+    bounties)            cmd_bounties "$@" ;;
+    capability-request)  cmd_capability_request "$@" ;;
+    capability-requests) cmd_capability_requests "$@" ;;
     board)     cmd_board "$@" ;;
     brief)     cmd_brief "$@" ;;
     dashboard) cmd_dashboard "$@" ;;
