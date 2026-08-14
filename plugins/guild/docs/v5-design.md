@@ -1250,16 +1250,35 @@ this whole design.
 `guild dashboard --open` writes a single self-contained `.guild/dashboard.html` with the JSON
 inlined — no server, no build step, no network, works offline.
 
-Six views:
+Seven views:
 
 1. **Roadmap** — goals → phases → requirements, with live progress.
 2. **Board** — bounties by status, colored by priority, showing matched agent and blockers.
-3. **Graph** — the execution graph for the selected requirement as a Mermaid DAG, nodes
-   colored by status, gates called out.
+3. **Graph** — the execution graph, one Mermaid DAG per requirement, nodes colored by status
+   (`classDef`) and gates called out (`{{…}}`).
+
+   **What "as a Mermaid DAG" means here, exactly.** The page is strictly self-contained: no
+   CDN, no fetch, no external font. Rendering Mermaid in the local file would require
+   inlining the library, which is larger than every other byte of the page combined, so the
+   view emits the diagram into a `<pre class="mermaid">` block instead. That block is
+   honest in both directions: opened from `file://` it is readable Mermaid source you can
+   paste into any renderer, and published as an Artifact — the optional path the
+   `guild:dashboard` skill already offers — the host draws it natively, colors and all,
+   because `pre.mermaid` is the selector it looks for. What the view does **not** have is a
+   requirement *selector*; every requirement's graph is a card on the page.
 4. **Bugs** — open defects by severity, linked to fix tasks.
-5. **Coverage** — quality areas by risk, each showing when it was last inspected and whether
+5. **Findings** — every `review_finding` row: the task it was filed against (named, not just
+   referenced), the reviewer, the summary and detail, `file:line`, and its disposition.
+   Grouped by severity worst-first, unresolved before resolved inside each group, with a
+   filter that opens on `open`+`fixing`. This is §1's "*what did reviewers flag that we never
+   fixed?* becomes a query" as a view — and it is why the summary tiles are **anchors**:
+   `N Open findings` with nothing behind it is the v4 failure (prose buried in a per-task
+   markdown work log) reprinted in a larger font. Resolved findings are kept, not filtered
+   away, because a view that showed only open rows cannot tell "nobody ever looked" from
+   "somebody looked and fixed it".
+6. **Coverage** — quality areas by risk, each showing when it was last inspected and whether
    it has a committed e2e spec. The view that answers "what has nobody looked at in a month?"
-6. **Activity** — the `event` feed.
+7. **Activity** — the `event` feed.
 
 Optionally publishable as an Artifact for a shareable link, via a thin `guild:dashboard` skill.
 Local file first; the artifact is a convenience, not the mechanism.

@@ -88,30 +88,45 @@ your-project/
 guild status
 ```
 
+> **Guild prerequisite:** the guild board is a local Turso database, so it needs the `tursodb` binary. No account, token or network is required. `guild init` checks for it and prints this line rather than failing:
+>
+> ```bash
+> curl --proto '=https' --tlsv1.2 -LsSf \
+>   https://github.com/tursodatabase/turso/releases/latest/download/turso_cli-installer.sh | sh
+> ```
+
 ---
 
 ## How to Use the Guild Plugin
 
-The Guild plugin (v1.5.0) provides continuous agent orchestration through a persistent board-driven work cycle. The guild tracks requirements, tasks, and progress across sessions — no per-session setup required.
+The Guild plugin (v5.0.0-beta) provides continuous agent orchestration through a persistent, database-backed work cycle. The guild tracks direction, requirements, tasks, bugs and quality coverage across sessions — no per-session setup required.
 
 ```
-product-owner → architect → developers / developer-svelte (up to 3 parallel)
-    → test-writer → 4 reviewers in parallel
-    → [fix cycle if issues found]
+guild:new-requirement — live 3-way interview (product-owner + architect + you)
+    → developers / developer-svelte (parallel waves, disjoint files)
+    → test-planner → test-writer (unit & integration)
+    → 4 reviewers in parallel → a review report you act on
 ```
+
+**Stages 1 and 2 of the five-stage v5 design are shipped.** The capability roster, the execution graph and gates, and unattended operation are Stages 3–5 and are **not** built yet — the surfaces that will show them render as empty sections today, and say so.
 
 ### Setting Up
 
-The guild requires no manual initialization. On your first check-in it automatically creates a `.guild/` directory in your project:
+The guild requires no manual initialization. On your first check-in it creates a `.guild/` directory in your project:
 
 ```
 .guild/
-├── BOARD.md          # Central board: in-progress, backlog, done, requirements
-├── requirements/     # REQ-NNN.md — one file per requirement
-├── tasks/            # TASK-NNN.md — one file per task
-├── plans/            # PLAN-NNN.md — one file per implementation plan
-└── docs/             # Persistent knowledge base (survives board resets and releases)
+├── config.yaml       # committed — storage mode; env var NAMES only, never a credential
+├── journal.ndjson    # committed — append-only change log; `guild rebuild` replays it
+├── export/           # committed — GENERATED markdown snapshot, one file per requirement
+├── guild.db          # gitignored — the board itself (Turso/SQLite), DERIVED state
+├── docs/  qa/        # evergreen knowledge base and QA artifacts
+└── reviews/          # per-requirement review reports
 ```
+
+The board is a **database**: there is no `BOARD.md`, no ticket file and no status directory — an artifact's status is a **column**, and the "board" is a live view rendered from SQL. Local mode needs no account, token or network; it does need the `tursodb` binary, and `guild init` prints the one-line installer if it is missing. Cloud mode is deliberately refused for now.
+
+Delete `guild.db` at any time and run `guild rebuild` — the committed journal is the durable record.
 
 Open a Claude Code session in your project and say:
 
@@ -120,6 +135,8 @@ check in
 ```
 
 The guild will greet you, create the board, and ask what you want to work on.
+
+> **Upgrading from a v4 guild?** `guild init` **moves** the old directory board to `.guild/v4-archive/` — never deletes, never parses — and there is no history import. `.guild/docs/` and `.guild/qa/` carry over because they are evergreen. Unfinished v4 work is re-entered through `new requirement`, reading the archived plan.
 
 ### Creating Requirements
 
@@ -143,11 +160,13 @@ or with inline context:
 I need a feature: dark mode toggle for the settings page
 ```
 
-The guild spawns a `product-owner` agent to interview you, gather full details, and write a structured requirement document (`REQ-NNN.md`). All planning and implementation flows from that document — you do not need to write it manually.
+`guild:new-requirement` runs a **live 3-way interview**: the `product-owner` and the `architect` are spawned directly (not queued as tickets), both relay their questions through the orchestrator, and by the time the skill returns the requirement, the implementation plan and every developer / test-planner / reviewer ticket already exist on the board. You do not write the requirement document manually.
 
-> Multiple requirements can be queued. The guild exhausts all product-owner tasks (requirement gathering) before dispatching any architect tasks, ensuring every requirement is fully specified before planning begins.
+Between the two, the guild offers to place the requirement on a **phase** — an existing one, a new phase, a new goal *and* its first phase, or left unaffiliated. Direction is yours to set: no agent creates a goal or a phase on its own.
 
-### Checking In and Auto-Continue
+> Multiple requirements can be queued. Each is fully planned at the moment it is filed, so the board only ever holds work that is ready to run.
+
+### Checking In
 
 **Checking in** resumes the guild exactly where it left off. Run it at the start of each session:
 
@@ -155,68 +174,78 @@ The guild spawns a `product-owner` agent to interview you, gather full details, 
 check in
 ```
 
-The guild reports status — in-progress tasks, recent completions, backlog, and requirement progress — then asks what to do next:
+It opens with the **brief** — direction, what is in flight and for how long, open bugs, quality areas due for inspection, what moved since last time, and what the CLI would hand out next:
 
 ```
-Guild Check-in
-==============
+Guild Brief
+===========
 
-In Progress:
-  TASK-003: Implement auth service (developer) — since 2026-04-07
+Generated: 2026-08-14T02:59:04Z
+Since:     2026-08-13 (last check-in)
+Next:      TASK-004
+Summary:   2 requirement(s), 0 done · 1 in flight · 2 open bounty(ies) · 1 open bug(s) (1 critical)
 
-Backlog (2 tasks):
-  TASK-005: Implement login endpoint (developer) — high priority
-  TASK-006: Plan payment feature (architect) — medium priority
+Direction:
+  GOAL-001  [p1 in-progress]  Ship the notifications overhaul  ·  on PHASE-002 Preferences UI  ·  0/2 req done
 
-Requirements:
-  REQ-001: User Authentication — in-progress (3/6 done)
+In Flight:
+  TASK-004  Build the preferences API  ·  developer  ·  REQ-002  ·  just now
 
-What would you like to do?
-  1. Continue working through the backlog
-  2. Add a new requirement
-  3. Review completed work in detail
-  4. Adjust priorities or tasks
+Bugs:
+  BUG-001  critical  open  Preference toggles silently revert after save  ·  found by qa-tester
 ```
 
-After each task completes, the guild asks whether to continue. Respond with **"continue all"** to activate auto-continue mode:
+A section with nothing in it is not printed — an absent section is good news stated by its absence.
 
-```
-Continue to next task? (yes / no / details / continue all)
-> continue all
-```
+A **work-intent** phrase ("let's get to work", "start working", "continue") resumes immediately with zero routing questions. An ambiguous one ("check in", "standup", "I'm here") asks once: continue working / new requirement / review completed work / adjust the backlog.
 
-In auto-continue mode the guild skips the prompt between tasks and runs the full backlog autonomously, printing one-line status updates as each task finishes:
+From there the work cycle **flows continuously** — one-line updates between tickets, pausing only on a failure, an escalation, or a completed requirement:
 
 ```
 TASK-003 done: Implement auth service → 2 follow-ups created
 TASK-005 done: Implement login endpoint → 1 follow-up created
 ```
 
-Auto-continue stops when the backlog is empty or a task is blocked and needs your input.
+Development runs in **parallel waves** by default: the architect groups dev tickets whose file sets it has verified disjoint, and the orchestrator dispatches each wave concurrently in the shared working tree.
+
+### Reading the board without starting work
+
+```
+guild status          # → the guild:brief skill; narrates the same brief, read-only
+show me the dashboard # → .guild/dashboard.html: six views, offline, no server
+```
+
+The dashboard is one self-contained file — all CSS and JS inline, deterministic bytes — with Roadmap, Board, Graph, Bugs, Coverage and Activity views. (The Graph view is Stage 4 and says so rather than drawing an empty chart.)
 
 ### Skills Reference
 
 | Skill | What it does | Trigger Phrases |
 |-------|-------------|----------------|
-| `guild:check-in` | Start or resume a work session, report status, drive the work cycle | "check in", "clock in", "let's get to work", "I'm here" |
-| `guild:new-requirement` | Add a new requirement and queue a product-owner task to gather details | "new requirement", "I need a feature", "I want to build" |
-| `guild:guild-status` | Read-only board view — no work is dispatched | "guild status", "show the board", "what's on the board" |
+| `guild:check-in` | Start or resume a work session, open with the brief, drive the work cycle | "check in", "clock in", "let's get to work", "I'm here" |
+| `guild:brief` | The narrated read of the board — direction, in flight, bugs, what moved, what's next. Read-only | "guild status", "what's the status", "show the board", "where are we", "what changed" |
+| `guild:dashboard` | Build and open `.guild/dashboard.html` — six views, offline, self-contained | "the dashboard", "show the roadmap", "visualize the board", "the activity feed" |
+| `guild:new-requirement` | Live 3-way interview (product-owner + architect + you) that leaves a planned, ticketed requirement on the board | "new requirement", "I need a feature", "I want to build" |
+| `guild:qa` | Seed the independent QA discipline — risk-mapped coverage, e2e regression specs, bugs filed as rows | "QA the product", "run a QA pass", "build comprehensive e2e tests" |
 | `guild:comprehensive-review` | Run all 4 reviewers in parallel against recent changes | "review my changes", "run comprehensive review", "check all my code" |
-| `guild:clear-board` | Wipe all tasks, requirements, and plans (asks for confirmation) | "clear the board", "reset the guild", "start fresh" |
+| `guild:clear-board` | Inventories the board and explains that v5 has no delete command yet (it refuses rather than pretending) | "clear the board", "reset the guild", "start fresh" |
 | `guild:create-workflow` | Interactively design and generate automation workflows (GitHub Actions, scripts, Makefiles) | "create a workflow", "generate a workflow", "add a GitHub Actions workflow", "set up automation" |
 | `guild:discuss` | Summarize conversation context and facilitate focused topic discussions | "discuss", "let's discuss", "discuss [topic]", "summarize the context", "what are we working on" |
-| `guild:release` | Stamp CHANGELOG, archive completed requirements, create git tag | "cut a release", "ship it", "tag a version" |
+| `guild:release` | Stamp CHANGELOG, snapshot completed requirements from the export, create git tag | "cut a release", "ship it", "tag a version" |
 | `guild:verify-and-fix` | Diagnose an error end-to-end and apply a test-driven fix | "check this error", "I have a bug", "debug this", "this is broken" |
+| `guild:guild-status` | Deprecated alias for `guild:brief`; claims no trigger phrases | typed `/guild:guild-status` only |
 
 ### Agents
 
 | Agent | Role |
 |-------|------|
-| `guild:product-owner` | Interviews user, gathers requirements, writes REQ document |
-| `guild:architect` | Reads REQ, explores codebase, writes PLAN, declares dev tasks |
+| `guild:product-owner` | Interviews the user live, writes the requirement record |
+| `guild:architect` | Reads the REQ, explores the codebase, writes the PLAN, creates every downstream ticket |
 | `guild:developer` | Implements code per plan and requirement |
 | `guild:developer-svelte` | Svelte 5 / SvelteKit specialist — used when tasks touch `.svelte`, `+page.*`, `+layout.*`, `+server.*` files |
-| `guild:test-writer` | Writes and runs unit tests after all dev tasks complete |
+| `guild:test-planner` | Inventories the implemented diff and writes the test plan |
+| `guild:test-writer` | Implements the test plan — unit and integration tests |
+| `guild:qa-strategist` | Maps product risk into `coverage` rows and declares QA missions |
+| `guild:qa-tester` | Runs the real app, authors e2e specs, files defects as `bug` rows |
 | `guild:product-reviewer` | Verifies implementation satisfies plan requirements |
 | `guild:reviewer-security` | Security vulnerabilities, OWASP Top 10 |
 | `guild:reviewer-architecture` | Plan alignment, patterns, separation of concerns |

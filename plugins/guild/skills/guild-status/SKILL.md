@@ -1,81 +1,33 @@
 ---
 name: guild-status
 description: >
-  This skill should be used when the user asks for "guild status", "board status",
-  "show the board", "what's on the board", "project status", "show guild",
-  "guild board", or "what's happening". Shows a quick read-only view of the guild
-  board without starting the work cycle.
-version: 2.0.0
+  Deprecated alias — the v4 name for what is now guild:brief. It claims NO natural-language
+  trigger phrases; "guild status", "board status", "what's happening", "project status" and
+  every other status phrasing belong to guild:brief and must route there. Invoke this only
+  when the user explicitly types the old slash command /guild:guild-status.
+version: 5.0.0
 user-invocable: true
 ---
 
-# Guild Status — Quick Board View
+# guild-status → guild:brief
 
-Display the current state of the guild board without starting a work session.
+This skill was rebuilt as **`guild:brief`** in v5 (design §10). v4's status was "list the
+directories"; `guild brief` is one query that answers direction, what is in flight, what is
+blocked, what moved since the last check-in, open bugs, coverage due for inspection, and
+what to do next.
 
-## Steps
+**Do this now:** load the `guild:brief` skill and follow it. Do not re-implement it here,
+and do not run `guild board` as a substitute — `board` is still a real command and still
+correct, but it shows tasks and requirements only, which is the narrower view this skill
+used to offer.
 
-### 1. Check for Guild
+Mention the new name once, in passing, so the next invocation goes straight there:
 
-Check for `.guild/config.yaml` — that is what marks a v5 guild (there is no `state.yaml`).
+> (`guild:brief` is what this is called now.)
 
-If not found:
-```
-No guild board found. Run /guild:check-in to initialize and start your first work session.
-```
-Stop here.
+## Why this file still exists
 
-### 2. Render the Board Live
-
-The board is a live view rendered by the CLI scanning the status directories — there is no stored
-board file. Bind the CLI and run `board`:
-
-```bash
-GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
-"$GUILD" board
-```
-
-`guild board` already groups **In Progress**, **Backlog**, **Recently Completed**, and any
-**Failed** tasks, lists **Requirements** with their `done/total` progress, and prints the
-**Last check-in** date. It does not modify anything.
-
-### 3. Display Status
-
-Present the `guild board` output to the user. A typical rendering:
-
-```
-Guild Board
-===========
-
-In Progress ({count}):
-  TASK-003: Implement auth service (developer)
-  TASK-004: Review database schema (reviewer)
-
-Backlog ({count}):
-  TASK-005: Implement login endpoint (developer)
-  TASK-006: Plan tests for payment feature (test-planner)
-
-Recently Completed ({count}):
-  TASK-002: Implement payment service (developer)
-  TASK-001: Implement payment webhook (developer)
-
-Requirements:
-  REQ-001: User Authentication — in-progress (3/6 done)
-  REQ-002: Payment Integration — todo (0/1 done)
-
-Last check-in: 2026-04-07
-```
-
-If the board is empty:
-```
-Guild Board
-===========
-
-The board is empty. Run /guild:check-in to start a work session.
-```
-
-## Rules
-
-- **Read-only** — `guild board` only reads; never run a mutating guild command from this skill, and never touch `.guild/guild.db` or `.guild/journal.ndjson`
-- **No work execution** — just display status and stop
-- **Keep it brief** — this is a quick glance, not a full check-in
+Only to keep the typed slash command `/guild:guild-status` working. It deliberately carries
+**no trigger phrases** — they all moved to `guild:brief`'s description. Two skills
+advertising "guild status" would make every status request a coin flip between them, and
+the whole point of the rename is that one of the two answers is better.

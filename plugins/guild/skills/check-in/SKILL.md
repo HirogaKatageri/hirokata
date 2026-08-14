@@ -2,11 +2,13 @@
 name: check-in
 description: >
   This skill should be used when the user says "check in", "clock in", "standup",
-  "guild check in", "what's the status", "let's get to work", "start working",
+  "guild check in", "let's get to work", "start working", "continue working",
   "daily standup", "guild standup", "I'm here", "reporting in", or any phrase
   indicating they want to begin or resume a guild work session. Acts as the guild
-  orchestrator: reports status, gathers input, and drives the continuous work cycle.
-version: 4.0.0
+  orchestrator: opens with the guild brief, gathers input, and drives the continuous
+  work cycle. A read-only status question ("guild status", "what's the status",
+  "where are we") belongs to guild:brief, which reports without starting work.
+version: 5.0.0
 user-invocable: true
 ---
 
@@ -18,8 +20,8 @@ dispatch tasks to agents, materialize follow-ups, and drive the continuous work 
 **Reference documents — load on demand, not upfront.** This skill is self-sufficient for the hot
 path (Steps 1–4). Read a reference only when its trigger fires:
 - `references/state-format.md` — when the `.guild/` layout itself is in question
-- `references/task-lifecycle.md` — when a follow-up line carries an unrecognized modifier, or a
-  ticket/requirement/plan file must be scaffolded or repaired by hand (the CLI normally does this)
+- `references/task-lifecycle.md` — when a follow-up line carries an unrecognized modifier, or you
+  need the ticket lifecycle and status vocabulary in full
 - `references/agent-chains.md` — when routing a flow Step 3 doesn't cover (research-first,
   bug-fix, QA seeding) or you need chain rationale
 
@@ -28,7 +30,7 @@ path (Steps 1–4). Read a reference only when its trigger fires:
 `"$GUILD" move`. IDs and the cursor are derived in SQL. `last-checkin` is a row, stamped by
 `"$GUILD" checkin`. **Nothing hands out a writable path** — `guild path` is gone, because
 `guild export` regenerates `.guild/export/` wholesale and anything edited there is discarded. You
-read with `read`/`meta`/`slice` and write with `move`/`retitle`/`checkin`/`new`; agents write with
+read with `read`/`meta` and write with `move`/`retitle`/`checkin`/`new`; agents write with
 `log`/`finding`. The board is rendered live. **Development runs in parallel by default**: the architect groups dev tickets into
 `parallel-group` waves (verified disjoint files) that dispatch concurrently; an ungrouped ticket
 runs solo. Reviews fan out 4-wide.
@@ -57,13 +59,14 @@ GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
 | Expand a parallel-group dev batch | `"$GUILD" batch TASK-NNN` → the TASK IDs to dispatch together |
 | Dispatch / complete / fail / retry | `"$GUILD" move TASK-NNN in-progress\|done\|failed\|todo` |
 | Create a follow-up task | `"$GUILD" new task --title "…" --agent A --req REQ-NNN [--plan PLAN-NNN] [--plan-slice slug] [--parallel-group L]` |
-| Read a ticket / plan slice | `"$GUILD" read ID` · `"$GUILD" slice PLAN-NNN slug` (there is no `path`) |
+| Read a ticket | `"$GUILD" read ID` (there is no `path`, and `slice` has no writer — the brief lives in the ticket's `## Objective`) |
 | Fold an agent's reports into the board | `"$GUILD" spool drain TASK-NNN` — run before reading a ticket back |
 | Stamp the check-in date | `"$GUILD" checkin {today}` |
 | Retitle a ticket | `"$GUILD" retitle ID "New title"` |
 | Ticket metadata only (dispatch) | `"$GUILD" meta ID [field]` — frontmatter without the body |
 | Mark a requirement done | `"$GUILD" move REQ-NNN done` |
-| Render the board | `"$GUILD" board` |
+| Report status at check-in (Step 2) | `"$GUILD" brief` — direction, in flight, bugs, what moved, `Next:` |
+| Render the board (Step 4 wrap-up) | `"$GUILD" board` |
 | List tickets (awk-filterable) | `"$GUILD" list task [status]` → `<ID> <status> <agent> <req>` |
 
 Never hand-roll `find`/`mv`/ID arithmetic, and **never touch `.guild/guild.db` or
@@ -125,45 +128,90 @@ Check for `.guild/config.yaml` — that file, not `state.yaml`, is what says a v
 
 ## Step 2: Report & Route
 
-Render the board with `"$GUILD" board` and present it as a normal message (it already groups In
-Progress / Backlog / Recently Completed / Requirements and shows the last check-in):
+Run **`"$GUILD" brief`** — not `"$GUILD" board`. The brief is the daily surface (design §10): one
+query that answers direction, what is in flight and for how long, open bugs, what moved since the
+last check-in, and what the CLI would hand out next. `board` is still a correct command and Step 4
+still uses it for the wrap-up, but it lists tasks and requirements only — it cannot tell you a
+critical bug is open, that a task has been in flight for seven days, or which goal the work serves.
+
+```bash
+"$GUILD" brief
+```
+
+Real output, captured from a live board:
 
 ```
-Guild Board
+Guild Brief
 ===========
 
-In Progress:
-  TASK-003: Implement auth service (developer)
+Generated: 2026-08-14T02:59:04Z
+Since:     2026-08-13 (last check-in)
+Next:      TASK-004
+Summary:   2 requirement(s), 0 done · 1 in flight · 2 open bounty(ies) · 1 open bug(s) (1 critical) · 0 area(s) due for inspection · 29 event(s) since
+           1 failed task(s) · 2 unresolved review finding(s)
 
-Backlog:
-  TASK-005: Write unit tests for auth (test-writer)
-  TASK-006: Review auth implementation (reviewer)
+Direction:
+  GOAL-001  [p1 in-progress]  Ship the notifications overhaul  ·  on PHASE-002 Preferences UI  ·  0/2 req done
 
-Recently Completed:
-  TASK-002: Implement signup endpoint (developer)
-  TASK-001: Implement login endpoint (developer)
+In Flight:
+  TASK-004  Build the preferences API  ·  developer  ·  REQ-002  ·  just now
 
-Requirements:
-  REQ-001: User Authentication — in-progress (3/6 done)
+Open Bounties:
+  TASK-005  Wire the preferences page  ·  developer-svelte  ·  REQ-002  ·  p3
+  TASK-006  Plan tests for notification preferences  ·  test-planner  ·  REQ-002  ·  p3
 
-Last check-in: 2026-04-07
+Bugs:
+  BUG-001  critical  open  Preference toggles silently revert after save  ·  found by qa-tester
+
+Since Last Check-in:
+  2026-08-14T02:58:19Z  orchestrator  moved  task TASK-001  Build the delivery worker  ·  in-progress → done
+  2026-08-14T02:58:20Z  reviewer-security  logged  task TASK-003  Review the delivery worker  ·  Verdict: CHANGES REQUESTED — 1 major.
+  2026-08-14T02:58:20Z  reviewer-security  filed  task TASK-003  Review the delivery worker  ·  major: Unsigned callback token accepted
+  2026-08-14T02:58:58Z  orchestrator  moved  task TASK-007  Migrate legacy preference rows  ·  in-progress → failed
+  2026-08-14T02:58:59Z  orchestrator  created  bug BUG-001  Preference toggles silently revert after save  ·  {"severity":"critical","requirement_id":"REQ-002"}
+  … and 6 more
 ```
 
-**Empty board** (board shows no tasks and no requirements): skip the route question. Tell the user
-the board is empty and that they can say "new requirement" (or run `/guild:new-requirement`) to
-start one. **Do not auto-invoke it** — the interview is a live, multi-agent session and should only
-start when the user actively engages, not silently on an empty board. If they respond right there
-with a description of work, invoke `guild:new-requirement` with it as context and proceed to
-**Step 3**; otherwise there's nothing actionable — go to **Step 4**.
+(The activity block above is trimmed for this sample — the command prints up to 25 rows before its
+own `… and N more`. Only the sections with rows are printed; a board with no goals, no bugs and no
+coverage areas prints neither `Direction:` nor `Bugs:` nor `Coverage:`.)
+
+**Narrate it — do not paste the raw block.** Three or four lines is right at check-in (the user came
+here to work, not to read a report):
+
+- which goal/phase the work is serving, if `Direction:` printed;
+- what is in flight and for how long — an age in **days** on a task that normally takes hours is a
+  crashed dispatch, not work in progress; say so;
+- anything the `Summary:` line flags — open bugs worst-severity first (name every `critical` one),
+  failed tasks, unresolved review findings;
+- what moved since the last check-in, summarized by subject, not recited by timestamp. Each row
+  carries the subject's title, the actor that did it (`orchestrator` for board moves, the agent's
+  own name for the `logged`/`filed` rows a `spool drain` folded in) and, for a `moved` row, both
+  ends of the transition — so name agents and transitions rather than counting lines.
+
+`guild:brief` Step 4 is the fuller narration recipe if you want it — and it is the skill to hand
+the user if they ask for the whole picture rather than to start working.
+
+**Do not also run `"$GUILD" next` in this step.** The brief's `Next:` line is that same rule,
+already computed — one command, not two. (Step 3.1 still calls `"$GUILD" next` on every pass of the
+work cycle; the brief's value is only good for the first one.)
+
+**Empty guild**: `guild brief` prints its own short "the guild is empty" text with the next steps
+instead of any section. Relay it, skip the route question, and tell the user they can say "new
+requirement" (or run `/guild:new-requirement`) to start one. **Do not auto-invoke it** — the
+interview is a live, multi-agent session and should only start when the user actively engages, not
+silently on an empty board. If they respond right there with a description of work, invoke
+`guild:new-requirement` with it as context and proceed to **Step 3**; otherwise there's nothing
+actionable — go to **Step 4**.
 
 **Work intent — resume without asking.** If the invoking phrase expresses work intent ("let's get
-to work", "start working", "continue", or the user otherwise asked to work) AND the board has any
-in-progress or todo task, do NOT ask a routing question. Print the board plus one line —
-`Resuming: {output of "$GUILD" next} — say 'stop' or give new direction anytime.` — and go
+to work", "start working", "continue", or the user otherwise asked to work) AND the brief shows any
+in-flight or open-bounty task, do NOT ask a routing question. Give the short narration plus one line
+— `Resuming: {the brief's Next: task} — say 'stop' or give new direction anytime.` — and go
 straight to **Step 3**. This is the "continue where we left off" path: zero round-trips.
 
-**Otherwise** (ambiguous/status triggers like "check in", "standup", "what's the status", "I'm
-here", or nothing is actionable), call **AskUserQuestion** to route the session. Use a single
+**Otherwise** (ambiguous triggers like "check in", "standup", "I'm here", "reporting in", or
+nothing is actionable), call **AskUserQuestion** to route the session. Use a single
 question with these options (the tool always adds an "Other" choice for free-form input):
 
 - **Continue working** — pick up the next ticket and run the work cycle
@@ -178,8 +226,8 @@ Route on the selection:
 - **Review completed work** → read recently completed ticket files (`"$GUILD" read TASK-NNN`), show
   Work Log summaries, ask if anything needs rework. If rework needed, create new tickets (Step 3.4).
   Then **Step 3**.
-- **Adjust the backlog** → list it (`"$GUILD" list task todo`). Retitle by editing the ticket
-  file's `title` field; drop with `"$GUILD" move TASK-NNN failed` (note the reason in the ticket's
+- **Adjust the backlog** → list it (`"$GUILD" list task todo`). Retitle with
+  `"$GUILD" retitle TASK-NNN "New title"` — there is no ticket file to edit; drop with `"$GUILD" move TASK-NNN failed` (note the reason in the ticket's
   Work Log). Ordering is fixed ID order — to run something sooner or later, drop the ticket and
   recreate it with `"$GUILD" new task` (new IDs sort last). Then **Step 3**.
 - **Other** (user describes work directly, e.g., "fix the login bug") → invoke
@@ -191,8 +239,12 @@ This is the core of the guild. Execute this loop:
 
 ### 3.1 Find the Current Ticket
 
-Run `"$GUILD" next`. It returns `TASK-NNN <path>` for the next actionable ticket (resume any
-`in-progress` first, else the lowest-ID `todo`, with the `reviewer` review gate applied), or `none`.
+Run `"$GUILD" next`. It prints the **bare id** — `TASK-NNN` and nothing else — for the next
+actionable ticket (resume any `in-progress` first, else the lowest-ID `todo`, with the `reviewer`
+review gate applied), or `none`.
+
+There is no second column. v4 printed `TASK-NNN <path>`; v5 removed `guild path` outright, so an
+id is the whole answer — read the ticket with `"$GUILD" read TASK-NNN`.
 
 If it prints `none`: report "All caught up!" and go to **Step 4**.
 
@@ -208,7 +260,7 @@ If it prints `none`: report "All caught up!" and go to **Step 4**.
 3. Get each ticket's metadata with `"$GUILD" meta TASK-NNN` (frontmatter only — do NOT `guild read`
    the full ticket at dispatch; the agent reads its own ticket). You need the `agent`,
    `requirement`, `plan` and `plan-slice` fields. **Pass IDs, not paths** — there are no paths, and
-   the agent resolves what it needs itself with `guild read` / `guild slice`.
+   the agent resolves what it needs itself with `guild read`.
 4. Spawn with the **Agent tool** — a single call for a solo ticket; for a parallel-group batch, **one
    Agent call per ticket in the same message** so they run concurrently. Each agent's own definition
    carries its close-out protocol; the prompt stays minimal:
@@ -219,7 +271,8 @@ If it prints `none`: report "All caught up!" and go to **Step 4**.
      prompt: "Your task is TASK-NNN. There are no ticket files — read it with:
                 GUILD=\"${CLAUDE_PLUGIN_ROOT}/scripts/guild\"; \"$GUILD\" read TASK-NNN
               Requirement: REQ-NNN  (read it with `\"$GUILD\" read REQ-NNN`)
-              Plan: PLAN-NNN, slice `{slug}`  (read it with `\"$GUILD\" slice PLAN-NNN {slug}`)
+              Plan: PLAN-NNN  (your brief is your ticket's `## Objective`; do not run `slice` —
+              it has no writer)
               Today's date: {today's date}
 
               Record your progress as you go with
@@ -525,11 +578,15 @@ When the work cycle ends (user stops, or nothing actionable):
    only with `"$GUILD" move`.
 2. **The orchestrator owns all status transitions** — agents report done/failed and never move
    anything. Their only writes to the board are `guild log` and `guild finding`, into a spool.
-3. **No `BOARD.md`, no counters, no cursor field** — render the board live (`"$GUILD" board`); IDs and
-   the cursor are derived by the CLI.
-4. **Use the CLI for every deterministic op** — `next`, `batch`, `move`, `new task`, `read`,
-   `meta`, `slice`, `board`, `list`, `spool drain`, `checkin`, `retitle`. There is no `path`, and
-   no hand-rolled `find`/`mv`/ID math.
+3. **No `BOARD.md`, no counters, no cursor field** — every view is rendered live: `"$GUILD" brief`
+   for the Step 2 status report, `"$GUILD" board` for the Step 4 wrap-up. IDs and the cursor are
+   derived by the CLI.
+3a. **Status is reported with `brief`, not `board`** — the brief is the only surface that shows
+   direction, bugs, task age and what moved since the last check-in. Narrate it; never paste the
+   raw block as the whole answer.
+4. **Use the CLI for every deterministic op** — `brief`, `next`, `batch`, `move`, `new task`,
+   `read`, `meta`, `slice`, `board`, `list`, `spool drain`, `checkin`, `retitle`. There is no
+   `path`, and no hand-rolled `find`/`mv`/ID math.
 4a. **Drain before you read** — `"$GUILD" spool drain TASK-NNN` is what turns an agent's reports
    into board state. An undrained ticket reads as never-started, and Step 1.3 will reset it.
 5. **Parallel development by default** — the architect groups dev tickets into `parallel-group`

@@ -49,12 +49,18 @@ board later. Nothing you log is lost if you are interrupted mid-task.
 
 ### 2. Read the Plan Slice and Requirement
 
-- **Plan slice**: The `plan-slice` frontmatter field is a **slug** (e.g. `signup`), not a path. Resolve the slice file with the guild CLI, or read the path the orchestrator provided in the dispatch prompt:
+- **Your ticket is your primary brief.** Read it first:
   ```bash
   GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
-  "$GUILD" slice PLAN-NNN {slug}
+  "$GUILD" read TASK-NNN
   ```
-  This is your primary brief. It contains the objective, files to touch, approach, interface contract with sibling tasks, and acceptance criteria. Read this first — in most cases it's all the plan context you need.
+  Its `## Objective` carries the slice brief — objective, files to touch, approach, interface
+  contract with sibling tasks, and acceptance criteria. In most cases it is all the plan
+  context you need.
+- **Do not run `"$GUILD" slice`.** The `plan-slice` frontmatter field is a slug label, not a
+  readable document: no command writes `plan_slice` rows, so `slice` cannot succeed. The
+  architect writes the slice brief into this ticket's `--objective` at creation instead, which
+  is why the ticket is the brief.
 - **Full plan**: read it with `"$GUILD" read PLAN-NNN`. Do this ONLY if your slice references a cross-cutting decision or sibling task in a way you can't resolve from the slice alone. Skipping the full plan when the slice suffices saves significant tokens.
 - **Requirement**: read it with `"$GUILD" read REQ-NNN`. Do this ONLY if your slice's acceptance
   criteria or approach reference user stories or constraints you cannot resolve from the slice

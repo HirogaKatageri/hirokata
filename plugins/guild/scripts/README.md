@@ -160,7 +160,7 @@ archived plan for the details. `guild migrate` and the old flat-file format are 
 ## Module layout
 
 `scripts/guild` is the dispatcher and nothing else. Every command is a `cmd_*` function in
-one of five modules, each of which defines **functions only** — no top-level side effects,
+one of the modules below, each of which defines **functions only** — no top-level side effects,
 no `set -e` (the dispatcher owns that).
 
 | File | Owns |
@@ -168,9 +168,24 @@ no `set -e` (the dispatcher owns that).
 | `schema.sql` | The DDL. Idempotent, so re-applying it is a no-op. |
 | `lib/db.sh` | The driver: config, `db_exec`/`db_query`, `sql_str` / `sql_text`, JSON escaping, the spool, schema location |
 | `lib/journal.sh` | `journal_preflight`, `journal_append`, `journal_recover`, `journal_sync`, `journal_rebuild`, `journal_compact` |
-| `lib/artifacts.sh` | `new` / `read` / `meta` / `status` / `move` / `retitle` / `checkin` / `list` / `next` / `batch` / `slice` / `next-id` / `log` / `finding` / `spool drain` |
-| `lib/render.sh` | `board`, the markdown export, the JSON dump |
+| `lib/artifacts.sh` | `new` / `read` / `meta` / `status` / `move` / `retitle` / `checkin` / `list` / `next` / `batch` / `slice` / `next-id` / `log` / `finding` / `spool drain` — **and the shared primitives every module reuses**: the row-projection registry (`_art_json_row`), the create/update protocol runners, the `--date` rule, the neutralizer |
+| `lib/render.sh` | `board`, the markdown export, the JSON dump — **and the flattening/YAML/length-prefix helpers** the whole CLI escapes with |
+| `lib/direction.sh` | `goal`, `phase`, `req assign`: the layer above requirements |
+| `lib/records.sh` | `bug`, `doc`: defects and the evergreen knowledge base |
+| `lib/quality.sh` | `coverage`: the quality areas the QA discipline maps, and the inspection clock that makes "what is due" a query |
+| `lib/brief.sh` | `brief`: the structured briefing, text and JSON |
+| `lib/dashboard.sh` + `dashboard.tmpl.html` | `dashboard`: the six-view self-contained HTML page and the data it inlines |
 | `lib/init.sh` | `init`, v4 archival, docs/qa carry-over, `rebuild`, `journal` subcommands |
+
+**One answer per problem, and it lives in the module that owns it.** Stage 2 added four
+modules written independently, and the reconciliation that followed is a rule, not a
+one-off: there is exactly one row-projection registry (`_art_json_row`, which every
+journaled table is a case of), one create runner and one update runner for the
+`OK|…` / `MISS|…` protocol, one neutralizer (`_art_defuse_lines`, called with a different
+heading list per document kind), one shell-side flattener (`_render_flat_arg`), one
+`H key=<integer>` count transport shared by `brief` and `dashboard`, and one
+`${GUILD_ACTOR:-orchestrator}`. A second copy of any of them is the bug, not the
+duplication.
 
 **Portability rule.** The schema and every query must run on *both* engines — TursoDB
 (local) and libSQL (cloud). `STRICT` tables, `RETURNING`, WAL, `PRAGMA foreign_keys` and
@@ -194,6 +209,28 @@ regexes are not an acceptable fix here.
 | Command | Purpose |
 |---------|---------|
 | `guild init [--mode local] [--url-env N] [--token-env N] [--yes] [DATE]` | Create `config.yaml`, schema, journal, `spool/`, `export/`, `docs/`, `qa/`, `reviews/`; archive a v4 board; carry over `docs/` + `qa/`. Idempotent and resumable. `--mode cloud` is refused |
+| `guild goal new --title T [--body B] [--priority 1-5] [--date D]` | Create a goal; prints `<GOAL-ID> <title>` |
+| `guild goal list [status]` | `<GOAL-ID> <status> <priority> <phases-done>/<total> <title>`, by priority then ID |
+| `guild goal show <GOAL-ID>` | The goal, its phases, and their requirements, as markdown |
+| `guild goal move <GOAL-ID> <status>` | Set status to `todo`\|`in-progress`\|`done`; prints the ID |
+| `guild goal priority <GOAL-ID> <1-5>` | Reprioritize (1 highest); prints the ID |
+| `guild phase new --goal GOAL-NNN --title T [--ordinal N] [--date D]` | Create a phase; `--ordinal` is derived as `MAX+1` within the goal when omitted |
+| `guild phase list [--goal GOAL-NNN]` | `<PHASE-ID> <GOAL-ID> <ordinal> <status> <reqs-done>/<total> <title>` |
+| `guild phase move <PHASE-ID> <status>` | Set status to `todo`\|`in-progress`\|`done`; prints the ID |
+| `guild req assign <REQ-NNN> <PHASE-NNN\|none>` | Attach a requirement to a phase, or detach it; prints the REQ ID |
+| `guild bug new --title T [--body B] [--repro R] [--severity critical\|major\|minor] [--req REQ-NNN] [--found-by WHO] [--date D]` | File a defect; prints `<BUG-ID> <title>`. `--req` is optional |
+| `guild bug list [open\|fixing\|fixed\|wontfix] [--severity S]` | `<BUG-ID> <status> <severity> <req> <title>` (`null` req when unaffiliated) |
+| `guild bug show <BUG-ID>` | Render the bug as markdown, with a YAML frontmatter block |
+| `guild bug fix <BUG-ID> --task TASK-NNN` | Link the fix task and move the bug to `fixing`; prints the ID |
+| `guild bug close <BUG-ID> [--wontfix]` | Close as `fixed`, or as `wontfix`; prints the ID |
+| `guild coverage set <area-id> --area T [--risk high\|medium\|low] [--spec PATH] [--notes N]` | Upsert a quality area; prints `<area-id> <area>`. Preserves anything not passed, and **never** `last_inspected_at` |
+| `guild coverage inspect <area-id> [--date D]` | Stamp `last_inspected_at` — the only writer of the staleness clock; prints the ID |
+| `guild coverage list [--risk R] [--due]` | `<area-id> <risk> <last-inspected\|never> <spec\|none> <area>`; `--due` is `guild brief`'s own predicate |
+| `guild coverage show <area-id>` | Render the area as markdown, with a YAML frontmatter block |
+| `guild doc put <slug> --title T [--body B \| --file F] [--source S]` | Upsert a knowledge-base document; prints the slug |
+| `guild doc get <slug>` | Print the body **verbatim** — byte-exact, so `get > f` / edit / `put --file f` round-trips |
+| `guild doc list` | `<slug> <updated> <title>` |
+| `guild doc search <query>` | Case-insensitive substring search over title and body (`LIKE`; no FTS5 on TursoDB) |
 | `guild new req --title T [--desc D \| --body B] [--date D]` | Create a requirement; prints the ID |
 | `guild new task --title T --agent A --req REQ-NNN [--plan PLAN-NNN] [--plan-slice slug] [--parallel-group LABEL] [--objective O \| --body B] [--date D]` | Create a task; prints the ID |
 | `guild new plan --title T --req REQ-NNN [--desc D \| --body B] [--task TASK-NNN] [--date D]` | Create a plan; prints the ID |
@@ -212,6 +249,8 @@ regexes are not an acceptable fix here.
 | `guild next` | Print the next actionable `<TASK-ID>`, or `none` |
 | `guild batch <TASK-ID>` | Print all `todo`/`in-progress` task IDs sharing the task's `parallel-group` and `requirement`; a task with no group is a batch of one |
 | `guild board` | Render the live board |
+| `guild brief [--since YYYY-MM-DD] [--json]` | The structured briefing: direction, in flight, blocked, open bounties, bugs, coverage due, and what moved since the last check-in. Reads only |
+| `guild dashboard [--open] [--out PATH] [--json]` | Write a self-contained `.guild/dashboard.html` — roadmap, board, graph, bugs, coverage, activity. No server, no network, works offline |
 | `guild export [--json]` | Regenerate `.guild/export/*.md`, or dump board state as JSON |
 | `guild rebuild` | Replay `journal.ndjson` into a fresh database |
 | `guild journal compact [--force]` | Snapshot current state as a new baseline journal |
@@ -253,9 +292,24 @@ orchestrator's own input.
 
 - **No writer for `plan_slice`.** `guild slice` reads one; nothing creates one. The architect puts
   each slice brief in its developer ticket's `--objective` instead.
-- **No body writer after creation.** A document is written once, by `guild new … --body`.
+- **No body writer after creation.** A requirement, plan or task document is written once, by
+  `guild new … --body`. Two Stage 2 records are the exceptions and are re-writable in place:
+  `guild doc put` is an upsert, and `guild bug` has `fix` / `close`.
 - **No `guild clear` / `guild delete` / `guild archive`.** `guild:clear-board` refuses rather than
   no-op'ing, and `guild:release` snapshots the export instead of moving files.
+- **Stage 3–5 tables have no writers yet**, by design (design §13): `agent`,
+  `agent_capability`, `task_capability`, `capability_request`, `graph_node`, `graph_edge`,
+  `graph_deviation`, `gate`, `task_dependency`, `inspection`, `inspection_coverage`. They
+  exist in `schema.sql` so no stage needs a migration. (`coverage` is **not** on this list:
+  it is Stage 2 and has `coverage set` / `coverage inspect`. `inspection` is Stage 4's
+  record of an inspection *pass* over several areas, which is a different table.) `guild brief` and `guild dashboard`
+  already read several of them — the Roster Gaps section, the Blocked section's `waiting on`,
+  and the dashboard's Graph view are wired and simply empty, which is why the Graph view says
+  so rather than drawing a blank chart.
+- **`guild export --json` still dumps Stage 1's tables only** (state, requirements, plans,
+  slices, tasks, work log, findings). The dashboard does not read it — `guild dashboard --json`
+  is its own document, with goals, phases, bugs, coverage and the activity feed. Two JSON
+  surfaces with different scopes, one deliberately frozen as the Stage 1 snapshot.
 
 ### The agent write path (`log` / `finding` / `spool drain`)
 
@@ -317,6 +371,225 @@ The **orchestrator** (the check-in skill) owns every status transition:
 Sub-agents do **not** move their own work and do **not** write to the database. They do their
 work, report with `guild log` / `guild finding`, and let the orchestrator drain the spool and move
 the row. (Agents read inputs with `guild read` / `guild meta` / `guild slice`.)
+
+## Direction and records: goals, phases, bugs, coverage, docs
+
+Five tables that shipped in `schema.sql` with Stage 1 and got their writers in Stage 2 —
+`goal` and `phase` in `lib/direction.sh`, `bug` and `doc` in `lib/records.sh`, `coverage` in
+`lib/quality.sh`. No migration was needed for any of them; the commands and the presentation
+are the new part.
+
+### Goals and phases sit *above* requirements
+
+```
+goal ──< phase ──< requirement ──< plan ──< plan_slice
+```
+
+A **goal** is long-lived intent with a priority (1 highest … 5 lowest). A **phase** is an
+ordered stage of one goal; `--ordinal` is derived as `MAX(ordinal) + 1` within that goal
+when you omit it, and passing it explicitly is how you insert a phase between two existing
+ones. Nothing forces a goal's ordinals to be unique or contiguous — renumbering the rest to
+keep them so would be several writes hiding inside one command — and every ordering breaks
+ties by ID, deterministically.
+
+```bash
+G=$("$GUILD" goal new --title "Ship the visibility stage" --priority 2)   # → GOAL-001 Ship …
+"$GUILD" phase new --goal GOAL-001 --title "Foundations"                  # → PHASE-001 …
+"$GUILD" phase new --goal GOAL-001 --title "Visibility"                   # → PHASE-002 …
+"$GUILD" req assign REQ-003 PHASE-002
+"$GUILD" goal show GOAL-001            # the goal, its phases, and their requirements
+```
+
+**`requirement.phase_id` is nullable by design and stays that way.** Unaffiliated work is
+legal — a bug fix, a chore, anything a user files directly — so there is no
+`guild new req --phase`, nothing validates that a requirement *has* a phase, and
+`guild req assign REQ-003 none` detaches one again. Without that escape hatch the first
+assignment would permanently remove a requirement from the unaffiliated pool, which would
+make "unaffiliated work is legal" true only until someone filed it under a goal by mistake.
+
+Goals and phases have their **own** verbs (`guild goal move`, `guild phase move`) rather
+than joining `guild move`, whose v4-parity status sets and error text are pinned. Their
+status set is `todo | in-progress | done` — deliberately not widened; `blocked`, `waived`
+and an "abandoned" goal belong to later stages, and a status the CLI can write but nothing
+renders is worse than no status at all. Per design §14, goals and phases **do not gate**:
+they organize and prioritize, and the only two gates in v5 are on the requirement.
+
+`guild read GOAL-001`, `guild list goal` and friends do not silently fail — they name the
+command that does the job, because two verb families guarantee that mix-up.
+
+### Bugs are rows, not prose
+
+```bash
+B=$("$GUILD" bug new --title "Login 500s on refresh" --severity critical \
+      --repro "$(cat <<'R'
+1. log in
+2. wait for the token to expire
+3. refresh
+R
+)" --found-by qa-tester)                       # --req REQ-NNN is OPTIONAL
+
+T=$("$GUILD" new task --title "Fix token refresh" --agent developer --req REQ-003)
+"$GUILD" bug fix "$B" --task "$T"              # links the fix task, moves the bug to `fixing`
+"$GUILD" bug close "$B"                        # or: --wontfix
+```
+
+`--req` is optional **and that is the point**: bugs are found outside a requirement's scope
+all the time — during a QA pass, in production, by a reviewer reading unrelated code — and a
+tracker that cannot record one until somebody invents a requirement for it is a tracker
+people route around.
+
+`wontfix` is a real outcome, not a lesser `fixed`. "We looked, and we are choosing not to"
+is the answer a triage pass most needs to record, and collapsing it into `fixed` would make
+"what is still actually broken?" unanswerable from the board.
+
+The fix task is **not** created by `bug fix`. The orchestrator files it with
+`guild new task` and links it, which keeps the "orchestrator owns every transition" rule
+intact.
+
+Both filters on `bug list` are validated, unlike `guild list`'s status: `open | fixing |
+fixed | wontfix` and `critical | major | minor` are closed, small vocabularies, so a typo is
+a typo and saying so beats printing nothing.
+
+### Coverage is the risk surface and its clock
+
+```bash
+"$GUILD" coverage set checkout-flow --area "Checkout & payment" --risk high \
+      --spec e2e/checkout.spec.ts --notes "card + wallet paths; 3DS not covered"
+"$GUILD" coverage inspect checkout-flow          # ← the ONLY writer of the clock
+"$GUILD" coverage list --due                     # what nobody has looked at lately
+```
+
+`guild init` seeds this table from a v4 `.guild/qa/` charter, and Stage 2 gave it the two
+writers that make it live: the `qa-strategist` maps areas with `coverage set`, and the
+`qa-tester` stamps `coverage inspect` on the areas it actually drove.
+
+- **`set` is an upsert keyed on the area id**, and it preserves anything not passed —
+  a cadence re-run that retypes an area's risk must not fork a near-duplicate row (which
+  would double-count every "due" answer). Both filters are validated against closed
+  vocabularies (`high | medium | low`).
+- **`set` never touches `last_inspected_at`.** Planning an area is not inspecting it.
+  Letting an upsert stamp the clock would make an area nobody has opened in three months
+  look freshly inspected because somebody edited its notes — which is the one failure this
+  table exists to prevent.
+- **`--due` is `guild brief`'s own predicate, called rather than restated**
+  (`_brief_coverage_where`): never inspected, or stale past a risk-weighted threshold —
+  high after 14 days, medium after 30, low after 90. An unrecognized risk value falls to
+  the medium threshold rather than vanishing from the answer.
+
+### Docs are the evergreen knowledge base
+
+Slug-keyed, and load-bearing: `guild init` carries a v4 `.guild/docs/` tree into this table,
+it survives releases and board resets, and **the architect reads it when planning**.
+
+```bash
+"$GUILD" doc put sveltekit-form-actions --title "SvelteKit form actions" --file notes.md
+"$GUILD" doc get sveltekit-form-actions > notes.md    # edit it, then put it back
+"$GUILD" doc search "form action"
+```
+
+- **`--file` is the real workflow**, and it exists because `--body "$(cat notes.md)"` loses
+  every trailing newline to command substitution and mangles anything that looks like a
+  flag. The CLI reads the file itself, verbatim.
+- **`doc get` round-trips byte for byte.** `-m list` terminates every row with exactly one
+  LF, and that byte is the driver's, not the document's — so the read drops exactly one
+  byte. Get it wrong and the researcher's `get → edit → put` cycle grows a blank line *per
+  cycle, forever*.
+- **The body is stored verbatim** — neither flattened nor neutralized. A doc is a whole
+  markdown document that legitimately contains `---`, its own front matter and fenced code,
+  and the only surface that emits a body is `doc get`, which prints it alone with no
+  frontmatter, no headings and no markers. A channel with no structural token cannot be
+  forged, so neutralizing here would corrupt real documents to defend against nothing. The
+  metadata lives on the columnar surface (`doc list`) instead.
+- **`search` is `LIKE`, not a full-text index.** FTS5 does not exist on TursoDB (§3.0), and
+  the Tantivy-backed replacement is experimental — an index-backed search would work on the
+  cloud engine and fail on the default local one, which is the worst possible split. The
+  query's `%` and `_` are escaped so they are literal: a search for `100%` that matched
+  every document would be a wrong answer reported as a result, which in a knowledge base is
+  exactly where it gets believed.
+
+`doc put` is an **upsert**, so it requires `--body` or `--file`: filing a slug with no body
+would overwrite an existing document's contents with nothing. An omitted `--source` on an
+update keeps the existing one rather than clearing it.
+
+### Every one of these is journaled, and every one writes an `event`
+
+`guild brief`'s "Since Last Check-in" section and the dashboard's Activity feed are both
+built on the `event` table, so a mutation that records no event is invisible to the entire
+reason Stage 2 exists. Each command here writes its `event` row **in the same SQL script**
+as the mutation — before the `UPDATE`, so the payload can carry both ends of a transition —
+and `journal_append`s the resulting row afterwards, exactly as `guild move` has always done.
+
+## The brief
+
+`guild brief` is one query behind eight sections — Direction, In Flight, Blocked, Open
+Bounties, Bugs, Coverage, Since Last Check-in, Roster Gaps — plus a header carrying
+`Next:` (byte-identical to `guild next`'s answer, by construction: the same predicate is
+written once and used by both) and a `Summary:` line composed entirely from `COUNT()`
+results. `--json` emits the same state as a document; `--since YYYY-MM-DD` overrides the
+cutoff, which otherwise comes from `guild_state.last-checkin`.
+
+**It mutates nothing** — no journal line, no `event` row. That is not an oversight of the
+"journal every mutation" rule: reading the board is not a change to it, and a brief that
+logged itself would pollute the very feed its activity section reads. `guild checkin` is
+the one writer that moves the cutoff.
+
+A section with no rows is **not printed**. An absent section is good news stated by its
+absence; eight `(none)` blocks are a wall, not a briefing. An entirely empty guild gets a
+short "nothing is on the board yet" with the three next steps, composed from the counts
+rather than from a queried string.
+
+Free text is **clipped** with an ellipsis in both modes — the harness proves a 500 KB
+requirement body round-trips, and one such title would otherwise be the whole document. The
+byte-exact value is one round trip away in `guild meta <ID> title`.
+
+The text surface puts one fact per line (`M since=…`, `H bugs_open=3`) rather than
+`key=v key=v` on a shared line. That is `_render_col`'s finding one surface over:
+flattening turns a newline into a *space*, so on a space-delimited surface the injection
+just moves one field right — `--since 'x source=arg next=TASK-999'` overwrote two other
+fields, and a benign two-word value silently truncated itself. Removing the shared boundary
+is the fix; with one fact per line the only structural token is `key=` at the start of a
+line, and a flattened value can never begin one.
+
+## The dashboard
+
+`guild dashboard` writes `.guild/dashboard.html`: one file, all CSS and JS inline, the board
+data inlined as JSON. No server, no build step, no network — it works offline and from
+`file://`. `--open` hands it to `open` / `xdg-open` and **never fails the command** when
+neither exists. `--json` prints the inlined document and writes nothing.
+
+Seven views (design §9): **Roadmap** (goals → phases → requirements, with live progress),
+**Board** (tasks by status, coloured by priority), **Graph** (the execution graph — Stage 4
+fills `graph_node`/`graph_edge`, so until then this view says so rather than drawing an
+empty chart), **Bugs**, **Findings** ("what did reviewers flag that we never fixed?" —
+grouped by severity, unresolved first, with the resolved ones one filter away),
+**Coverage** ("what has nobody looked at in a month?") and **Activity** (the `event` feed).
+
+Every summary tile is an anchor to the view behind it, and that is a rule rather than a
+decoration: a headline number with no list under it names nobody, which is exactly the v4
+failure mode `review_finding` was made a table to end. The href is a same-document fragment
+built from a fixed literal — the page still fetches nothing.
+
+**Inlining data into HTML is an injection channel, and the structural token is `<`.** It is
+the one byte that can end the `<script type="application/json">` element the data sits in —
+and `</script>` is a perfectly legal JSON *string*, so a JSON encoder alone is not a defense.
+Three layers, each sufficient alone:
+
+1. every row is emitted by the engine's `json_object()`, which escapes quotes, backslashes,
+   newlines and control characters;
+2. every `<`, `>` and `&` in the finished document is then rewritten as `<`, `>`
+   and `&`. This is lossless because **none of those bytes appears in a JSON structural
+   token**, so every occurrence is necessarily inside a string — and the emitted document
+   therefore contains no `<` byte at all, which is what makes "cannot close the element" a
+   property rather than a hope;
+3. the page renders every value with `textContent`. `innerHTML`, `insertAdjacentHTML`,
+   `document.write`, `eval` and `new Function` appear nowhere in the template, and the
+   harness greps the generated file to keep it that way.
+
+**The output is deterministic** — the same state produces byte-identical bytes, so the file
+diffs cleanly if it is committed (`init` gitignores it by default). Nothing embeds a wall
+clock: the file carries only stored timestamps, and every "3 days ago" is computed in the
+browser at view time. `dashboard.tmpl.html` is a generated-page template with exactly one
+`@@GUILD_DASHBOARD_DATA@@` line; `$GUILD_DASHBOARD_TEMPLATE` overrides its location.
 
 ## Durability
 
@@ -405,6 +678,8 @@ TASK=$("$GUILD" next)                        # e.g. TASK-001 — a bare ID, no p
 
 "$GUILD" checkin 2026-06-25                  # stamp the session
 "$GUILD" board                               # live status
+"$GUILD" brief                               # the narrated read: direction, blockers, what moved
+"$GUILD" dashboard --open                    # the same, as one offline HTML page
 "$GUILD" export                              # refresh the committed snapshot
 
 # Recovery: the database is derived; the journal is the truth

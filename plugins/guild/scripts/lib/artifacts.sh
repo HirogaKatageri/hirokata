@@ -72,6 +72,24 @@ art_table() {
     req | REQ) printf 'requirement\n' ;;
     task | TASK) printf 'task\n' ;;
     plan | PLAN) printf 'plan\n' ;;
+    # Stage 2 added four record kinds with verbs of their OWN (`guild goal list`,
+    # `guild bug list`, …), deliberately: `guild move GOAL-001 done` would otherwise
+    # dispatch into cmd_move, whose v4-parity status sets and error text the harness
+    # pins. Naming the right command is the difference between "this CLI cannot do
+    # that" and "that lives one word over", and only this file knows both families.
+    goal | GOAL | phase | PHASE)
+      die "guild: '${1-}' is direction, not an artifact kind — it has its own verbs:
+  guild ${1-} list   ·   guild ${1-} new   ·   guild ${1-} move
+'guild list' takes req|task|plan."
+      ;;
+    bug | BUG)
+      die "guild: bugs have their own verbs — 'guild bug list [status] [--severity S]'.
+'guild list' takes req|task|plan."
+      ;;
+    doc | DOC)
+      die "guild: docs have their own verbs — 'guild doc list' and 'guild doc search Q'.
+'guild list' takes req|task|plan."
+      ;;
     *) die "guild: unknown kind '${1-}'" ;;
   esac
 }
@@ -108,11 +126,28 @@ art_num_offset() {
 }
 
 # art_kind_of_id <ID> — 'TASK-003' -> task. v4's wording on failure, verbatim.
+#
+# The three Stage 2 prefixes get a POINTER instead of that wording, for art_table's
+# reason: `guild read BUG-001` and `guild move GOAL-001 done` are the two mistakes two
+# verb families guarantee, and "unrecognized id" reads as "no such thing" when the thing
+# exists one command over. Anything genuinely unrecognized still gets v4's sentence, which
+# is what the harness pins.
 art_kind_of_id() {
   case "${1-}" in
     REQ-*) printf 'req\n' ;;
     TASK-*) printf 'task\n' ;;
     PLAN-*) printf 'plan\n' ;;
+    GOAL-* | PHASE-*)
+      die "guild: '${1-}' is a direction id, which 'guild read/meta/status/move/retitle' do not take.
+  read it     guild goal show <GOAL-ID>   ·   guild goal list   ·   guild phase list
+  move it     guild goal move <GOAL-ID> <status>   ·   guild phase move <PHASE-ID> <status>
+  reprioritize  guild goal priority <GOAL-ID> 1-5"
+      ;;
+    BUG-*)
+      die "guild: '${1-}' is a bug, which 'guild read/meta/status/move/retitle' do not take.
+  read it     guild bug show <BUG-ID>   ·   guild bug list
+  move it     guild bug fix <BUG-ID> --task TASK-NNN   ·   guild bug close <BUG-ID> [--wontfix]"
+      ;;
     *) die "guild: unrecognized id '${1-}'" ;;
   esac
 }
@@ -157,6 +192,14 @@ _art_actor() {
 # Full, not partial: the journal is a change log of resulting row state (§2.3), and
 # replay re-inserts every column. json_object also preserves types, which STRICT tables
 # demand — an INTEGER column must come back as a JSON number, not a string.
+#
+# THIS IS THE ONE PROJECTION REGISTRY. Every table any command journals is listed here,
+# including Stage 2's goal, phase, bug and doc: lib/direction.sh and lib/records.sh each
+# arrived with a private `_dir_json_row` / `_rec_json_row` doing the identical job for
+# their own two tables, which made three places to look for "what does a journal line for
+# table X contain" and three places for a column added later to be forgotten in two of
+# them. `journal_append <table> upsert <row>` takes one table name; there is one function
+# that answers what a row of it looks like.
 _art_json_row() {
   case "${1-}" in
     requirement)
@@ -176,6 +219,21 @@ _art_json_row() {
       ;;
     guild_state)
       printf "json_object('key',key,'value',value)"
+      ;;
+    goal)
+      printf "json_object('id',id,'title',title,'body',body,'status',status,'priority',priority,'created_at',created_at,'updated_at',updated_at)"
+      ;;
+    phase)
+      printf "json_object('id',id,'goal_id',goal_id,'title',title,'ordinal',ordinal,'status',status,'created_at',created_at,'updated_at',updated_at)"
+      ;;
+    bug)
+      printf "json_object('id',id,'title',title,'body',body,'repro',repro,'severity',severity,'status',status,'found_by',found_by,'requirement_id',requirement_id,'fix_task_id',fix_task_id,'created_at',created_at,'updated_at',updated_at)"
+      ;;
+    doc)
+      printf "json_object('slug',slug,'title',title,'body',body,'source',source,'updated_at',updated_at)"
+      ;;
+    coverage)
+      printf "json_object('id',id,'area',area,'risk',risk,'spec_path',spec_path,'last_inspected_at',last_inspected_at,'notes',notes)"
       ;;
     *) die "guild: no row projection for table '${1-}'" ;;
   esac
@@ -400,9 +458,35 @@ Write the document without them; the log fills in as agents report."
 # The value is padded with newlines first so that a heading at the very start or the very
 # end of the text is matched by the same pattern as one in the middle.
 _art_defuse_body() {
+  _art_defuse_lines "${1-}" '## Follow-up Tasks' '## Work Log' '---'
+}
+
+# _art_defuse_lines <text> <line>... — THE neutralizer. Indent by two spaces every whole
+# line of <text> that is exactly one of the given structural lines.
+#
+# It is the mechanism `_art_defuse_body` used to inline, lifted out because Stage 2's
+# documents generate structural lines of their own and each of its two modules arrived
+# with a private copy of this loop: `guild goal show` has a `## Phases` anchor, and
+# `guild bug show` has `## Details` and `## Reproduction`. One mechanism with three
+# heading LISTS is right; three copies of the mechanism is how they drift — and the two
+# copies had already drifted, one padding the value once per call and the other once per
+# heading.
+#
+# A wrapper composes rather than re-implements:
+#
+#   _dir_defuse_body = _art_defuse_body + '## Phases'
+#   _rec_defuse_body = _art_defuse_body + '## Details' + '## Reproduction'
+#
+# Bash 3.2: `${v//pat/rep}` in a loop, because a global replace does not rescan the text
+# it just consumed — two adjacent forged headings share the newline between them, so the
+# second needs another pass. Each pass strictly reduces the count, so the loop ends. The
+# value is padded with newlines first so a heading at the very start or the very end of
+# the text is matched by the same pattern as one in the middle.
+_art_defuse_lines() {
   local nl=$'\n' v h
   v="$nl${1-}$nl"
-  for h in '## Follow-up Tasks' '## Work Log' '---'; do
+  shift
+  for h in "$@"; do
     while :; do
       case "$v" in
         *"$nl$h$nl"*) v="${v//"$nl$h$nl"/$nl  $h$nl}" ;;
@@ -444,6 +528,52 @@ _art_create_run() {
   miss="$(printf '%s\n' "$out" | LC_ALL=C awk -F'|' '$1 == "MISS" { print $2; exit }')"
   [ -z "$miss" ] || die "guild: $miss not found"
   die "guild: could not create $label"
+}
+
+# _art_update_run <id> <what> <sql> — run an UPDATE script, print the resulting row JSON.
+#
+# THE UPDATE HALF OF THE SAME PROTOCOL `_art_create_run` speaks, and the reason it lives
+# here rather than in either Stage 2 module: `guild goal move`, `guild goal priority`,
+# `guild phase move`, `guild req assign`, `guild bug fix` and `guild bug close` all have
+# one shape and one set of outcomes, and they arrived as TWO parsers that disagreed about
+# the marker — one `OK|<row>`, the other `OK|<id>|<row>` with the id stripped back off.
+# Two spellings of one protocol is two places for the MISS handling to drift.
+#
+#   OK|<row-json>    the row was updated; the JSON is what journal_append records
+#   MISS|<ref>       a referenced row does not exist; <ref> names it
+#   nothing          <id> itself does not exist
+#
+# THE MARKER CARRIES THE ROW ONLY, never `OK|<id>|<row>`. The caller already knows the id
+# it passed, so the second field buys nothing — and `${line#OK|}` is a FIXED literal
+# prefix, which is a constant-length compare, where pulling a variable middle field out
+# needs `${row#*|}`. That is bounded here only because the delimiter happens to sit near
+# the start; it is measurably catastrophic when it does not (92s at 400 KB under bash
+# 3.2), and a marker shape nobody has to reason about is better than one that is safe by
+# coincidence.
+#
+# THE FAILURE PATH RELAYS THE DRIVER'S OUTPUT, for `_art_create_run`'s reason: tursodb
+# writes its diagnostics to STDOUT, which is the buffer captured here as data, so
+# discarding it turns an engine-level rejection into rc=1 with nothing printed anywhere.
+_art_update_run() {
+  local id="${1-}" what="${2-}" sql="${3-}" out line row miss
+  if ! out="$(printf '%s' "$sql" | db_exec)"; then
+    db_fail "could not $what" "$out"
+  fi
+  line="$(printf '%s' "$out" | head -n1)"
+  case "$line" in
+    'OK|'*)
+      row="${line#OK|}"
+      case "$row" in
+        '{'*'}') ;;
+        *) die "guild: could not $what (unexpected database output)" ;;
+      esac
+      printf '%s\n' "$row"
+      return 0
+      ;;
+  esac
+  miss="$(printf '%s\n' "$out" | LC_ALL=C awk -F'|' '$1 == "MISS" { print $2; exit }')"
+  [ -z "$miss" ] || die "guild: $miss not found"
+  die "guild: $id not found"
 }
 
 # cmd_new_req --title T [--desc D | --body B] [--date YYYY-MM-DD]
@@ -1527,6 +1657,13 @@ cmd_spool_drain() {
   [ -f "$spath" ] || return 0
 
   spool_drain "$id"
+  # `event` is deliberately NOT in this list, even though the drain now writes event rows
+  # (lib/db.sh `_spool_sql`). No command journals its events inline — the whole table is
+  # reconciled on demand, and `journal_rebuild`'s own preflight syncs `event` before it
+  # moves the database aside, so the drain's rows are protected by the same mechanism that
+  # protects every other command's. Naming it here instead would make one drain flush every
+  # un-journaled event on the board into git, which is a different operation wearing this
+  # one's name.
   journal_sync work_log review_finding >/dev/null
 }
 

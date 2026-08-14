@@ -259,7 +259,7 @@ _defs_file() {
 }
 
 t1_dispatch() {
-  local defs names n found f miss
+  local defs names n found f miss mods
   section "Tier 1 · dispatcher routes to real functions"
 
   defs="$(_defs_file)"
@@ -288,9 +288,14 @@ t1_dispatch() {
   done
   t_check "all $n cmd_* names the dispatcher uses are defined" "$miss"
 
-  # The dispatcher sources a fixed module list; every one of them must exist.
+  # The dispatcher sources a module list; every one of them must exist. The list is READ
+  # OUT OF THE DISPATCHER rather than restated here, because a hardcoded copy silently
+  # stops covering the module a later stage adds — which is exactly when "sourced but
+  # missing" costs the most.
+  mods="$(LC_ALL=C sed -n 's/^for _guild_mod in \(.*\); do$/\1/p' "$GUILD")"
+  [ -n "$mods" ] || mods="db journal artifacts render init"
   miss=""
-  for f in db journal artifacts render init; do
+  for f in $mods; do
     [ -f "$LIB_DIR/$f.sh" ] || miss="${miss}lib/$f.sh is sourced by scripts/guild but missing
 "
   done
@@ -1041,8 +1046,21 @@ $G_ERR"; return 1; fi
   out="$(_t2_count "$GUILD_DIR/journal.ndjson" '"table":"review_finding"')"
   want_eq "the drained finding is journaled" "1" "$out"
 
+  # The drain also ANNOUNCES what it imported, one `event` row per entry, under the
+  # entry's own agent rather than under `orchestrator` — otherwise `guild log` and
+  # `guild finding`, the two commands agents run most, move the board invisibly and
+  # `guild brief`'s "Since Last Check-in" cannot narrate a shift of agent work.
+  out="$(printf "SELECT COUNT(*) FROM event WHERE verb = 'logged' AND actor = 'developer' AND subject_id = 'TASK-001';\n" | tsql "$GUILD_DIR/guild.db")"
+  want_eq "the drain writes a 'logged' event under the logging agent" "1" "$out"
+  out="$(printf "SELECT COUNT(*) FROM event WHERE verb = 'filed' AND actor = 'reviewer-security' AND subject_id = 'TASK-001';\n" | tsql "$GUILD_DIR/guild.db")"
+  want_eq "and a 'filed' event under the reviewer" "1" "$out"
+
   # Draining again must be free. The first implementation re-journaled ALL of a task's
   # rows on every drain, so three drains wrote the whole log into git three times.
+  # Exactly TWO lines, still: the drain's own `event` rows are reconciled by
+  # `journal_rebuild`'s preflight like every other command's, not flushed by the drain —
+  # syncing `event` here would make one drain write every un-journaled event on the board
+  # into the file git carries.
   grun spool drain TASK-001
   n2="$(LC_ALL=C awk 'END { print NR + 0 }' "$GUILD_DIR/journal.ndjson")"
   out=""
@@ -1565,7 +1583,14 @@ t2_records_survive_rebuild() {
 $G_ERR"; return 0; fi
 
   before="$(printf "SELECT (SELECT COUNT(*) FROM work_log) || '/' || (SELECT COUNT(*) FROM review_finding) || '/' || (SELECT COUNT(*) FROM event);\n" | tsql "$db")"
-  want_eq "the records are in the database before the rebuild" "1/1/3" "$before"
+  # 5 events: created req, created task, moved — plus the two the DRAIN now writes, one
+  # `logged` and one `filed`. Those two are the point of a feed that can narrate agent work
+  # at all: before them, a whole shift of logs and findings landed in the database and
+  # "Since Last Check-in" showed nothing.
+  want_eq "the records are in the database before the rebuild" "1/1/5" "$before"
+  out="$(printf "SELECT group_concat(actor || ' ' || verb, ', ') FROM (SELECT actor, verb FROM event WHERE verb IN ('logged','filed') ORDER BY id);\n" | tsql "$db")"
+  want_eq "the drain announced both entries, each under its own agent" \
+    "developer logged, reviewer-security filed" "$out"
 
   # The check-in triage case: a resumed task must read as STARTED.
   grun read TASK-001
@@ -2458,7 +2483,10 @@ t2_journal_highwater() {
     t_fail "the drain succeeds against a pulled journal" "rc=$G_RC
 $G_ERR"; return 0; fi
 
-  n="$(_t2_count "$GUILD_DIR/journal.ndjson" 'MY LOCAL WORK')"
+  # Matched against the work_log LINE, not against the text alone: the drain also announces
+  # the entry on the `event` feed, and that event's payload carries the same words. Counting
+  # bare occurrences would count two lines and stop testing what this section is about.
+  n="$(_t2_count "$GUILD_DIR/journal.ndjson" '"table":"work_log".*MY LOCAL WORK')"
   # THE REGRESSION: this was 0 — the local row was skipped because its id was below the mark.
   want_eq "the local work-log row IS journaled even though its id collides" "1" "$n"
 
@@ -3774,6 +3802,3353 @@ and the CLI can then only refuse, never prevent"
   return 0
 }
 
+# ====================================================================================
+# the dashboard (design §9)
+# ====================================================================================
+#
+# `guild dashboard` inlines board data into an HTML document, which is a NEW INJECTION
+# CHANNEL for the same class of bug that bit three earlier rounds in three other media
+# (board sections, list columns, frontmatter fields, export filenames). Here the
+# structural token is `<`, because that is the only byte that can end the
+# `<script type="application/json">` element the data sits in — and `</script>` is
+# perfectly legal *inside* a JSON string, so a JSON encoder alone is not a defense.
+#
+# The contract this section holds the implementation to:
+#   1. the inlined data document contains NO `<`, `>` or `&` byte anywhere;
+#   2. the adversarial titles are still THERE, as < escapes, so the page shows them;
+#   3. the page never writes markup from data (no innerHTML / insertAdjacentHTML /
+#      document.write / eval / new Function);
+#   4. the file is self-contained — no URL, no @import, no fetch, no socket;
+#   5. two runs over unchanged state are byte-identical, a second apart (no clock);
+#   6. `--open` never fails the command, whatever the desktop can or cannot do.
+
+# _t2_hex <value> — a value as lowercase hex, for CAST(x'…' AS TEXT) seeding. The same
+# transport lib/db.sh uses (§2.2.1), so an adversarial value reaches the database
+# byte-exact instead of being torn by the script splitter.
+_t2_hex() {
+  printf '%s' "$1" | LC_ALL=C xxd -p | LC_ALL=C tr -d '\n'
+}
+
+# _t2_data_block <html-file> — the lines between the JSON script element's tags. The
+# whole HTML-safety claim is about these lines and no others.
+_t2_data_block() {
+  LC_ALL=C awk '
+    /^<script type="application\/json" id="guild-data">$/ { on = 1; next }
+    on && /^<\/script>$/ { on = 0; next }
+    on { print }
+  ' "$1"
+}
+
+t2_dashboard() {
+  local f html body out n adv1 adv2 adv3 adv4 adv5 adv6 db bin tool p
+  section "Tier 2 · the dashboard (self-contained · deterministic · uninjectable)"
+
+  _t2_project dash 2026-01-01 || return 0
+  db="$(_t2_db)"
+  f="$GUILD_DIR/dashboard.html"
+
+  # ---- an empty guild renders, and says so rather than looking broken ----
+  grun dashboard
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild dashboard on an empty guild"; else
+    t_fail "guild dashboard on an empty guild" "$G_ERR"; return 0; fi
+  want_contains "it reports where it wrote" "dashboard.html" "$G_OUT"
+  if [ -f "$f" ]; then t_pass "the file exists"; else
+    t_fail "the file exists" "no $f"; return 0; fi
+
+  html="$(cat "$f")"
+  want_contains "the empty board still carries a data block" '"tasks": []' "$html"
+  # Stage 4 fills graph_node/graph_edge. Until then this view must be honest, never an
+  # empty chart that reads as a rendering failure.
+  want_contains "the graph view degrades to an honest Stage 4 placeholder" \
+    "No execution graphs yet (Stage 4)" "$html"
+  want_contains "and the graph arrays are present and empty" '"nodes": []' "$html"
+
+  # ---- self-contained: nothing may be fetched from anywhere ----
+  out="$(LC_ALL=C grep -nE '(src|href)[[:space:]]*=[[:space:]]*"[^"]*(https?:|//)|@import|XMLHttpRequest|WebSocket|fetch[[:space:]]*\(|importScripts' "$f")"
+  t_check "the page loads nothing from the network" "$out"
+
+  # ---- the page never writes markup from data ----
+  out="$(LC_ALL=C grep -nE '(inner|outer)HTML[[:space:]]*=|insertAdjacentHTML[[:space:]]*\(|document\.write[[:space:]]*\(|[^A-Za-z_.]eval[[:space:]]*\(|new[[:space:]]+Function[[:space:]]*\(' "$f")"
+  t_check "the page renders with textContent only, never innerHTML" "$out"
+
+  # ---- NO MAP KEYED BY DATABASE TEXT IS READ WITHOUT A GUARD ----
+  #
+  # `{}` inherits `__proto__`, `constructor` and `toString`, so `MAP[key]` where key came
+  # from a row is not a lookup. Two ways to be safe, and the page must use one of them
+  # everywhere: build AND read the map under a `"x:"` namespace, or read it through
+  # `pick()`, which is a hasOwnProperty call. This asserts the two shapes that actually bit:
+  # a `graph_node.id` of `__proto__` replaced the whole Graph view with
+  # `edgeBy[f].push is not a function`, and a `coverage.risk` of `constructor` made
+  # `STALE_DAYS[risk]` the Object constructor — so an area last inspected in 2020 rendered
+  # as "current", in the view whose entire purpose is "what has nobody looked at".
+  want_contains "the edge map is namespaced, so a '__proto__' node id cannot reach Object.prototype" \
+    'var f = "e:" + txt(edges[i].from);' "$html"
+  want_contains "and so is the node-id map" \
+    'ids["n:" + txt(ns[j].id)] = "n" + j;' "$html"
+  # Comment lines are excluded: the header above `pick()` names the maps in prose, which is
+  # the documentation of exactly this rule and must not be read as a violation of it.
+  out="$(LC_ALL=C grep -nE '(STALE_DAYS|STATUS_TONE|VERB_PHRASE|FIELD_WORD)\[' "$f" |
+         LC_ALL=C grep -vE '^[0-9]+:[[:space:]]*(//|#|\*)' || true)"
+  t_check "every status/risk/verb table is read through pick(), never by bare subscript" "$out"
+
+  # ---- the graph is emitted where a renderer will find it (design §9) ----
+  #
+  # §9 asks for a Mermaid DAG. The page cannot ship a diagram library — it is strictly
+  # self-contained — so it emits `pre.mermaid`, which is source text in the local file and a
+  # drawn, status-coloured diagram when the page is published as an Artifact. `pre.code`
+  # would be neither.
+  want_contains "the graph is emitted in a pre.mermaid block, not an inert pre.code" \
+    'el("pre", "mermaid"' "$html"
+  want_contains "and nodes carry a status class, so a rendered DAG is coloured" \
+    'classDef s_done' "$html"
+
+  # ---- a page that cannot read its data must not assert what the data says ----
+  #
+  # The parse-error path used to draw all seven views from the empty defaults — "No open
+  # defects", every tile 0 — and put one red line under the footer. Fail-closed instead:
+  # the banner goes first and nothing is drawn.
+  want_contains "a parse failure fails closed before any view is drawn" \
+    'if (PARSE_ERROR) { failClosed(); return; }' "$html"
+
+  # ---- determinism (it may be committed) ----
+  cp "$f" "$T2/dash-1.html"
+  sleep 1
+  grun dashboard
+  out="$(diff "$T2/dash-1.html" "$f" 2>&1)"
+  t_check "two runs a second apart are byte-identical (no clock in the output)" "$out"
+
+  # ---- THE INJECTION MATRIX ----
+  #
+  # Every one of these is a real payload for this medium, not a decoration:
+  #   adv1  closes the element and opens a new one — the whole reason a JSON encoder is
+  #         not enough, since `</script>` is a legal JSON string
+  #   adv2  needs no script element at all: an event handler on an injected tag
+  #   adv3  breaks out of an attribute first, then out of the element
+  #   adv4  the benign case that must survive INTACT: an ampersand, both quote kinds,
+  #         and tags in ordinary prose
+  #   adv5  a lone `<`, which is not a tag and must not be treated as one
+  #   adv6  the tokenizer's tolerance: `</SCRIPT >` closes a script element too
+  adv1='</script><script>alert(1)</script>'
+  adv2='<img src=x onerror=alert(2)>'
+  adv3='"><svg onload=alert(3)>'
+  adv4='Tom & Jerry'"'"'s "quoted" <b>bold</b>'
+  adv5='<'
+  adv6='</SCRIPT ><script>alert(6)</script>'
+
+  grun new req --title "$adv1"
+  grun new req --title "$adv2"
+  grun new req --title "$adv3"
+  grun new req --title "$adv4"
+  grun new req --title "$adv5"
+  grun new req --title "$adv6"
+  grun new task --title "$adv1" --agent "$adv2" --req REQ-001
+  if [ "$G_RC" -eq 0 ]; then t_pass "the adversarial titles were accepted by the CLI"; else
+    t_fail "the adversarial titles were accepted by the CLI" "$G_ERR"; return 0; fi
+
+  # The tables Stage 2 reads but Stage 2's commands do not all write yet: seeded straight
+  # in, through the same hex transport, so every view carries a payload.
+  {
+    printf "INSERT INTO goal (id,title,body,status,priority,created_at,updated_at) VALUES ('GOAL-001',CAST(x'%s' AS TEXT),'','todo',1,'2026-01-01','2026-01-01');\n" "$(_t2_hex "$adv1")"
+    printf "INSERT INTO phase (id,goal_id,title,ordinal,status,created_at,updated_at) VALUES ('PHASE-001','GOAL-001',CAST(x'%s' AS TEXT),1,'todo','2026-01-01','2026-01-01');\n" "$(_t2_hex "$adv2")"
+    printf "UPDATE requirement SET phase_id='PHASE-001' WHERE id='REQ-001';\n"
+    printf "INSERT INTO bug (id,title,body,repro,severity,status,found_by,requirement_id,created_at,updated_at) VALUES ('BUG-001',CAST(x'%s' AS TEXT),'','','critical','open',CAST(x'%s' AS TEXT),'REQ-001','2026-01-02','2026-01-02');\n" "$(_t2_hex "$adv3")" "$(_t2_hex "$adv5")"
+    printf "INSERT INTO coverage (id,area,risk,spec_path,last_inspected_at,notes) VALUES (CAST(x'%s' AS TEXT),CAST(x'%s' AS TEXT),'high',CAST(x'%s' AS TEXT),NULL,CAST(x'%s' AS TEXT));\n" "$(_t2_hex "$adv5")" "$(_t2_hex "$adv4")" "$(_t2_hex "$adv1")" "$(_t2_hex "$adv6")"
+    printf "INSERT INTO event (ts,actor,verb,subject_type,subject_id,payload) VALUES ('2026-02-01T00:00:00Z',CAST(x'%s' AS TEXT),CAST(x'%s' AS TEXT),'requirement','REQ-001',CAST(x'%s' AS TEXT));\n" "$(_t2_hex "$adv2")" "$(_t2_hex "$adv5")" "$(_t2_hex "$adv1")"
+    printf "INSERT INTO graph_node (id,requirement_id,node_key,kind,status) VALUES (CAST(x'%s' AS TEXT),'REQ-001',CAST(x'%s' AS TEXT),'gate','pending');\n" "$(_t2_hex "$adv1")" "$(_t2_hex "$adv2")"
+    printf "INSERT INTO graph_node (id,requirement_id,node_key,kind,status) VALUES ('n2','REQ-001','implement','work','ready');\n"
+    printf "INSERT INTO graph_edge (from_node,to_node) VALUES (CAST(x'%s' AS TEXT),'n2');\n" "$(_t2_hex "$adv1")"
+  } | tsql "$db" >/dev/null 2>&1
+
+  grun dashboard
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild dashboard over the injection matrix"; else
+    t_fail "guild dashboard over the injection matrix" "$G_ERR"; return 0; fi
+
+  body="$(_t2_data_block "$f")"
+  if [ -n "$body" ]; then t_pass "the data block was located in the page"; else
+    t_fail "the data block was located in the page" "no <script type=application/json> block"
+    return 0
+  fi
+
+  # THE CLAIM, tested directly: not one of the three bytes survives anywhere in the
+  # inlined document — so no encoding, nesting or casing can close the element.
+  n="$(_t2_lines "$body" '<')"
+  want_eq "no '<' byte anywhere in the inlined data" "0" "$n"
+  n="$(_t2_lines "$body" '>')"
+  want_eq "no '>' byte anywhere in the inlined data" "0" "$n"
+  n="$(_t2_lines "$body" '&')"
+  want_eq "no '&' byte anywhere in the inlined data" "0" "$n"
+
+  # ... and the values are still all there, escaped rather than stripped: a dashboard
+  # that silently deleted the payload would pass the checks above and show a lie.
+  want_contains "the </script> payload is carried as an escape" 'u003c/script' "$body"
+  want_contains "the <img onerror> payload is carried too" 'u003cimg src=x onerror=alert(2)u003e' "$(printf '%s' "$body" | LC_ALL=C sed 's/\\//g')"
+  want_contains "the ampersand is escaped, not dropped" 'Tom \u0026 Jerry' "$body"
+  n="$(_t2_lines "$body" 'u003c/SCRIPT ')"
+  if [ "$n" -ge 1 ]; then t_pass "the '</SCRIPT >' variant is escaped too"; else
+    t_fail "the '</SCRIPT >' variant is escaped too" "not found in the data block"; fi
+
+  # The document must still be VALID JSON after the rewrite — < is a legal escape
+  # inside a JSON string, and this proves the rewrite did not land anywhere else.
+  # Validated by the engine itself rather than by a parser this harness would have to
+  # ship: json_valid() is on the §3.0 portable list.
+  out="$(printf "SELECT json_valid(CAST(x'%s' AS TEXT));\n" "$(_t2_hex "$body")" | tsql "$db" 2>&1)"
+  want_eq "the escaped document is still valid JSON" "1" "$out"
+
+  # And nothing may have leaked into the markup around it: the raw payload must not
+  # appear anywhere in the file, in any form that is a tag.
+  out="$(LC_ALL=C grep -nE '<(script|img|svg)[^>]*(alert|onerror|onload)' "$f")"
+  t_check "no payload became a real tag anywhere in the page" "$out"
+
+  # The graph view now has rows, so the page has something to draw. (The placeholder
+  # STRING lives in the page's own script either way — it is the empty-state branch —
+  # so what is checked is the data reaching the page, not the presence of a literal.)
+  want_contains "the graph rows reach the page" '"kind":"gate"' "$body"
+  want_contains "and the edge between them does too" '"to":"n2"' "$body"
+
+  # ---- determinism holds with the hostile data in ----
+  cp "$f" "$T2/dash-2.html"
+  sleep 1
+  grun dashboard
+  out="$(diff "$T2/dash-2.html" "$f" 2>&1)"
+  t_check "still byte-identical a second later, with the payloads in" "$out"
+
+  # ---- --json prints the data and writes nothing ----
+  rm -f "$GUILD_DIR/other.html"
+  grun dashboard --json
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild dashboard --json"; else
+    t_fail "guild dashboard --json" "$G_ERR"; fi
+  n="$(_t2_lines "$G_OUT" '[<>&]')"
+  want_eq "the --json surface carries no '<', '>' or '&' either" "0" "$n"
+  want_contains "and it is the same document that gets inlined" '"summary": {' "$G_OUT"
+
+  grun dashboard --out "$GUILD_DIR/other.html"
+  if [ -f "$GUILD_DIR/other.html" ]; then t_pass "--out writes where it is told"; else
+    t_fail "--out writes where it is told" "$G_ERR"; fi
+  out="$(diff "$f" "$GUILD_DIR/other.html" 2>&1)"
+  t_check "and the same state produces the same bytes at either path" "$out"
+
+  # ---- `--out` NAMES A FILE, and the failures are the guild's own ----
+  #
+  # `--out <existing directory>` printed "Dashboard written to site", exited 0, and left
+  # `site/site.tmp.<pid>` as the only output — the staging file, under its temp name, which
+  # is precisely the "THE TEMP FILE IS NEVER THE OUTPUT" rule inverted. The dashboard
+  # skill's own `--out` table suggests "a directory they serve", so it is the likely input,
+  # not a contrived one.
+  mkdir -p "$T2/site"
+  grun dashboard --out "$T2/site"
+  if [ "$G_RC" -ne 0 ]; then t_pass "--out onto an existing directory is refused"; else
+    t_fail "--out onto an existing directory is refused" "rc=0 — and the output is the staging file"; fi
+  want_contains "and the refusal says a filename is what it wants" "is a directory" "$G_ERR"
+  out="$(ls "$T2/site")"
+  want_eq "nothing was written into the directory" "" "$out"
+
+  grun dashboard --out "$T2/site/"
+  if [ "$G_RC" -ne 0 ]; then t_pass "a trailing slash is the same refusal, not an mv error"; else
+    t_fail "a trailing slash is the same refusal, not an mv error" "rc=0"; fi
+  out="$(printf '%s' "$G_ERR" | LC_ALL=C grep -c 'mv:' || true)"
+  want_eq "and no raw mv error reaches the operator" "0" "$out"
+
+  # A leading dash is a filename, not an option — `dirname`/`mv` need `--`, or the command
+  # fails with `dirname: illegal option -- w` wearing the guild's exit code.
+  ( cd "$T2" && "$GUILD" dashboard --out ./-weird.html >/dev/null 2>"$T2/dash-dash.err" )
+  if [ -f "$T2/-weird.html" ]; then t_pass "--out accepts a path that starts with a dash"; else
+    t_fail "--out accepts a path that starts with a dash" "$(cat "$T2/dash-dash.err")"; fi
+  out="$(LC_ALL=C grep -c 'illegal option\|invalid option' "$T2/dash-dash.err" || true)"
+  want_eq "and no coreutils option error is printed" "0" "$out"
+
+  grun dashboard --json --out "$GUILD_DIR/nope.html"
+  if [ "$G_RC" -ne 0 ]; then t_pass "--json with --out is refused, not silently ignored"; else
+    t_fail "--json with --out is refused, not silently ignored" "rc=0"; fi
+  grun dashboard --nonsense
+  want_contains "an unknown option is refused" "unknown option" "$G_ERR"
+  grun dashboard extra
+  want_contains "a positional argument is refused" "no positional" "$G_ERR"
+
+  # ---- a template with no marker is refused, and the old file survives ----
+  printf '<html><body>no marker here</body></html>\n' >"$T2/bad.tmpl.html"
+  cp "$f" "$T2/dash-3.html"
+  GUILD_DASHBOARD_TEMPLATE="$T2/bad.tmpl.html" grun dashboard
+  if [ "$G_RC" -ne 0 ]; then t_pass "a template with no data marker is refused"; else
+    t_fail "a template with no data marker is refused" "rc=0"; fi
+  out="$(diff "$T2/dash-3.html" "$f" 2>&1)"
+  t_check "and the previous dashboard is left untouched" "$out"
+
+  # ---- --open never fails the command ----
+  #
+  # A fake `open` on PATH, because the real one would launch a browser in the middle of
+  # a test run. Both branches matter: an opener that works, and one that fails — the
+  # second used to be the difference between "written and opened" and a nonzero exit on
+  # a headless box.
+  bin="$T2/fakebin"
+  rm -rf "$bin"; mkdir -p "$bin"
+  printf '#!/bin/sh\nexit 0\n' >"$bin/open"
+  chmod +x "$bin/open"
+  PATH="$bin:$PATH" grun dashboard --open
+  if [ "$G_RC" -eq 0 ]; then t_pass "--open with a working opener exits 0"; else
+    t_fail "--open with a working opener exits 0" "$G_ERR"; fi
+
+  printf '#!/bin/sh\nexit 3\n' >"$bin/open"
+  chmod +x "$bin/open"
+  PATH="$bin:$PATH" grun dashboard --open
+  if [ "$G_RC" -eq 0 ]; then t_pass "--open still exits 0 when the opener fails"; else
+    t_fail "--open still exits 0 when the opener fails" "rc=$G_RC
+$G_ERR"; fi
+  want_contains "and it says so rather than failing silently" "could not open" "$G_ERR"
+
+  # Neither opener present: a minimal PATH built from the tools the command actually
+  # needs. Skipped rather than guessed at if any of them cannot be located.
+  bin="$T2/minbin"
+  rm -rf "$bin"; mkdir -p "$bin"
+  out=""
+  # `bash` is in the list because scripts/guild starts `#!/usr/bin/env bash`: with a PATH
+  # that cannot resolve it, the failure is env's, not the command's, and the test would
+  # be measuring nothing.
+  for tool in bash tursodb awk grep sed mktemp cat rm mv mkdir dirname xxd tr diff; do
+    p="$(command -v "$tool" 2>/dev/null)" || p=""
+    # An ABSOLUTE path only: a shell that resolves an alias or a builtin answers with a
+    # bare name, and `ln -s grep grep` makes a self-referencing link that then fails as
+    # "command not found" — a broken harness masquerading as a broken command.
+    case "$p" in
+      /*) ln -sf "$p" "$bin/$tool" ;;
+      *) out="$out $tool" ;;
+    esac
+  done
+  if [ -n "$out" ]; then
+    t_skip "--open with no opener on PATH" "missing tool(s):$out"
+  else
+    PATH="$bin" grun dashboard --open
+    if [ "$G_RC" -eq 0 ]; then t_pass "--open exits 0 when neither open nor xdg-open exists"; else
+      t_fail "--open exits 0 when neither open nor xdg-open exists" "rc=$G_RC
+$G_ERR"; fi
+    want_contains "and it prints the path so the operator can open it" "dashboard.html" "$G_ERR$G_OUT"
+  fi
+
+  unset GUILD_DIR
+  return 0
+}
+
+# ====================================================================================
+# STAGE 2 — direction, records, the briefing (design §3.2, §9, §10, §13)
+# ====================================================================================
+#
+# Stage 2 adds five command families over tables that already existed: `goal` / `phase`
+# / `req assign` (direction), `bug` and `doc` (records), `brief` and `dashboard`
+# (presentation). No schema changed, so nothing here tests a migration; what it tests is
+# the surface, and the surface is where every defect of the four Stage 1 review rounds
+# lived.
+#
+# THE THREE RULES THESE SECTIONS EXIST TO HOLD, restated for the new commands because a
+# rule that is only enforced on the commands that were reviewed is not enforced:
+#
+#   · a refusal writes NOTHING — not a row, not an event, not a journal line. Every
+#     negative case below is asserted with `_s2_refused`, which re-reads all six table
+#     counts and the journal length rather than trusting the exit status.
+#   · a value cannot impersonate a structural token, in ANY channel. Stage 1 lost this
+#     three times in three media; Stage 2 opens six more (the goal document's `## Phases`
+#     anchor, `bug show`'s frontmatter block, three columnar list surfaces, `doc get`'s
+#     verbatim stream, and the dashboard's inlined JSON).
+#   · every mutation writes an event AND a journal line. `guild brief` and the
+#     dashboard's activity feed both read `event`, so a mutation that skips it is
+#     invisible on the two surfaces Stage 2 exists to provide.
+
+# _s2_state — the seven row counts, as one comparable string. The subject of every
+# "nothing was written" assertion. `coverage` joined the list in Stage 2b, when the table
+# stopped being init-only and got a writer of its own (lib/quality.sh).
+_s2_state() {
+  printf "SELECT (SELECT COUNT(*) FROM goal) || '/' || (SELECT COUNT(*) FROM phase) || '/' || (SELECT COUNT(*) FROM requirement) || '/' || (SELECT COUNT(*) FROM bug) || '/' || (SELECT COUNT(*) FROM doc) || '/' || (SELECT COUNT(*) FROM coverage) || '/' || (SELECT COUNT(*) FROM event);\n" | tsql "$(_t2_db)"
+}
+
+_s2_jrn() {
+  LC_ALL=C awk 'END { print NR + 0 }' "$GUILD_DIR/journal.ndjson" 2>/dev/null
+}
+
+S2_ROWS=""
+S2_JRN=""
+
+# _s2_mark — snapshot the board, so the next `_s2_refused` can prove it did not move.
+_s2_mark() {
+  S2_ROWS="$(_s2_state)"
+  S2_JRN="$(_s2_jrn)"
+}
+
+# _s2_refused <name> <needle> — the last `grun` failed, said <needle> on stderr, and
+# changed NOTHING since the last `_s2_mark`.
+#
+# The third assertion is the one that matters and the one an exit-status-only test
+# misses: a command that validates its arguments AFTER opening a transaction, or after
+# `journal_preflight`, exits non-zero and still leaves a row or a pending journal line
+# behind. That is the D2 torn-tail bug in a new place, so it is checked in the same
+# breath as the message rather than in a section of its own.
+_s2_refused() {
+  local name="$1" needle="$2" bad="" rows jrn
+  [ "$G_RC" -ne 0 ] || bad="${bad}the command SUCCEEDED (rc=0) instead of refusing
+"
+  case "$G_ERR" in
+    *"$needle"*) ;;
+    *) bad="${bad}stderr does not say '$needle'; it said: $(printf '%s' "$G_ERR" | head -2)
+" ;;
+  esac
+  rows="$(_s2_state)"
+  jrn="$(_s2_jrn)"
+  [ "$rows" = "$S2_ROWS" ] ||
+    bad="${bad}the refusal WROTE A ROW: goal/phase/req/bug/doc/coverage/event went $S2_ROWS -> $rows
+"
+  [ "$jrn" = "$S2_JRN" ] ||
+    bad="${bad}the refusal appended to journal.ndjson: $S2_JRN -> $jrn line(s)
+"
+  # RE-BASELINE, so that one command which really did write is reported once instead of
+  # renaming itself as every check that follows it. Without this a single leak turned
+  # into seven failures whose messages all described the FIRST one, which is the shape
+  # of report that sends a reader to the wrong command.
+  S2_ROWS="$rows"
+  S2_JRN="$jrn"
+  t_check "$name" "$bad"
+}
+
+# _s2_ok <name> — the last `grun` succeeded and printed something.
+_s2_ok() {
+  if [ "$G_RC" -eq 0 ] && [ -n "$G_OUT" ]; then
+    t_pass "$1"
+    return 0
+  fi
+  t_fail "$1" "rc=$G_RC
+$(printf '%s' "$G_ERR" | head -3)"
+  return 1
+}
+
+# _s2_events <verb> <subject-type> — how many events of that shape the board holds.
+# Rule 5, made checkable: `guild brief` and the dashboard's activity feed are both
+# projections of `event`, so an un-evented mutation is one that happened invisibly.
+_s2_events() {
+  printf "SELECT COUNT(*) FROM event WHERE verb = %s AND subject_type = %s;\n" \
+    "'$1'" "'$2'" | tsql "$(_t2_db)"
+}
+
+# ---- S2.1 · direction: goal -> phase -> requirement -------------------------------
+#
+# THE ASSOCIATION IS THREE DEEP AND ITS LAST LINK IS OPTIONAL. `requirement.phase_id` is
+# nullable BY DESIGN (lib/direction.sh states it, §3.2 schemas it): a bug fix or a chore
+# filed straight onto the board belongs to no goal, and `guild new req` deliberately has
+# no `--phase`. So "a requirement with no phase" is not an edge case to be tolerated, it
+# is the default state of every requirement ever created, and the checks below pin it
+# from four directions — the column, the rollup counts, the briefing's own count of
+# unattached work, and a full journal replay.
+t2_direction() {
+  local db goal phase req req2 out n
+  section "Tier 2 · Stage 2 · direction (goal -> phase -> requirement)"
+
+  _t2_project direction 2026-01-01 || return 0
+  db="$(_t2_db)"
+
+  # ---- the empty guild: reads answer emptily and succeed ----
+  #
+  # An empty list is the right answer, not an error: `guild:check-in` runs these on a
+  # board that has nothing on it yet, and a non-zero exit there would read as breakage.
+  grun goal list
+  if [ "$G_RC" -eq 0 ] && [ -z "$G_OUT" ]; then t_pass "goal list on an empty guild is empty and exits 0"; else
+    t_fail "goal list on an empty guild is empty and exits 0" "rc=$G_RC out=$G_OUT"; fi
+  grun phase list
+  if [ "$G_RC" -eq 0 ] && [ -z "$G_OUT" ]; then t_pass "phase list on an empty guild is empty and exits 0"; else
+    t_fail "phase list on an empty guild is empty and exits 0" "rc=$G_RC out=$G_OUT"; fi
+
+  # An empty guild has no GOAL-001 either, and the read path must say so rather than
+  # rendering an empty document.
+  _s2_mark
+  grun goal show GOAL-001
+  _s2_refused "goal show on an empty guild reports the miss" "GOAL-001 not found"
+
+  # ---- happy path ----
+  grun goal new --title "Ship visibility" --body "Stage 2 makes the board legible." --priority 2
+  _s2_ok "goal new creates a goal" || return 0
+  goal="${G_OUT%% *}"
+  want_eq "goal new derives the id in SQL" "GOAL-001" "$goal"
+  want_eq "goal new echoes back the id and the title" "GOAL-001 Ship visibility" "$G_OUT"
+
+  grun phase new --goal "$goal" --title "Commands" --ordinal 1
+  _s2_ok "phase new creates a phase under the goal" || return 0
+  phase="${G_OUT%% *}"
+  want_eq "phase new derives the id in SQL" "PHASE-001" "$phase"
+
+  grun new req --title "The dashboard"
+  req="$G_OUT"
+  grun new req --title "An unaffiliated chore"
+  req2="$G_OUT"
+
+  # ---- the association itself ----
+  grun req assign "$req" "$phase"
+  want_eq "req assign attaches a requirement to a phase" "$req" "$G_OUT"
+  out="$(printf "SELECT COALESCE(phase_id,'NULL') FROM requirement WHERE id = '%s';\n" "$req" | tsql "$db")"
+  want_eq "and the column really holds it" "$phase" "$out"
+
+  # THE NULLABLE LINK. `req2` was never assigned, and nothing anywhere may quietly give
+  # it a phase — not the create, not the assignment of its sibling, not a rollup query.
+  out="$(printf "SELECT COALESCE(phase_id,'NULL') FROM requirement WHERE id = '%s';\n" "$req2" | tsql "$db")"
+  want_eq "a requirement created without a phase has a NULL phase_id (legal by design)" "NULL" "$out"
+
+  grun goal list
+  want_eq "goal list rolls the phase counts up" "GOAL-001 todo 2 0/1 Ship visibility" "$G_OUT"
+  grun phase list
+  want_eq "phase list rolls the requirement counts up, counting only attached work" \
+    "PHASE-001 GOAL-001 1 todo 0/1 Commands" "$G_OUT"
+
+  grun phase list --goal "$goal"
+  n="$(_t2_lines "$G_OUT" "^$phase ")"
+  want_eq "phase list --goal filters to that goal" "1" "$n"
+  grun phase list --goal GOAL-404
+  if [ "$G_RC" -eq 0 ] && [ -z "$G_OUT" ]; then t_pass "phase list --goal on an unknown goal is empty, not an error"; else
+    t_fail "phase list --goal on an unknown goal is empty, not an error" "rc=$G_RC out=$G_OUT"; fi
+
+  grun goal show "$goal"
+  want_contains "goal show renders the goal" "# GOAL-001 — Ship visibility" "$G_OUT"
+  want_contains "goal show renders the body" "Stage 2 makes the board legible." "$G_OUT"
+  want_contains "goal show renders the phase" "### PHASE-001 — Commands (ordinal 1)" "$G_OUT"
+  want_contains "goal show lists the phase's requirements" "$req — The dashboard" "$G_OUT"
+  # The unaffiliated requirement is not part of any goal, so the goal document must not
+  # claim it. A rollup that swept it in would overstate every goal on the board.
+  n="$(_t2_lines "$G_OUT" "$req2")"
+  want_eq "and does NOT claim the requirement that has no phase" "0" "$n"
+  n="$(_t2_lines "$G_OUT" '^## Phases$')"
+  want_eq "goal show emits exactly one '## Phases' anchor" "1" "$n"
+
+  # ---- detaching is not a one-way door ----
+  grun req assign "$req" none
+  want_eq "req assign <REQ> none detaches" "$req" "$G_OUT"
+  out="$(printf "SELECT COALESCE(phase_id,'NULL') FROM requirement WHERE id = '%s';\n" "$req" | tsql "$db")"
+  want_eq "and the phase_id is NULL again, not the empty string" "NULL" "$out"
+  grun phase list
+  want_eq "the phase's rollup drops back to 0/0" \
+    "PHASE-001 GOAL-001 1 todo 0/0 Commands" "$G_OUT"
+  grun req assign "$req" "$phase"
+  if [ "$G_RC" -eq 0 ]; then t_pass "and it can be re-attached afterwards"; else
+    t_fail "and it can be re-attached afterwards" "$G_ERR"; fi
+
+  # ---- status and priority ----
+  grun goal move "$goal" in-progress
+  want_eq "goal move sets the status" "$goal" "$G_OUT"
+  grun phase move "$phase" 'done'
+  want_eq "phase move sets the status" "$phase" "$G_OUT"
+  grun goal priority "$goal" 1
+  want_eq "goal priority sets the priority" "$goal" "$G_OUT"
+  grun goal list
+  want_eq "and all three land in the list row" "GOAL-001 in-progress 1 1/1 Ship visibility" "$G_OUT"
+  grun goal list todo
+  if [ -z "$G_OUT" ]; then t_pass "goal list <status> filters"; else
+    t_fail "goal list <status> filters" "expected nothing for 'todo', got: $G_OUT"; fi
+  grun goal list in-progress
+  n="$(_t2_lines "$G_OUT" "^$goal ")"
+  want_eq "and finds it under its real status" "1" "$n"
+
+  # ---- every mutation left an event behind (rule 5) ----
+  want_eq "goal new wrote a 'created goal' event" "1" "$(_s2_events created goal)"
+  want_eq "phase new wrote a 'created phase' event" "1" "$(_s2_events created phase)"
+  want_eq "goal move wrote a 'moved goal' event" "1" "$(_s2_events moved goal)"
+  want_eq "phase move wrote a 'moved phase' event" "1" "$(_s2_events moved phase)"
+  want_eq "goal priority wrote a 'reprioritized goal' event" "1" "$(_s2_events reprioritized goal)"
+  want_eq "all three req assigns wrote an 'assigned requirement' event" "3" "$(_s2_events assigned requirement)"
+
+  # ---- missing required flags ----
+  _s2_mark
+  grun goal new
+  _s2_refused "goal new with no --title is refused" "goal new requires --title"
+  grun goal new --body "orphan body"
+  _s2_refused "goal new with only a --body is refused" "goal new requires --title"
+  grun phase new --title "no goal"
+  _s2_refused "phase new with no --goal is refused" "phase new requires --goal"
+  grun phase new --goal "$goal"
+  _s2_refused "phase new with no --title is refused" "phase new requires --title"
+  grun goal show
+  _s2_refused "goal show with no id is refused" "goal show requires a GOAL-ID"
+  grun goal move "$goal"
+  _s2_refused "goal move with no status is refused" "goal move requires a status"
+  grun goal priority "$goal"
+  _s2_refused "goal priority with no priority is refused" "goal priority requires a priority"
+  grun req assign "$req"
+  _s2_refused "req assign with no phase is refused" "req assign requires a PHASE-NNN"
+  grun req assign
+  _s2_refused "req assign with no requirement is refused" "req assign requires a REQ-NNN"
+
+  # ---- unknown ids, and ids of the wrong kind ----
+  #
+  # The two are different failures and must read differently: GOAL-404 is a well-formed
+  # reference to something that is not there (the caller mistyped a number, or is acting
+  # on a stale board), while REQ-001 in a goal slot is a caller confusing two id spaces.
+  # A single "not found" for both sends the second one looking for a missing row.
+  grun goal show GOAL-404
+  _s2_refused "goal show on an unknown goal reports the miss" "GOAL-404 not found"
+  grun goal move GOAL-404 'done'
+  _s2_refused "goal move on an unknown goal reports the miss" "GOAL-404 not found"
+  grun goal priority GOAL-404 3
+  _s2_refused "goal priority on an unknown goal reports the miss" "GOAL-404 not found"
+  grun phase move PHASE-404 'done'
+  _s2_refused "phase move on an unknown phase reports the miss" "PHASE-404 not found"
+  grun phase new --goal GOAL-404 --title "orphan"
+  _s2_refused "phase new under an unknown goal reports the miss" "GOAL-404 not found"
+  grun req assign REQ-404 "$phase"
+  _s2_refused "req assign with an unknown requirement reports the miss" "REQ-404 not found"
+  grun req assign "$req" PHASE-404
+  _s2_refused "req assign to an unknown phase reports the miss" "PHASE-404 not found"
+
+  grun goal show "$req"
+  _s2_refused "a REQ id in a goal slot is a KIND error, not a miss" "unrecognized direction id"
+  grun goal move "$phase" 'done'
+  _s2_refused "a PHASE id in a goal slot is a kind error" "is not a goal id"
+  grun req assign "$goal" "$phase"
+  _s2_refused "a GOAL id in a requirement slot is a kind error" "unrecognized id"
+  grun req assign "$req" "$goal"
+  _s2_refused "a GOAL id in a phase slot names the 'none' escape hatch" "use 'none' to detach"
+
+  # ---- closed vocabularies ----
+  grun goal move "$goal" bogus
+  _s2_refused "an invalid goal status is refused, listing the legal ones" "allowed: todo in-progress done"
+  grun phase move "$phase" failed
+  _s2_refused "'failed' is a task status, not a phase status" "invalid status 'failed'"
+  grun goal priority "$goal" 0
+  _s2_refused "priority 0 is refused" "priority must be 1-5"
+  grun goal priority "$goal" 6
+  _s2_refused "priority 6 is refused" "priority must be 1-5"
+  grun goal priority "$goal" high
+  _s2_refused "a word priority is refused" "priority must be 1-5"
+  grun phase new --goal "$goal" --title "bad ordinal" --ordinal x
+  _s2_refused "a non-numeric --ordinal is refused" "--ordinal must be a whole number"
+  grun phase new --goal "$goal" --title "huge ordinal" --ordinal 1234567890
+  _s2_refused "an oversized --ordinal is refused" "--ordinal is too large"
+
+  # ---- the subcommand surface ----
+  grun goal
+  _s2_refused "bare 'guild goal' prints the usage block" "goal needs a subcommand"
+  grun phase
+  _s2_refused "bare 'guild phase' prints the usage block" "phase needs a subcommand"
+  grun req
+  _s2_refused "bare 'guild req' prints the usage block" "req needs a subcommand"
+  grun goal bogus
+  _s2_refused "an unknown goal subcommand names the real ones" "(new|list|show|move|priority)"
+  grun phase bogus
+  _s2_refused "an unknown phase subcommand names the real ones" "(new|list|move)"
+  grun req bogus
+  _s2_refused "an unknown req subcommand names the real one" "(assign)"
+
+  # ---- the round trip: everything above replays out of the journal ----
+  #
+  # `export --json` before and after `rebuild`, which is the harness's standing definition
+  # of "the journal is a faithful record". It is the assertion that matters most for the
+  # nullable link: `phase_id` is the one column here that is legitimately absent, and an
+  # absent value is exactly what a JSON round trip through a replay tends to turn into an
+  # empty string.
+  grun export --json
+  printf '%s\n' "$G_OUT" >"$T2/dir-before.json"
+  grun rebuild
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild rebuild replays the direction layer"; else
+    t_fail "guild rebuild replays the direction layer" "rc=$G_RC
+$G_ERR"; fi
+  grun export --json
+  printf '%s\n' "$G_OUT" >"$T2/dir-after.json"
+  t_check "and the replayed state is identical" "$(diff "$T2/dir-before.json" "$T2/dir-after.json" 2>&1)"
+
+  out="$(printf "SELECT COUNT(*) FROM requirement WHERE phase_id IS NULL;\n" | tsql "$db")"
+  want_eq "the un-phased requirement is still NULL after the replay, not ''" "1" "$out"
+  out="$(printf "SELECT COUNT(*) FROM requirement WHERE phase_id = '';\n" | tsql "$db")"
+  want_eq "and no requirement acquired an empty-string phase" "0" "$out"
+  grun goal show "$goal"
+  want_contains "and goal show still renders the whole hierarchy" "### PHASE-001 — Commands" "$G_OUT"
+
+  unset GUILD_DIR
+  return 0
+}
+
+# ---- S2.2 · records: bugs and the knowledge base -----------------------------------
+#
+# `doc search` is the one query in this CLI that builds a LIKE PATTERN OUT OF USER INPUT,
+# and that makes `%` and `_` structural tokens in a channel nobody thinks of as
+# structured. A query of `%` that matches every document is not a cosmetic bug: `doc
+# search` is how the architect finds prior art before planning, so "everything matches"
+# and "nothing matches" are the two ways to make the knowledge base useless, and an
+# unescaped metacharacter produces the first one silently.
+t2_records() {
+  local db bug req out n f
+  section "Tier 2 · Stage 2 · records (bugs and the knowledge base)"
+
+  _t2_project records 2026-01-01 || return 0
+  db="$(_t2_db)"
+
+  # ---- the empty guild ----
+  grun bug list
+  if [ "$G_RC" -eq 0 ] && [ -z "$G_OUT" ]; then t_pass "bug list on an empty guild is empty and exits 0"; else
+    t_fail "bug list on an empty guild is empty and exits 0" "rc=$G_RC out=$G_OUT"; fi
+  grun doc list
+  if [ "$G_RC" -eq 0 ] && [ -z "$G_OUT" ]; then t_pass "doc list on an empty guild is empty and exits 0"; else
+    t_fail "doc list on an empty guild is empty and exits 0" "rc=$G_RC out=$G_OUT"; fi
+  grun doc search anything
+  if [ "$G_RC" -eq 0 ] && [ -z "$G_OUT" ]; then t_pass "doc search on an empty guild is empty and exits 0"; else
+    t_fail "doc search on an empty guild is empty and exits 0" "rc=$G_RC out=$G_OUT"; fi
+  _s2_mark
+  grun bug show BUG-001
+  _s2_refused "bug show on an empty guild reports the miss" "BUG-001 not found"
+  grun doc get nothing-here
+  _s2_refused "doc get on an empty guild reports the miss" "not found"
+
+  # ---- bugs: the happy path ----
+  grun new req --title "Checkout"
+  req="$G_OUT"
+  grun bug new --title "Crash on save" --severity critical --req "$req" \
+    --repro "1. open the form
+2. press save" --found-by qa-tester
+  _s2_ok "bug new creates a bug" || return 0
+  bug="${G_OUT%% *}"
+  want_eq "bug new derives the id in SQL" "BUG-001" "$bug"
+  want_eq "bug new echoes back the id and the title" "BUG-001 Crash on save" "$G_OUT"
+
+  grun bug new --title "Minor typo"
+  _s2_ok "a bug needs only a --title" || return 0
+  grun bug list
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C grep '^BUG-002 ')"
+  want_eq "an omitted --severity defaults to major" "BUG-002 open major null Minor typo" "$out"
+
+  grun bug list
+  n="$(_t2_lines "$G_OUT" '^BUG-')"
+  want_eq "bug list shows both bugs" "2" "$n"
+  want_contains "bug list is columnar: id, status, severity, req, title" \
+    "BUG-001 open critical $req Crash on save" "$G_OUT"
+  grun bug list --severity critical
+  want_eq "bug list --severity filters" "BUG-001 open critical $req Crash on save" "$G_OUT"
+  grun bug list open --severity major
+  want_eq "the two filters compose" "BUG-002 open major null Minor typo" "$G_OUT"
+
+  grun bug show "$bug"
+  n="$(_t2_lines "$G_OUT" '^---$')"
+  want_eq "bug show opens and closes exactly one frontmatter fence" "2" "$n"
+  want_contains "bug show carries the title as a quoted YAML scalar" 'title: "Crash on save"' "$G_OUT"
+  want_contains "bug show links the requirement" "requirement: $req" "$G_OUT"
+  want_contains "bug show prints null for an unlinked fix task" "fix-task: null" "$G_OUT"
+  want_contains "bug show renders the reproduction steps" "2. press save" "$G_OUT"
+  # Both sections always appear, so a reader never has to tell "no steps" from a
+  # rendering that stopped early.
+  want_contains "an empty body still renders its section with a placeholder" "_No details recorded._" "$G_OUT"
+
+  # ---- bug transitions ----
+  grun new task --title "Fix the crash" --agent developer --req "$req"
+  out="$G_OUT"
+  grun bug fix "$bug" --task "$out"
+  want_eq "bug fix links the fix task" "$bug" "$G_OUT"
+  grun bug list
+  want_contains "and moves the bug to 'fixing'" "BUG-001 fixing critical" "$G_OUT"
+  grun bug show "$bug"
+  want_contains "and bug show names the fix task" "fix-task: $out" "$G_OUT"
+  grun bug close "$bug"
+  want_eq "bug close closes it" "$bug" "$G_OUT"
+  grun bug list
+  want_contains "as 'fixed'" "BUG-001 fixed critical" "$G_OUT"
+  grun bug close BUG-002 --wontfix
+  grun bug list
+  want_contains "and --wontfix is a separate outcome, not a lesser 'fixed'" "BUG-002 wontfix major" "$G_OUT"
+  grun bug list open
+  if [ -z "$G_OUT" ]; then t_pass "neither closed bug is still open"; else
+    t_fail "neither closed bug is still open" "$G_OUT"; fi
+
+  want_eq "bug new wrote a 'created bug' event" "2" "$(_s2_events created bug)"
+  want_eq "bug fix and bug close each wrote a 'moved bug' event" "3" "$(_s2_events moved bug)"
+
+  # ---- bugs: refusals ----
+  _s2_mark
+  grun bug new
+  _s2_refused "bug new with no --title is refused" "bug new requires --title"
+  grun bug new --title "bad severity" --severity catastrophic
+  _s2_refused "an unknown severity is refused, listing the legal ones" "allowed: critical major minor"
+  grun bug new --title "bad req" --req REQ-404
+  _s2_refused "a bug filed against an unknown requirement is refused" "REQ-404 not found"
+  grun bug new --title "bad req kind" --req TASK-001
+  _s2_refused "a TASK id in --req is a kind error" "expected REQ-NNN"
+  grun bug show BUG-404
+  _s2_refused "bug show on an unknown bug reports the miss" "BUG-404 not found"
+  grun bug show REQ-001
+  _s2_refused "a REQ id in a bug slot is a kind error" "expected BUG-NNN"
+  grun bug fix BUG-404 --task TASK-001
+  _s2_refused "bug fix on an unknown bug reports a miss" "not found"
+  grun bug fix "$bug" --task TASK-404
+  _s2_refused "bug fix against an unknown task is refused, not left dangling" "TASK-404 not found"
+  grun bug fix "$bug"
+  _s2_refused "bug fix with no task is refused" "bug fix requires --task"
+  grun bug list nonsense
+  _s2_refused "an unknown bug status filter is refused, listing the legal ones" "allowed: open fixing fixed wontfix"
+  grun bug list --severity nonsense
+  _s2_refused "an unknown severity filter is refused" "unknown severity"
+  grun bug
+  _s2_refused "bare 'guild bug' prints the usage block" "bug needs a subcommand"
+  grun bug bogus
+  _s2_refused "an unknown bug subcommand names the real ones" "(new|list|show|fix|close)"
+
+  # ---- docs: put / get is a VERBATIM channel ----
+  #
+  # `doc get` prints the body alone, with no fence and no heading, precisely so that a
+  # document containing `---` and its own front matter round-trips. That makes byte
+  # equality — not "contains" — the right assertion, and the trailing newline is part of
+  # it: `--body "$(cat f)"` loses one and `--file` must not.
+  f="$T2/rec-doc.md"
+  printf -- '---\ntitle: a doc with its own front matter\n---\n\n# Notes\n\nA line ending in a semicolon;\nand a literal %% and a literal _ in prose.\n' >"$f"
+  grun doc put form-actions --title "SvelteKit form actions" --file "$f"
+  want_eq "doc put --file stores a whole file and prints the slug" "form-actions" "$G_OUT"
+  "$GUILD" doc get form-actions >"$T2/rec-doc.out" 2>/dev/null
+  t_check "doc get round-trips the file BYTE FOR BYTE, trailing newline included" \
+    "$(cmp "$f" "$T2/rec-doc.out" 2>&1)"
+
+  grun doc put inline-doc --title "Inline" --body "short body"
+  want_eq "doc put --body stores an inline body" "inline-doc" "$G_OUT"
+  grun doc get inline-doc
+  want_eq "and doc get returns it" "short body" "$G_OUT"
+
+  # An upsert, not an insert: the slug is the key and re-filing it replaces the body.
+  grun doc put inline-doc --title "Inline, revised" --body "revised body"
+  grun doc get inline-doc
+  want_eq "doc put is an upsert — the second put replaces the body" "revised body" "$G_OUT"
+  out="$(printf "SELECT COUNT(*) FROM doc WHERE slug = 'inline-doc';\n" | tsql "$db")"
+  want_eq "and there is still exactly one row for the slug" "1" "$out"
+  want_eq "the first put wrote a 'created doc' event" "2" "$(_s2_events created doc)"
+  want_eq "and the re-put wrote an 'updated doc' event, not a second 'created'" "1" "$(_s2_events updated doc)"
+
+  # `--source` is provenance and an omitted one on an UPDATE must not erase it.
+  out="$(printf "SELECT source FROM doc WHERE slug = 'form-actions';\n" | tsql "$db")"
+  want_eq "doc put --file records the file as the source" "$f" "$out"
+
+  grun doc list
+  n="$(_t2_lines "$G_OUT" '^')"
+  want_eq "doc list shows both docs" "2" "$n"
+  want_contains "doc list is columnar: slug, updated date, title" "inline-doc 2026-" "$G_OUT"
+
+  # ---- doc search: substring, case, and the two LIKE metacharacters ----
+  grun doc put plain-doc --title "Plain" --body "nothing unusual in this body at all"
+  # The row is "<slug> <updated> <title>" and `updated` is the REAL clock (a doc is
+  # upserted now, not on the board's init date), so the assertion is the shape and the
+  # two fields this test is about — pinning the date here would make the suite fail on
+  # any day but one.
+  grun doc search "unusual"
+  n="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'END { print NR + 0 }')"
+  want_eq "doc search matches a substring of the body, returning one row" "1" "$n"
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk '{ print $1 " " $3 }')"
+  want_eq "and the row is the right doc, with its title in the last column" "plain-doc Plain" "$out"
+  grun doc search "UNUSUAL"
+  n="$(_t2_lines "$G_OUT" '^plain-doc ')"
+  want_eq "doc search is case-insensitive on the query" "1" "$n"
+  grun doc search "pLaIn"
+  n="$(_t2_lines "$G_OUT" '^plain-doc ')"
+  want_eq "and case-insensitive on the title too" "1" "$n"
+  grun doc search "in this body"
+  n="$(_t2_lines "$G_OUT" '^plain-doc ')"
+  want_eq "a multi-word query is a substring, not a word set" "1" "$n"
+  grun doc search "body this in"
+  if [ -z "$G_OUT" ]; then t_pass "and the words in the wrong order match nothing"; else
+    t_fail "and the words in the wrong order match nothing" "$G_OUT"; fi
+
+  # THE METACHARACTER TEST. Three docs exist; exactly ONE of them (form-actions) contains
+  # a literal `%` and a literal `_`. An unescaped pattern makes `%` match all three and
+  # `_` match all three; correct escaping makes each match exactly the one document that
+  # really contains the character.
+  n="$(printf "SELECT COUNT(*) FROM doc;\n" | tsql "$db")"
+  want_eq "three docs are on the board for the metacharacter test" "3" "$n"
+  grun doc search "%"
+  n="$(_t2_lines "$G_OUT" '^')"
+  want_eq "a query of '%' matches ONLY the doc that contains a literal % (not all 3)" "1" "$n"
+  want_contains "and it is the right one" "form-actions" "$G_OUT"
+  grun doc search "_"
+  n="$(_t2_lines "$G_OUT" '^')"
+  want_eq "a query of '_' matches ONLY the doc that contains a literal _ (not all 3)" "1" "$n"
+  want_contains "and it is the right one" "form-actions" "$G_OUT"
+  # `_` is a SINGLE-character wildcard, so the giveaway pattern is one that would match
+  # across a gap: `a_l` unescaped matches "all", escaped matches nothing.
+  grun doc search "a_l"
+  if [ -z "$G_OUT" ]; then t_pass "'a_l' matches nothing — the _ is a literal, not a wildcard"; else
+    t_fail "'a_l' matches nothing — the _ is a literal, not a wildcard" \
+      "it matched, so '_' is still a single-character wildcard:
+$G_OUT"; fi
+  grun doc search "%%%"
+  if [ -z "$G_OUT" ]; then t_pass "'%%%' matches nothing — three literal percent signs"; else
+    t_fail "'%%%' matches nothing — three literal percent signs" "$G_OUT"; fi
+  # The escape character itself. `ESCAPE '\'` makes a lone backslash in the pattern the
+  # start of an escape sequence, so a query containing one must be escaped in turn or
+  # the engine rejects the pattern outright.
+  grun doc put slashy --title "Backslash" --body 'a windows path C:\dir\file'
+  grun doc search "\\"
+  n="$(_t2_lines "$G_OUT" '^slashy ')"
+  want_eq "a query of a lone backslash matches only the doc containing one" "1" "$n"
+  grun doc search 'C:\dir'
+  n="$(_t2_lines "$G_OUT" '^slashy ')"
+  want_eq "and a path containing backslashes matches literally" "1" "$n"
+  grun doc search "zzzz-no-such-text"
+  if [ "$G_RC" -eq 0 ] && [ -z "$G_OUT" ]; then t_pass "a search that matches nothing is empty and exits 0"; else
+    t_fail "a search that matches nothing is empty and exits 0" "rc=$G_RC out=$G_OUT"; fi
+
+  # ---- docs: refusals ----
+  _s2_mark
+  grun doc put my-slug
+  _s2_refused "doc put with no --title is refused" "doc put requires --title"
+  grun doc put my-slug --title "No body"
+  _s2_refused "doc put with no body is refused, because put is an UPSERT" "requires --body or --file"
+  grun doc put my-slug --title T --body b --file "$f"
+  _s2_refused "doc put with both --body and --file is refused" "not both"
+  grun doc put my-slug --title T --file "$T2/definitely-absent.md"
+  _s2_refused "doc put --file on a missing file names the file" "no such file"
+  grun doc put my-slug --title T --file "$T2"
+  _s2_refused "doc put --file on a directory is refused" "not a regular file"
+  grun doc put
+  _s2_refused "doc put with no slug is refused" "requires a doc slug"
+  grun doc put --title "flag as slug" --body b
+  _s2_refused "a flag in the slug position is reported as a bad slug, not looked up" "did you mean a flag"
+  grun doc put "My Notes" --title T --body b
+  _s2_refused "a slug with a space is refused rather than silently slugified" "is not a valid doc slug"
+  grun doc put "café" --title T --body b
+  _s2_refused "a non-ASCII slug is refused, and says where the human form goes" "put the human-readable"
+  grun doc put "$(_t2_bigval 121)" --title T --body b
+  _s2_refused "a 121-character slug is refused" "the limit is 120"
+  grun doc get
+  _s2_refused "doc get with no slug is refused" "requires a doc slug"
+  grun doc get no-such-doc
+  _s2_refused "doc get on an unknown slug names the way to list them" "guild doc list"
+  grun doc search
+  _s2_refused "doc search with no query is refused, not turned into 'list everything'" "doc search requires a query"
+  grun doc search ""
+  _s2_refused "and an EMPTY query is refused too (it would escape to '%%')" "doc search requires a query"
+  grun doc
+  _s2_refused "bare 'guild doc' prints the usage block" "doc needs a subcommand"
+  grun doc bogus
+  _s2_refused "an unknown doc subcommand names the real ones" "(put|get|list|search)"
+
+  # ---- the round trip ----
+  grun export --json
+  printf '%s\n' "$G_OUT" >"$T2/rec-before.json"
+  grun rebuild
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild rebuild replays bugs and docs"; else
+    t_fail "guild rebuild replays bugs and docs" "rc=$G_RC
+$G_ERR"; fi
+  grun export --json
+  printf '%s\n' "$G_OUT" >"$T2/rec-after.json"
+  t_check "and the replayed state is identical" "$(diff "$T2/rec-before.json" "$T2/rec-after.json" 2>&1)"
+  "$GUILD" doc get form-actions >"$T2/rec-doc2.out" 2>/dev/null
+  t_check "and the doc is still byte-identical to the file it came from" \
+    "$(cmp "$f" "$T2/rec-doc2.out" 2>&1)"
+
+  unset GUILD_DIR
+  return 0
+}
+
+# ---- S2.2b · coverage: the quality areas, and the inspection clock -------------------
+#
+# Stage 2 shipped `coverage` as a read surface with exactly one producer — `guild init`'s
+# v4 carry-over, which runs once and never again — so the brief's "N area(s) due for
+# inspection" and the dashboard's Coverage view were frozen from the moment a guild was
+# created, and on a greenfield guild they were empty forever. Stage 2b gave the table a
+# writer, and the two properties that writer has to hold are UPSERT (a strategist
+# re-surveying a product must update the row it wrote last time, not fork a near-duplicate
+# that double-counts every "due" number) and A CLOCK ONLY `inspect` TOUCHES (re-rating an
+# area's risk must not read as "somebody just looked at it", which is the one way to make
+# a staleness query lie in the direction that hides work).
+t2_coverage() {
+  local db out n
+  section "Tier 2 · Stage 2 · coverage (the quality areas and the inspection clock)"
+
+  _t2_project coverage 2026-01-01 || return 0
+  db="$(_t2_db)"
+
+  # ---- the empty guild ----
+  grun coverage list
+  if [ "$G_RC" -eq 0 ] && [ -z "$G_OUT" ]; then t_pass "coverage list on an empty guild is empty and exits 0"; else
+    t_fail "coverage list on an empty guild is empty and exits 0" "rc=$G_RC out=$G_OUT"; fi
+  _s2_mark
+  grun coverage show checkout
+  _s2_refused "coverage show on an empty guild reports the miss" "checkout not found"
+  grun coverage inspect checkout
+  _s2_refused "coverage inspect on an unknown area reports the miss" "checkout not found"
+
+  # ---- the happy path ----
+  grun coverage set checkout --area "Checkout flow" --risk high --notes "payment + money movement"
+  _s2_ok "coverage set creates an area" || return 0
+  want_eq "coverage set echoes the id and the human name" "checkout Checkout flow" "$G_OUT"
+  grun coverage set auth --area "Authentication" --risk high --spec "e2e/auth/login.spec.ts"
+  _s2_ok "an area can carry a committed spec path" || return 0
+  grun coverage set marketing --area "Marketing pages" --risk low
+  _s2_ok "and an area needs only --area" || return 0
+  grun coverage set smoke --area "Smoke"
+  grun coverage list
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C grep '^smoke ')"
+  want_eq "an omitted --risk defaults to the column default" "smoke medium never none Smoke" "$out"
+
+  grun coverage list
+  n="$(_t2_lines "$G_OUT" '^[a-z]')"
+  want_eq "coverage list shows every area" "4" "$n"
+  want_contains "coverage list is columnar: id, risk, last-inspected, spec, area" \
+    "auth high never e2e/auth/login.spec.ts Authentication" "$G_OUT"
+  want_contains "and an area with no spec prints 'none', not a blank column" \
+    "checkout high never none Checkout flow" "$G_OUT"
+  grun coverage list --risk low
+  want_eq "coverage list --risk filters" "marketing low never none Marketing pages" "$G_OUT"
+
+  # ---- the upsert: preserve what was not passed, NEVER the clock ----
+  grun coverage inspect auth
+  want_eq "coverage inspect stamps the area and echoes its id" "auth" "$G_OUT"
+  grun coverage list
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C grep '^auth ')"
+  case "$out" in
+    'auth high 20'*' e2e/auth/login.spec.ts Authentication') t_pass "and the stamp shows up as a date, not 'never'" ;;
+    *) t_fail "and the stamp shows up as a date, not 'never'" "$out" ;;
+  esac
+
+  grun coverage set auth --area "Authentication" --notes "session expiry edges"
+  _s2_ok "coverage set on an existing area succeeds" || return 0
+  grun coverage list
+  n="$(_t2_lines "$G_OUT" '^[a-z]')"
+  want_eq "and does NOT fork a second row" "4" "$n"
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C grep '^auth ')"
+  case "$out" in
+    'auth high 20'*' e2e/auth/login.spec.ts Authentication')
+      t_pass "an omitted --risk/--spec keeps the stored values, and the CLOCK IS UNTOUCHED" ;;
+    *) t_fail "an omitted --risk/--spec keeps the stored values, and the CLOCK IS UNTOUCHED" \
+         "risk, spec or last_inspected_at moved on a set that named none of them: $out" ;;
+  esac
+  grun coverage show auth
+  want_contains "and the new notes did land" "session expiry edges" "$G_OUT"
+
+  # `--spec ''` is the explicit clear: a spec can be deleted from the repo, and "" is the
+  # only way for a caller to say so through a flag whose absence means "keep".
+  grun coverage set auth --area "Authentication" --spec ""
+  grun coverage list
+  want_contains "an explicit empty --spec clears the spec path" "auth high" "$G_OUT"
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C grep '^auth ' | LC_ALL=C awk '{ print $4 }')"
+  want_eq "and it reads back as 'none'" "none" "$out"
+
+  # ---- `--due` is the brief's own predicate, not a second one ----
+  grun coverage list --due
+  n="$(_t2_lines "$G_OUT" '^[a-z]')"
+  want_eq "coverage list --due hides the freshly inspected area" "3" "$n"
+  grun brief
+  want_contains "and the brief agrees about the count" "3 area(s) due for inspection" "$G_OUT"
+  grun coverage inspect checkout --date 2020-01-01
+  grun coverage list --due
+  n="$(_t2_lines "$G_OUT" '^checkout ')"
+  want_eq "a high-risk area inspected in 2020 is due again (14-day threshold)" "1" "$n"
+
+  # ---- coverage show ----
+  grun coverage show checkout
+  n="$(_t2_lines "$G_OUT" '^---$')"
+  want_eq "coverage show opens and closes exactly one frontmatter fence" "2" "$n"
+  want_contains "coverage show carries the area as a quoted YAML scalar" 'area: "Checkout flow"' "$G_OUT"
+  want_contains "coverage show prints null for an area with no spec" "spec: null" "$G_OUT"
+  grun coverage show smoke
+  want_contains "an area with no notes still renders its section with a placeholder" \
+    "_No notes recorded._" "$G_OUT"
+
+  # ---- rule 5: every mutation wrote an event ----
+  want_eq "coverage set wrote a 'created coverage' event per new area" "4" "$(_s2_events created coverage)"
+  want_eq "and an 'updated coverage' event per re-survey" "2" "$(_s2_events updated coverage)"
+  want_eq "coverage inspect wrote an 'inspected coverage' event" "2" "$(_s2_events inspected coverage)"
+
+  # ---- refusals ----
+  _s2_mark
+  grun coverage set
+  _s2_refused "coverage set with no area id is refused" "requires a coverage area id"
+  grun coverage set checkout
+  _s2_refused "coverage set with no --area is refused" "requires --area"
+  grun coverage set "Checkout Flow" --area x
+  _s2_refused "an area id with a space is refused rather than silently slugified" \
+    "is not a valid coverage area id"
+  grun coverage set --area x
+  _s2_refused "a flag in the area-id position is reported as a bad id, not looked up" "did you mean a flag"
+  grun coverage set ok --area x --risk urgent
+  _s2_refused "an unknown risk is refused, listing the legal ones" "allowed: high medium low"
+  grun coverage list --risk urgent
+  _s2_refused "and the list filter validates the same vocabulary" "allowed: high medium low"
+  grun coverage set checkout "Checkout flow"
+  _s2_refused "a forgotten --area is caught as a stray positional, not stored as the name" \
+    "unexpected argument"
+  grun coverage inspect
+  _s2_refused "coverage inspect with no area id is refused" "requires a coverage area id"
+  grun coverage show nope
+  _s2_refused "coverage show on an unknown area reports the miss" "nope not found"
+  grun coverage
+  _s2_refused "bare 'guild coverage' prints the usage block" "coverage needs a subcommand"
+  grun coverage bogus
+  _s2_refused "an unknown coverage subcommand names the real ones" "(set|inspect|list|show)"
+
+  # ---- the round trip ----
+  grun export --json
+  printf '%s\n' "$G_OUT" >"$T2/cov-before.json"
+  out="$(printf "SELECT id || '|' || area || '|' || risk || '|' || COALESCE(spec_path,'') || '|' || COALESCE(last_inspected_at,'') || '|' || notes FROM coverage ORDER BY id;\n" | tsql "$db")"
+  printf '%s\n' "$out" >"$T2/cov-rows-before"
+  grun rebuild
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild rebuild replays coverage rows"; else
+    t_fail "guild rebuild replays coverage rows" "rc=$G_RC
+$G_ERR"; fi
+  out="$(printf "SELECT id || '|' || area || '|' || risk || '|' || COALESCE(spec_path,'') || '|' || COALESCE(last_inspected_at,'') || '|' || notes FROM coverage ORDER BY id;\n" | tsql "$db")"
+  printf '%s\n' "$out" >"$T2/cov-rows-after"
+  t_check "and every column survives the replay, including the inspection clock" \
+    "$(diff "$T2/cov-rows-before" "$T2/cov-rows-after" 2>&1)"
+
+  unset GUILD_DIR
+  return 0
+}
+
+# ---- S2.3 · the briefing -----------------------------------------------------------
+#
+# `guild brief` is what the guild:brief and guild:check-in skills read to decide what to
+# do next, so its failure mode is not a wrong number on a screen — it is an orchestrator
+# acting on a board state that never existed. Two properties carry that weight: the
+# EMPTY case has to be recognizably empty (an orchestrator that reads eight blank
+# sections as "nothing to do" and one that reads them as "the query broke" behave very
+# differently), and `--json` has to be VALID JSON, checked by a parser rather than by
+# eye, because the skill consumes it as data.
+t2_brief() {
+  local db req task out n before rows hexdoc
+  section "Tier 2 · Stage 2 · the briefing (guild brief)"
+
+  _t2_project brief 2026-01-01 || return 0
+  db="$(_t2_db)"
+
+  # ---- the empty guild ----
+  grun brief
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild brief on an empty guild exits 0"; else
+    t_fail "guild brief on an empty guild exits 0" "rc=$G_RC
+$G_ERR"; return 0; fi
+  want_contains "it says the guild is empty in words" "The guild is empty" "$G_OUT"
+  want_contains "and tells the reader how to start" "guild:new-requirement" "$G_OUT"
+  # An empty guild must NOT print the section scaffold — eight empty headings read as a
+  # broken query, which is the opposite of the message.
+  n="$(_t2_lines "$G_OUT" '^In Flight:$')"
+  want_eq "and prints no empty section scaffold" "0" "$n"
+
+  grun brief --json
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild brief --json on an empty guild exits 0"; else
+    t_fail "guild brief --json on an empty guild exits 0" "$G_ERR"; fi
+  out="$(printf "SELECT json_valid(CAST(x'%s' AS TEXT));\n" "$(_t2_hex "$G_OUT")" | tsql "$db" 2>&1)"
+  want_eq "and the empty briefing is still valid JSON" "1" "$out"
+  want_contains "with the summary object present and zeroed" '"req_total": 0' "$G_OUT"
+
+  # ---- a populated guild ----
+  grun goal new --title "Ship visibility" --priority 1
+  grun phase new --goal GOAL-001 --title "Commands"
+  grun new req --title "The dashboard"
+  req="$G_OUT"
+  grun req assign "$req" PHASE-001
+  grun new req --title "An unaffiliated chore"
+  grun new task --title "Build it" --agent developer --req "$req"
+  task="$G_OUT"
+  grun move "$task" in-progress
+  grun new task --title "Review it" --agent reviewer-security --req "$req"
+  grun bug new --title "Crash on save" --severity critical --found-by qa-tester
+  grun doc put notes --title "Notes" --body "some knowledge"
+
+  grun brief
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild brief on a populated guild exits 0"; else
+    t_fail "guild brief on a populated guild exits 0" "$G_ERR"; return 0; fi
+  want_contains "the briefing leads with the direction" "GOAL-001  [p1 todo]  Ship visibility" "$G_OUT"
+  want_contains "and names the phase the goal is on" "on PHASE-001 Commands" "$G_OUT"
+  want_contains "the in-flight section names the claimed task" "In Flight:" "$G_OUT"
+  n="$(_t2_lines "$G_OUT" "^  $task  Build it")"
+  want_eq "with exactly one line for it" "1" "$n"
+  want_contains "the bugs section carries severity, status and finder" \
+    "BUG-001  critical  open  Crash on save  ·  found by qa-tester" "$G_OUT"
+  want_contains "the summary counts both requirements" "2 requirement(s)" "$G_OUT"
+  want_contains "and reports the critical bug in the summary line" "1 open bug(s) (1 critical)" "$G_OUT"
+  want_contains "the activity feed is present" "Since Last Check-in:" "$G_OUT"
+
+  # ---- --since filters the activity feed, and nothing else ----
+  #
+  # The distinction matters: `--since` is "what moved", not "what exists". A --since in
+  # the future must empty the feed while leaving direction, bugs and bounties intact —
+  # an implementation that filtered the whole briefing would tell a returning
+  # orchestrator that the board is empty.
+  grun brief --since 2030-01-01
+  want_contains "brief --since reports the date it was given" "Since:     2030-01-01 (--since)" "$G_OUT"
+  want_contains "and the feed is empty for a future --since" "0 event(s) since" "$G_OUT"
+  n="$(_t2_lines "$G_OUT" '^Since Last Check-in:$')"
+  want_eq "so the activity section is omitted entirely" "0" "$n"
+  want_contains "but the direction is still reported" "GOAL-001" "$G_OUT"
+  want_contains "and so are the open bugs" "BUG-001" "$G_OUT"
+
+  grun brief --since 2020-01-01
+  want_contains "a --since in the past keeps the whole feed" "Since Last Check-in:" "$G_OUT"
+  n="$(_t2_lines "$G_OUT" '  created  ')"
+  if [ "$n" -ge 5 ]; then t_pass "with every creation event in it ($n lines)"; else
+    t_fail "with every creation event in it" "only $n 'created' lines in the feed"; fi
+
+  # ---- --json ----
+  grun brief --json
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild brief --json on a populated guild exits 0"; else
+    t_fail "guild brief --json on a populated guild exits 0" "$G_ERR"; fi
+  out="$(printf "SELECT json_valid(CAST(x'%s' AS TEXT));\n" "$(_t2_hex "$G_OUT")" | tsql "$db" 2>&1)"
+  want_eq "the populated briefing is valid JSON" "1" "$out"
+  # The counts a skill reads, checked through the JSON rather than the prose.
+  # The counts a skill reads, pulled out of the JSON by the engine's own parser rather
+  # than by a grep over the text — a grep would pass just as happily on a malformed
+  # document, which is the thing this check exists to rule out.
+  before="$G_OUT"
+  hexdoc="$(_t2_hex "$before")"
+  out="$(printf "SELECT json_extract(j, '\$.summary.req_total') || '/' || json_extract(j, '\$.summary.req_unattached') || '/' || json_extract(j, '\$.summary.bugs_critical') || '/' || json_extract(j, '\$.summary.docs_total') FROM (SELECT CAST(x'%s' AS TEXT) AS j);\n" \
+    "$hexdoc" | tsql "$db" 2>&1)"
+  want_eq "and its summary counts req_total/req_unattached/bugs_critical/docs_total" "2/1/1/1" "$out"
+  grun brief --since 2030-01-01 --json
+  out="$(printf "SELECT json_valid(CAST(x'%s' AS TEXT));\n" "$(_t2_hex "$G_OUT")" | tsql "$db" 2>&1)"
+  want_eq "--since composes with --json and stays valid JSON" "1" "$out"
+  out="$(printf "SELECT json_extract(CAST(x'%s' AS TEXT), '\$.summary.events_since');\n" "$(_t2_hex "$G_OUT")" | tsql "$db" 2>&1)"
+  want_eq "and the filter really reached the JSON surface" "0" "$out"
+  out="$(printf "SELECT json_array_length(json_extract(CAST(x'%s' AS TEXT), '\$.direction'));\n" "$hexdoc" | tsql "$db" 2>&1)"
+  want_eq "the JSON direction array holds the one goal" "1" "$out"
+
+  # ---- refusals ----
+  _s2_mark
+  grun brief --since
+  _s2_refused "brief --since with no date is refused" "--since needs a date"
+  grun brief --since notadate
+  _s2_refused "brief --since with a non-date is refused" "must start with a YYYY-MM-DD date"
+  grun brief --since "2026-01-01
+2026-02-02"
+  _s2_refused "a multi-line --since is refused" "must be a single line"
+  grun brief --nonsense
+  _s2_refused "an unknown brief option is refused" "unknown option"
+  grun brief tomorrow
+  _s2_refused "a positional argument to brief is refused" "takes no positional arguments"
+
+  # `guild brief` is a READ. Nothing it does may touch the board — a briefing that
+  # journals is a briefing that changes what the next one reports.
+  _s2_mark
+  grun brief >/dev/null
+  grun brief --json >/dev/null
+  grun brief --since 2020-01-01 >/dev/null
+  rows="$(_s2_state)"
+  n="$(_s2_jrn)"
+  want_eq "three briefings wrote no row" "$S2_ROWS" "$rows"
+  want_eq "and appended no journal line" "$S2_JRN" "$n"
+
+  unset GUILD_DIR
+  return 0
+}
+
+# ---- S2.4 · the adversarial matrix, applied to every Stage 2 text flag -------------
+#
+# The 13-case matrix (`_adv_value`) is reused rather than re-invented: it is the same
+# transport underneath, so the axes that have edges are the same ones — the `-m list`
+# field and row separators, SQL and shell quoting, non-ASCII, emptiness, length, and
+# case 10, the `;` that terminates a line inside an open string literal and ends the
+# statement as far as tursodb's script splitter is concerned.
+#
+# What is NEW here is the set of channels a value can now impersonate a token in:
+#
+#   goal show   `## Phases` — the anchor below which every line is generated, so a body
+#               that can plant a second one appends phases and requirements to what a
+#               reader takes for board state
+#   bug show    a `---` frontmatter fence and a fixed nine-field block, plus the
+#               `## Details` / `## Reproduction` anchors
+#   doc get     nothing at all — and that is the claim being tested. The body is stored
+#               and emitted VERBATIM because the channel has no structural token, so the
+#               assertion is byte equality, which is strictly stronger than any
+#               "contains" check elsewhere in this file.
+#   three columnar list surfaces, each read with awk by a caller
+
+# _s2_defused_goal <value> — the value as `guild goal show` must render it in a body:
+# `_art_defuse_body`'s three lines plus `## Phases`, each indented by exactly two spaces.
+# Computed here independently of the CLI, so a renderer that indents by three, or drops a
+# byte, or forgets the fourth heading, stops matching.
+_s2_defused_goal() {
+  printf '%s\n' "$1" | LC_ALL=C awk '
+    $0 == "---" || $0 == "## Follow-up Tasks" || $0 == "## Work Log" || $0 == "## Phases" { print "  " $0; next }
+    { print }
+  '
+}
+
+# _s2_defused_bug <value> — the same, for `bug show`'s two anchors.
+_s2_defused_bug() {
+  printf '%s\n' "$1" | LC_ALL=C awk '
+    $0 == "---" || $0 == "## Follow-up Tasks" || $0 == "## Work Log" \
+      || $0 == "## Details" || $0 == "## Reproduction" { print "  " $0; next }
+    { print }
+  '
+}
+
+t2_stage2_matrix() {
+  local i v label db goal bug slug out n req
+  section "Tier 2 · Stage 2 · adversarial input matrix (goal / phase / bug / doc)"
+
+  _t2_project s2adv 2026-01-01 || return 0
+  db="$(_t2_db)"
+
+  grun new req --title "carrier requirement"
+  req="$G_OUT"
+
+  i=1
+  while [ "$i" -le "$(_adv_count)" ]; do
+    v="$(_adv_value "$i")"
+    label="$(_adv_label "$i")"
+
+    # --- goal new: --title and --body ---
+    grun goal new --title "$v" --body "$v"
+    goal="${G_OUT%% *}"
+    if [ "$G_RC" -eq 0 ] && [ -n "$goal" ]; then
+      t_pass "[$label] goal new accepts the value in --title and --body"
+    else
+      t_fail "[$label] goal new accepts the value in --title and --body" "rc=$G_RC
+$(printf '%s' "$G_ERR" | head -3)"
+      i=$((i + 1))
+      continue
+    fi
+
+    # The echoed line is "<ID> <flattened title>" and must stay ONE line: a caller
+    # creating several goals in a script reads it back as a record.
+    n="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'END { print NR + 0 }')"
+    want_eq "[$label] goal new echoes exactly one line" "1" "$n"
+
+    grun goal show "$goal"
+    case "$G_OUT" in
+      *"$(_s2_defused_goal "$v")"*) t_pass "[$label] the goal --body survives whole into goal show" ;;
+      *) t_fail "[$label] the goal --body survives whole into goal show" \
+           "the rendered body is not the value, even allowing for the documented two-space
+neutralization of '---' / '## Work Log' / '## Follow-up Tasks' / '## Phases'" ;;
+    esac
+    n="$(_t2_lines "$G_OUT" '^## Phases$')"
+    want_eq "[$label] goal show still emits exactly one '## Phases' anchor" "1" "$n"
+    n="$(_t2_lines "$G_OUT" '^# GOAL-')"
+    want_eq "[$label] and exactly one document heading" "1" "$n"
+    n="$(_t2_lines "$G_OUT" '^### PHASE-')"
+    want_eq "[$label] and no forged phase section" "0" "$n"
+
+    # --- phase new: --title, under that goal ---
+    grun phase new --goal "$goal" --title "$v"
+    if [ "$G_RC" -eq 0 ] && [ -n "$G_OUT" ]; then
+      t_pass "[$label] phase new accepts the value in --title"
+    else
+      t_fail "[$label] phase new accepts the value in --title" "rc=$G_RC
+$(printf '%s' "$G_ERR" | head -3)"
+    fi
+
+    # --- goal list / phase list: one row per row, whatever a title contains ---
+    grun goal list
+    n="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'END { print NR + 0 }')"
+    out="$(printf "SELECT COUNT(*) FROM goal;\n" | tsql "$db")"
+    want_eq "[$label] goal list prints exactly one line per goal row" "$out" "$n"
+    out="$(_t2_lines "$G_OUT" "^$goal ")"
+    want_eq "[$label] and the value's own goal row appears exactly once" "1" "$out"
+    grun phase list
+    n="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'END { print NR + 0 }')"
+    out="$(printf "SELECT COUNT(*) FROM phase;\n" | tsql "$db")"
+    want_eq "[$label] phase list prints exactly one line per phase row" "$out" "$n"
+
+    # --- bug new: --title, --body, --repro, --found-by ---
+    grun bug new --title "$v" --body "$v" --repro "$v" --found-by "$v" --req "$req"
+    bug="${G_OUT%% *}"
+    if [ "$G_RC" -eq 0 ] && [ -n "$bug" ]; then
+      t_pass "[$label] bug new accepts the value in --title, --body, --repro and --found-by"
+    else
+      t_fail "[$label] bug new accepts the value in --title, --body, --repro and --found-by" "rc=$G_RC
+$(printf '%s' "$G_ERR" | head -3)"
+      i=$((i + 1))
+      continue
+    fi
+    n="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'END { print NR + 0 }')"
+    want_eq "[$label] bug new echoes exactly one line" "1" "$n"
+
+    grun bug show "$bug"
+    case "$G_OUT" in
+      *"$(_s2_defused_bug "$v")"*) t_pass "[$label] the bug --body and --repro survive into bug show" ;;
+      *) t_fail "[$label] the bug --body and --repro survive into bug show" \
+           "the rendered body is not the value, even allowing for the documented two-space
+neutralization of '---' / '## Details' / '## Reproduction'" ;;
+    esac
+    # The frontmatter block is a FIXED nine-field set that every skill parses by line. A
+    # value able to span lines forges a field (line-order parsers take the first `status:`)
+    # or closes the fence early, making the rest of the document attacker-authored.
+    n="$(_t2_lines "$G_OUT" '^---$')"
+    want_eq "[$label] bug show opens and closes exactly one frontmatter fence" "2" "$n"
+    out="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk '
+      /^---$/ { seen++; next }
+      seen == 1 { n++ }
+      END { print n + 0 }')"
+    want_eq "[$label] and the frontmatter block is exactly its 9 real fields" "9" "$out"
+    # SCOPED TO THE BLOCK, not to the document. Case 13's value contains the literal
+    # lines `id: TASK-999` and `status: done`, and it is stored in --body and --repro —
+    # so those lines appear in the RENDERED BODY three times over, legitimately and by
+    # design. Counting them document-wide would be asserting that a bug report may not
+    # quote a frontmatter field, which is not the property; the property is that the
+    # parsed block above the closing fence holds exactly one of each.
+    out="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk '
+      /^---$/ { seen++; next }
+      seen == 1 && /^id: / { n++ }
+      END { print n + 0 }')"
+    want_eq "[$label] the block carries exactly one id field" "1" "$out"
+    out="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk '
+      /^---$/ { seen++; next }
+      seen == 1 && /^status: / { n++ }
+      END { print n + 0 }')"
+    want_eq "[$label] and exactly one status field" "1" "$out"
+    n="$(_t2_lines "$G_OUT" '^## Details$')"
+    want_eq "[$label] and exactly one '## Details' anchor" "1" "$n"
+    n="$(_t2_lines "$G_OUT" '^## Reproduction$')"
+    want_eq "[$label] and exactly one '## Reproduction' anchor" "1" "$n"
+
+    grun bug list
+    n="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'END { print NR + 0 }')"
+    out="$(printf "SELECT COUNT(*) FROM bug;\n" | tsql "$db")"
+    want_eq "[$label] bug list prints exactly one line per bug row" "$out" "$n"
+    out="$(_t2_lines "$G_OUT" "^$bug ")"
+    want_eq "[$label] and the value's own bug row appears exactly once" "1" "$out"
+
+    # --- doc put --body / doc get: the verbatim channel, asserted as byte equality ---
+    slug="adv-$i"
+    grun doc put "$slug" --title "$v" --body "$v" --source "$v"
+    want_eq "[$label] doc put accepts the value in --title, --body and --source" "$slug" "$G_OUT"
+    printf '%s' "$v" >"$T2/s2adv-want"
+    "$GUILD" doc get "$slug" >"$T2/s2adv-got" 2>/dev/null
+    t_check "[$label] doc get returns the body BYTE FOR BYTE" \
+      "$(cmp "$T2/s2adv-want" "$T2/s2adv-got" 2>&1 | head -2)"
+
+    grun doc list
+    n="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'END { print NR + 0 }')"
+    out="$(printf "SELECT COUNT(*) FROM doc;\n" | tsql "$db")"
+    want_eq "[$label] doc list prints exactly one line per doc row" "$out" "$n"
+    out="$(_t2_lines "$G_OUT" "^$slug ")"
+    want_eq "[$label] and the value's own doc row appears exactly once" "1" "$out"
+
+    # --- coverage set: --area, --spec and --notes ---
+    # A SPEC PATH IS THE PAYLOAD CARRIER HERE. It is pasted out of a test runner's output
+    # into a columnar surface, where it is the fourth of five fields — so a value able to
+    # hold a blank splits the row and every `awk '$2=="high"'` after it reads the wrong
+    # column, which is the same failure `bug list` was hardened against one surface over.
+    grun coverage set "adv-$i" --area "$v" --spec "$v" --notes "$v"
+    if [ "$G_RC" -eq 0 ] && [ -n "$G_OUT" ]; then
+      t_pass "[$label] coverage set accepts the value in --area, --spec and --notes"
+    else
+      t_fail "[$label] coverage set accepts the value in --area, --spec and --notes" "rc=$G_RC
+$(printf '%s' "$G_ERR" | head -3)"
+      i=$((i + 1))
+      continue
+    fi
+    n="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'END { print NR + 0 }')"
+    want_eq "[$label] coverage set echoes exactly one line" "1" "$n"
+
+    grun coverage list
+    n="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'END { print NR + 0 }')"
+    out="$(printf "SELECT COUNT(*) FROM coverage;\n" | tsql "$db")"
+    want_eq "[$label] coverage list prints exactly one line per coverage row" "$out" "$n"
+    out="$(_t2_lines "$G_OUT" "^adv-$i ")"
+    want_eq "[$label] and the value's own coverage row appears exactly once" "1" "$out"
+    # The first four fields are `_render_col`, so no payload can put a blank inside one
+    # and shift the columns right. Checked where it matters: field 2 must still be the
+    # risk word, because `awk '$2 == "high"'` is what a cadence query is.
+    out="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk -v id="adv-$i" '
+      $1 == id && ($2 == "high" || $2 == "medium" || $2 == "low") { n++ }
+      END { print n + 0 }')"
+    want_eq "[$label] and column 2 of its row is still the risk word (no field was split)" "1" "$out"
+
+    grun coverage show "adv-$i"
+    n="$(_t2_lines "$G_OUT" '^---$')"
+    want_eq "[$label] coverage show opens and closes exactly one frontmatter fence" "2" "$n"
+    out="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk '
+      /^---$/ { seen++; next }
+      seen == 1 { n++ }
+      END { print n + 0 }')"
+    want_eq "[$label] and the frontmatter block is exactly its 5 real fields" "5" "$out"
+
+    # --- an adversarial value as a SLUG is refused, not slugified ---
+    # The slug is a key: `doc get` has to reproduce it, so it is the one value in this
+    # module that is validated rather than escaped.
+    _s2_mark
+    grun doc put "$v" --title "slug attempt" --body b
+    _s2_refused "[$label] the value is refused as a doc SLUG, and writes nothing" ""
+    grun coverage set "$v" --area "area attempt"
+    _s2_refused "[$label] the value is refused as a coverage AREA ID, and writes nothing" ""
+
+    i=$((i + 1))
+  done
+
+  # ---- the journal is still NDJSON after all of that ----
+  out="$(LC_ALL=C awk '
+    substr($0, 1, 7) != "{\"seq\":" { print "line " NR " is not a journal entry"; bad++ }
+    { if (substr($0, length($0), 1) != "}") { print "line " NR " does not end the object"; bad++ } }
+    END { if (bad > 8) print "... and " (bad - 8) " more" }
+  ' "$GUILD_DIR/journal.ndjson" | head -9)"
+  t_check "every journal line is still exactly one parseable NDJSON object" "$out"
+
+  # ---- the briefing and the board render over every sentinel at once ----
+  grun brief
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild brief renders over every adversarial value"; else
+    t_fail "guild brief renders over every adversarial value" "rc=$G_RC
+$(printf '%s' "$G_ERR" | head -3)"; fi
+  # Every free-text expression in the briefing is flattened in the engine, so a row is
+  # always exactly one line and the leading tag can only have been written by the SQL.
+  # A forged tag line is what would put a fabricated goal or bug in front of the
+  # orchestrator, so the check is that no line outside a section body starts like one.
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C grep -n -e '^ZQ' -e '^  ZQ[0-9]*  *[A-Z]' | head -4)"
+  t_check "no adversarial value opened a line of its own in the briefing" "$out"
+  n="$(_t2_lines "$G_OUT" '^Guild Brief$')"
+  want_eq "the briefing has exactly one banner" "1" "$n"
+  n="$(_t2_lines "$G_OUT" '^Bugs:$')"
+  want_eq "and exactly one Bugs section" "1" "$n"
+  n="$(_t2_lines "$G_OUT" '^Direction:$')"
+  want_eq "and exactly one Direction section" "1" "$n"
+
+  grun brief --json
+  out="$(printf "SELECT json_valid(CAST(x'%s' AS TEXT));\n" "$(_t2_hex "$G_OUT")" | tsql "$db" 2>&1)"
+  want_eq "the briefing is still valid JSON with every payload in it" "1" "$out"
+
+  # ---- empty strings ----
+  # `--title` is required everywhere, so emptiness lands on the optional text flags.
+  grun goal new --title "Empty carrier ZQ90" --body ""
+  if [ "$G_RC" -eq 0 ]; then t_pass "[empty string] an empty goal --body is accepted"; else
+    t_fail "[empty string] an empty goal --body is accepted" "$G_ERR"; fi
+  grun bug new --title "Empty carrier ZQ91" --body "" --repro "" --found-by ""
+  if [ "$G_RC" -eq 0 ]; then t_pass "[empty string] empty bug --body/--repro/--found-by are accepted"; else
+    t_fail "[empty string] empty bug --body/--repro/--found-by are accepted" "$G_ERR"; fi
+  bug="${G_OUT%% *}"
+  grun bug show "$bug"
+  want_contains "[empty string] and an omitted --found-by renders as null, not ''" "found-by: null" "$G_OUT"
+  grun doc put empty-body --title "Empty body ZQ92" --body ""
+  if [ "$G_RC" -eq 0 ]; then t_pass "[empty string] an empty doc --body is accepted"; else
+    t_fail "[empty string] an empty doc --body is accepted" "$G_ERR"; fi
+  "$GUILD" doc get empty-body >"$T2/s2adv-empty" 2>/dev/null
+  n="$(LC_ALL=C wc -c <"$T2/s2adv-empty" | tr -d ' ')"
+  want_eq "[empty string] and doc get returns exactly zero bytes for it" "0" "$n"
+  # An empty body must still be distinguishable from a missing doc, which is why the
+  # existence marker leads the read script.
+  grun doc get empty-body
+  if [ "$G_RC" -eq 0 ]; then t_pass "[empty string] an empty doc is FOUND, not reported missing"; else
+    t_fail "[empty string] an empty doc is FOUND, not reported missing" "$G_ERR"; fi
+  _s2_mark
+  grun goal new --title ""
+  _s2_refused "[empty string] an empty goal --title is refused" "requires --title"
+  grun bug new --title ""
+  _s2_refused "[empty string] an empty bug --title is refused" "requires --title"
+  grun doc put "" --title T --body b
+  _s2_refused "[empty string] an empty doc slug is refused" "requires a doc slug"
+
+  # ---- the whole thing survives a rebuild ----
+  grun export --json
+  printf '%s\n' "$G_OUT" >"$T2/s2adv-before.json"
+  grun rebuild
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild rebuild replays every Stage 2 adversarial value"; else
+    t_fail "guild rebuild replays every Stage 2 adversarial value" "rc=$G_RC
+$G_ERR"; fi
+  grun export --json
+  printf '%s\n' "$G_OUT" >"$T2/s2adv-after.json"
+  t_check "and the replayed state is identical" \
+    "$(diff "$T2/s2adv-before.json" "$T2/s2adv-after.json" 2>&1 | head -6)"
+  # The verbatim channel, re-checked after the replay: a journal round trip is where a
+  # body that survived the write path gets quietly re-encoded.
+  printf '%s' "$(_adv_value 13)" >"$T2/s2adv-want"
+  "$GUILD" doc get adv-13 >"$T2/s2adv-got" 2>/dev/null
+  t_check "and the forgery payload is still byte-exact in doc get after the replay" \
+    "$(cmp "$T2/s2adv-want" "$T2/s2adv-got" 2>&1 | head -2)"
+
+  unset GUILD_DIR
+  return 0
+}
+
+# ---- S2.5 · invalid UTF-8 on every Stage 2 flag ------------------------------------
+#
+# Same contract as the Stage 1 section, restated for the new flags because a gate that
+# is only closed on the reviewed commands is not closed: the command FAILS, the message
+# names the FLAG and the offending BYTE, and NOTHING is written — not a row, not an
+# event, not a journal line.
+#
+# The reason it is a refusal rather than a store has not changed: free text reaches SQL
+# as `CAST(x'<hex>' AS TEXT)`, that cast is byte-exact only for valid UTF-8, and the two
+# engines disagree about everything else (tursodb substitutes U+FFFD where libSQL keeps
+# the byte), so an invalid byte stored here means the same journal replays into two
+# different boards.
+t2_stage2_utf8() {
+  local i v label byte db req out
+  section "Tier 2 · Stage 2 · invalid UTF-8 is refused on every new flag"
+
+  _t2_project s2utf8 2026-01-01 || return 0
+  db="$(_t2_db)"
+
+  grun new req --title "A valid carrier ZS00"
+  req="$G_OUT"
+  grun goal new --title "A valid goal ZS00"
+  grun phase new --goal GOAL-001 --title "A valid phase ZS00"
+  grun doc put valid-doc --title "A valid doc ZS00" --body "valid"
+  _s2_mark
+
+  # All nine encodings, on the two flags every Stage 2 create requires.
+  i=1
+  while [ "$i" -le "$(_u8_count)" ]; do
+    v="$(_u8_value "$i")"
+    label="$(_u8_label "$i")"
+    byte="$(_u8_byte "$i")"
+
+    grun goal new --title "$v"
+    _u8_refused "[$label] goal new --title is refused, naming the flag and the byte" '--title' "$byte"
+    grun bug new --title "$v"
+    _u8_refused "[$label] bug new --title is refused, naming the flag and the byte" '--title' "$byte"
+
+    i=$((i + 1))
+  done
+
+  # One representative encoding (latin-1, the one a human actually pastes) across every
+  # remaining text-accepting flag the two modules expose.
+  v="$(_u8_value 5)"
+  grun goal new --title "valid ZS01" --body "$v"
+  _u8_refused "[latin-1] goal new --body is refused, naming the flag" '--body' 'E9'
+  grun phase new --goal GOAL-001 --title "$v"
+  _u8_refused "[latin-1] phase new --title is refused" '--title' 'E9'
+  grun goal list "$v"
+  _u8_refused "[latin-1] the goal list status filter is refused" 'the status filter' 'E9'
+  grun phase list --goal "$v"
+  _u8_refused "[latin-1] phase list --goal is refused" '--goal' 'E9'
+  grun bug new --title "valid ZS02" --body "$v"
+  _u8_refused "[latin-1] bug new --body is refused" '--body' 'E9'
+  grun bug new --title "valid ZS03" --repro "$v"
+  _u8_refused "[latin-1] bug new --repro is refused" '--repro' 'E9'
+  grun bug new --title "valid ZS04" --found-by "$v"
+  _u8_refused "[latin-1] bug new --found-by is refused" '--found-by' 'E9'
+  grun doc put valid-doc --title "$v" --body b
+  _u8_refused "[latin-1] doc put --title is refused" '--title' 'E9'
+  grun doc put valid-doc --title T --body "$v"
+  _u8_refused "[latin-1] doc put --body is refused" '--body' 'E9'
+  grun doc put valid-doc --title T --body b --source "$v"
+  _u8_refused "[latin-1] doc put --source is refused" '--source' 'E9'
+  grun doc search "$v"
+  _u8_refused "[latin-1] the doc search query is refused" 'the search query' 'E9'
+  grun coverage set valid-area --area "$v"
+  _u8_refused "[latin-1] coverage set --area is refused" '--area' 'E9'
+  grun coverage set valid-area --area A --spec "$v"
+  _u8_refused "[latin-1] coverage set --spec is refused" '--spec' 'E9'
+  grun coverage set valid-area --area A --notes "$v"
+  _u8_refused "[latin-1] coverage set --notes is refused" '--notes' 'E9'
+  grun coverage inspect valid-area --date "$v"
+  _u8_refused "[latin-1] coverage inspect --date is refused" '--date' 'E9'
+
+  # `--file` is the one case whose message must NOT name the flag: the caller may have
+  # several paths on the command line, so "guild: --file is not valid UTF-8" sends them
+  # back to re-read their own argv while naming the PATH sends them to the file.
+  printf 'Le caf\351 est pr\352t\n' >"$T2/s2-latin1.md"
+  grun doc put latin-doc --title "Latin" --file "$T2/s2-latin1.md"
+  if [ "$G_RC" -ne 0 ]; then t_pass "doc put --file on a latin-1 file is refused"; else
+    t_fail "doc put --file on a latin-1 file is refused" "rc=0 — the file was stored"; fi
+  want_contains "and the message names the FILE, not the flag" "s2-latin1.md is not valid UTF-8" "$G_ERR"
+  want_contains "and says how to fix it" "iconv" "$G_ERR"
+
+  # An invalid byte in a SLUG is refused by the alphabet before UTF-8 is ever consulted,
+  # and that is the right order: the slug is a key, and the alphabet message is the
+  # actionable one.
+  grun doc put "$v" --title T --body b
+  if [ "$G_RC" -ne 0 ]; then t_pass "an invalid-UTF-8 doc slug is refused"; else
+    t_fail "an invalid-UTF-8 doc slug is refused" "rc=0"; fi
+  want_contains "as a bad slug (the alphabet check runs first, and its message is the useful one)" \
+    "is not a valid doc slug" "$G_ERR"
+
+  # ---- the whole point: none of that wrote anything ----
+  _s2_refused "no refused value anywhere above created a row or a journal line" ""
+
+  out="$(printf "SELECT COUNT(*) FROM goal WHERE title LIKE '%%' || char(65533) || '%%' OR body LIKE '%%' || char(65533) || '%%';\n" | tsql "$db")"
+  want_eq "no stored goal contains a U+FFFD replacement character" "0" "$out"
+  out="$(printf "SELECT COUNT(*) FROM bug WHERE title LIKE '%%' || char(65533) || '%%' OR body LIKE '%%' || char(65533) || '%%' OR repro LIKE '%%' || char(65533) || '%%';\n" | tsql "$db")"
+  want_eq "no stored bug contains a U+FFFD replacement character" "0" "$out"
+  out="$(printf "SELECT COUNT(*) FROM doc WHERE title LIKE '%%' || char(65533) || '%%' OR body LIKE '%%' || char(65533) || '%%';\n" | tsql "$db")"
+  want_eq "no stored doc contains a U+FFFD replacement character" "0" "$out"
+
+  grun doc get valid-doc
+  want_eq "the valid doc survived every refusal against its slug intact" "valid" "$G_OUT"
+  grun goal new --title "Still working ZS99"
+  if [ "$G_RC" -eq 0 ] && [ -n "$G_OUT" ]; then
+    t_pass "the board still accepts a valid Stage 2 write after every refusal"
+  else
+    t_fail "the board still accepts a valid Stage 2 write after every refusal" "rc=$G_RC
+$G_ERR"
+  fi
+
+  unset GUILD_DIR
+  return 0
+}
+
+# ---- S2.6 · Stage 2 values past 100 KB (correctness AND time) ----------------------
+#
+# The quadratic that round 3 found (`${out%%$'\n'*}` over the driver's output, 24 s at
+# 400 KB PER STATE TRANSITION) was invisible below 100 KB and unmissable above it, and
+# the ordinary case that hits it is a human pasting a real document into a body flag.
+# Stage 2 adds four more of those — `goal new --body` (a direction brief), `bug new
+# --body/--repro` (a stack trace and a repro script), and `doc put --body/--file`, which
+# is THE knowledge-base ingest path and the one designed to take whole files.
+#
+# So the same two assertions apply: the value round-trips, AND the sequence stays inside
+# a budget an order of magnitude above the reference machine's cost, so that a
+# reintroduced quadratic fails the suite instead of merely feeling slow.
+t2_stage2_large() {
+  local mult budget v db goal bug out took n f
+  section "Tier 2 · Stage 2 · values past 100 KB (correctness AND time)"
+
+  mult="${GUILD_TEST_BUDGET:-1}"
+  case "$mult" in '' | *[!0-9]*) mult=1 ;; esac
+  [ "$mult" -ge 1 ] || mult=1
+  budget=$((60 * mult))
+
+  _t2_project s2big 2026-01-01 || return 0
+  db="$(_t2_db)"
+
+  v="$(_t2_bigval 500000)"
+  n="$(printf '%s' "$v" | LC_ALL=C wc -c | tr -d ' ')"
+  want_eq "the 500 KB fixture really is 500000 bytes" "500000" "$n"
+
+  grun new req --title "carrier"
+  out="$G_OUT"
+
+  # ---- one timed sequence over every Stage 2 body flag ----
+  #
+  # One budget for the whole sequence rather than one per command: the quadratic showed
+  # up on every transition, so the thing worth bounding is the cost of a large document's
+  # whole life on the board.
+  SECONDS=0
+  grun goal new --title "Big direction ZS01" --body "$v"
+  goal="${G_OUT%% *}"
+  if [ "$G_RC" -ne 0 ] || [ -z "$goal" ]; then
+    t_fail "goal new accepts a 500 KB --body" "rc=$G_RC
+$(printf '%s' "$G_ERR" | head -3)"
+    return 0
+  fi
+  t_pass "goal new accepts a 500 KB --body"
+
+  grun goal move "$goal" in-progress
+  if [ "$G_RC" -eq 0 ]; then t_pass "goal move works on a 500 KB goal"; else
+    t_fail "goal move works on a 500 KB goal" "rc=$G_RC
+$G_ERR"; fi
+  grun goal priority "$goal" 1
+  if [ "$G_RC" -eq 0 ]; then t_pass "goal priority works on a 500 KB goal"; else
+    t_fail "goal priority works on a 500 KB goal" "rc=$G_RC
+$G_ERR"; fi
+
+  grun bug new --title "Big report ZS02" --body "$v" --repro "$v" --req "$out"
+  bug="${G_OUT%% *}"
+  if [ "$G_RC" -ne 0 ] || [ -z "$bug" ]; then
+    t_fail "bug new accepts a 500 KB --body AND a 500 KB --repro" "rc=$G_RC
+$(printf '%s' "$G_ERR" | head -3)"
+    return 0
+  fi
+  t_pass "bug new accepts a 500 KB --body AND a 500 KB --repro"
+
+  grun new task --title "fix" --agent developer --req "$out"
+  grun bug fix "$bug" --task "$G_OUT"
+  if [ "$G_RC" -eq 0 ]; then t_pass "bug fix works on a 500 KB bug"; else
+    t_fail "bug fix works on a 500 KB bug" "rc=$G_RC
+$G_ERR"; fi
+  grun bug close "$bug"
+  if [ "$G_RC" -eq 0 ]; then t_pass "bug close works on a 500 KB bug"; else
+    t_fail "bug close works on a 500 KB bug" "rc=$G_RC
+$G_ERR"; fi
+
+  grun doc put big-doc --title "Big doc ZS03" --body "$v"
+  if [ "$G_RC" -eq 0 ]; then t_pass "doc put accepts a 500 KB --body"; else
+    t_fail "doc put accepts a 500 KB --body" "rc=$G_RC
+$(printf '%s' "$G_ERR" | head -3)"; fi
+  grun doc put big-doc --title "Big doc ZS03, revised" --body "$v"
+  if [ "$G_RC" -eq 0 ]; then t_pass "and the 500 KB upsert path too"; else
+    t_fail "and the 500 KB upsert path too" "rc=$G_RC
+$G_ERR"; fi
+
+  grun goal show "$goal" >/dev/null
+  grun bug show "$bug" >/dev/null
+  grun goal list >/dev/null
+  grun bug list >/dev/null
+  grun doc list >/dev/null
+  took="$SECONDS"
+  _t2_budget "a 500 KB Stage 2 document's whole life stays inside its budget" "$took" "$budget"
+
+  # ---- and every byte of it is still there ----
+  out="$(printf "SELECT length(body) FROM goal WHERE id = '%s';\n" "$goal" | tsql "$db")"
+  want_eq "the 500 KB goal --body is stored at its exact byte length" "500000" "$out"
+  out="$(printf "SELECT substr(body,1,10) || '/' || substr(body,-10) FROM goal WHERE id = '%s';\n" "$goal" | tsql "$db")"
+  want_eq "and kept both of its ends" "abcdefghij/abcdefghij" "$out"
+  out="$(printf "SELECT length(body) || '/' || length(repro) FROM bug WHERE id = '%s';\n" "$bug" | tsql "$db")"
+  want_eq "the bug's --body and --repro are both stored at their exact length" "500000/500000" "$out"
+  out="$(printf "SELECT length(body) FROM doc WHERE slug = 'big-doc';\n" | tsql "$db")"
+  want_eq "the 500 KB doc body is stored at its exact byte length" "500000" "$out"
+  out="$(printf "SELECT instr(body, '%s') > 0 FROM doc WHERE slug = 'big-doc';\n" \
+    "$(_t2_bigval 4000)" | tsql "$db")"
+  want_eq "and a 4 KB span of it is present in one uninterrupted block" "1" "$out"
+
+  # `doc get` is the verbatim channel and the one a researcher pipes back to a file, so
+  # the 500 KB assertion there is byte equality, timed on its own.
+  SECONDS=0
+  printf '%s' "$v" >"$T2/s2big-want"
+  "$GUILD" doc get big-doc >"$T2/s2big-got" 2>/dev/null
+  took="$SECONDS"
+  t_check "doc get returns the whole 500 KB body BYTE FOR BYTE" \
+    "$(cmp "$T2/s2big-want" "$T2/s2big-got" 2>&1 | head -2)"
+  _t2_budget "and reading it back stays inside its budget" "$took" "$budget"
+
+  # ---- `doc put --file`: the one Stage 2 path that reads free text off disk ----
+  #
+  # It is not bounded by argv, so it is where a genuinely large document arrives — and
+  # it is the path that must preserve the trailing newline `--body "$(cat f)"` destroys.
+  f="$T2/s2big-file.md"
+  { printf '%s' "$v"; printf '\n\n'; } >"$f"
+  SECONDS=0
+  grun doc put big-file-doc --title "Big file ZS04" --file "$f"
+  took="$SECONDS"
+  if [ "$G_RC" -eq 0 ]; then t_pass "doc put --file accepts a 500 KB file"; else
+    t_fail "doc put --file accepts a 500 KB file" "rc=$G_RC
+$(printf '%s' "$G_ERR" | head -3)"; fi
+  _t2_budget "and storing it stays inside its budget" "$took" "$budget"
+  "$GUILD" doc get big-file-doc >"$T2/s2big-file-got" 2>/dev/null
+  t_check "and the file round-trips byte for byte, both trailing newlines included" \
+    "$(cmp "$f" "$T2/s2big-file-got" 2>&1 | head -2)"
+
+  # ---- the two presentation surfaces over a board this size ----
+  #
+  # `brief` and `dashboard` both project every one of these rows, and both clip free text
+  # in the ENGINE rather than in the shell — which is the design decision this budget
+  # exists to protect. A clip moved into bash would be a per-row quadratic and would show
+  # up here and nowhere else.
+  SECONDS=0
+  grun brief
+  n="$G_RC"
+  grun brief --json
+  n=$((n + G_RC))
+  grun dashboard
+  n=$((n + G_RC))
+  took="$SECONDS"
+  if [ "$n" -eq 0 ]; then t_pass "brief, brief --json and dashboard all render a 500 KB board"; else
+    t_fail "brief, brief --json and dashboard all render a 500 KB board" "rc sum=$n
+$(printf '%s' "$G_ERR" | head -3)"; fi
+  _t2_budget "and the three of them together stay inside the budget" "$took" "$budget"
+
+  # The clip is the reason they are fast, so it has to be real: a 500 KB title must not
+  # reach the dashboard's inlined data whole.
+  n="$(LC_ALL=C wc -c <"$GUILD_DIR/dashboard.html" | tr -d ' ')"
+  if [ "$n" -lt 500000 ]; then
+    t_pass "the dashboard clips free text in the engine (page is ${n} bytes, not 500 KB+)"
+  else
+    t_fail "the dashboard clips free text in the engine" \
+      "the page is $n bytes — a 500 KB body appears to have been inlined whole"
+  fi
+
+  unset GUILD_DIR
+  return 0
+}
+
+# ---- S2.7 · the dashboard, injected through the Stage 2 COMMANDS -------------------
+#
+# The existing dashboard section seeds goal, phase, bug, coverage and graph rows with
+# raw SQL, because when it was written the commands that write them did not exist. They
+# exist now, and that difference is the whole point of this section: a payload that
+# arrives through `guild goal new` passes `_dir_defuse_body`, `sql_text`, the journal
+# and the row projection on its way in, and any one of those could transform it into
+# something the dashboard's escaper no longer recognizes. Seeding with SQL tests the
+# escaper; going through the CLI tests the pipeline.
+#
+# THE HEADLINE ASSERTION is the one written the way a BROWSER would resolve it. An HTML
+# tokenizer inside a script element ends that element at the FIRST `</script` it sees,
+# ASCII-case-insensitively, whatever follows it — so the question "did anything inject"
+# is exactly "does the first `</script` after the opening tag still close a COMPLETE
+# JSON document". A successful injection necessarily makes that JSON truncate.
+
+# _s2_html_region <file> — the bytes a browser would treat as the data element's
+# content: everything after the opening tag, up to (not including) the first line
+# holding a `</script` in any case. Emitted on stdout.
+_s2_html_region() {
+  LC_ALL=C awk '
+    !on && /^<script type="application\/json" id="guild-data">$/ { on = 1; next }
+    on && tolower($0) ~ /<\/script/ { exit }
+    on { print }
+  ' "$1"
+}
+
+# _s2_html_closer <file> — the LINE NUMBER of that first `</script`, and of the opening
+# tag, as "<open> <close>". The two numbers are what "before the intended one" means.
+_s2_html_closer() {
+  LC_ALL=C awk '
+    !o && /^<script type="application\/json" id="guild-data">$/ { o = NR; next }
+    o && !c && tolower($0) ~ /<\/script/ { c = NR }
+    END { print (o + 0) " " (c + 0) }
+  ' "$1"
+}
+
+t2_dashboard_stage2() {
+  local db f p1 p2 p3 p4 p5 p6 p7 open close region out n i lbl
+  section "Tier 2 · Stage 2 · the dashboard cannot be injected through a Stage 2 command"
+
+  _t2_project s2dash 2026-01-01 || return 0
+  db="$(_t2_db)"
+  f="$GUILD_DIR/dashboard.html"
+
+  # The seven payloads the brief names, each a real attack on this medium rather than a
+  # decoration: the bare closer, the closer plus a new element, a tag that needs no
+  # script element at all, and the four bare characters that a naive escaper handles
+  # inconsistently — `"` and `'` break out of an attribute, `&` starts an entity, and a
+  # lone `<` is not a tag and must not be treated as one.
+  p1='</script>'
+  p2='</script><script>alert(1)</script>'
+  p3='<img src=x onerror=alert(1)>'
+  p4='"'
+  p5="'"
+  p6='&'
+  p7='<'
+
+  # Through the REAL commands, one artifact of each kind per payload.
+  i=1
+  for lbl in "$p1" "$p2" "$p3" "$p4" "$p5" "$p6" "$p7"; do
+    grun new req --title "$lbl"
+    n="$G_RC"
+    grun goal new --title "$lbl" --body "$lbl"
+    n=$((n + G_RC))
+    grun phase new --goal "GOAL-00$i" --title "$lbl"
+    n=$((n + G_RC))
+    grun bug new --title "$lbl" --body "$lbl" --repro "$lbl" --found-by "$lbl"
+    n=$((n + G_RC))
+    grun doc put "payload-$i" --title "$lbl" --body "$lbl"
+    n=$((n + G_RC))
+    if [ "$n" -eq 0 ]; then
+      t_pass "payload $i is accepted by req, goal, phase, bug and doc alike"
+    else
+      t_fail "payload $i is accepted by req, goal, phase, bug and doc alike" "rc sum=$n
+$(printf '%s' "$G_ERR" | head -3)"
+    fi
+    i=$((i + 1))
+  done
+  grun req assign REQ-001 PHASE-001
+
+  grun dashboard
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild dashboard renders over all seven payloads"; else
+    t_fail "guild dashboard renders over all seven payloads" "$G_ERR"; return 0; fi
+
+  # ---- THE HEADLINE ASSERTION ----
+  out="$(_s2_html_closer "$f")"
+  open="${out%% *}"
+  close="${out##* }"
+  case "$open" in '' | *[!0-9]*) open=0 ;; esac
+  case "$close" in '' | *[!0-9]*) close=0 ;; esac
+  if [ "$open" -gt 0 ]; then t_pass "the data element's opening tag was located (line $open)"; else
+    t_fail "the data element's opening tag was located" "no <script type=application/json id=guild-data> line"
+    return 0
+  fi
+  if [ "$close" -gt "$open" ]; then t_pass "and a closing </script tag follows it (line $close)"; else
+    t_fail "and a closing </script tag follows it" "first closer at line $close, opening tag at $open"
+    return 0
+  fi
+
+  # The region a browser would actually parse. If any payload injected an unescaped
+  # `</script>`, the tokenizer ends the element THERE, `close` lands early, and this
+  # region is a truncated fragment — so `json_valid` over it is the direct test of
+  # "no unescaped </script> occurs before the intended one".
+  region="$(_s2_html_region "$f")"
+  out="$(printf "SELECT json_valid(CAST(x'%s' AS TEXT));\n" "$(_t2_hex "$region")" | tsql "$db" 2>&1)"
+  t_check "the first </script> after the opening tag still closes a COMPLETE JSON document
+        (an injected closer would truncate it, and json_valid would say 0)" \
+    "$(if [ "$out" = "1" ]; then printf ''; else printf 'json_valid said %s: the browser-visible data region is NOT valid JSON,
+which means a </script appeared inside it and ended the element early.
+region ends: %s' "$out" "$(printf '%s' "$region" | tail -c 200)"; fi)"
+
+  # And the same thing stated positionally, which is the form the brief asks for: the
+  # naive extractor (first line that is exactly `</script>`) and the tokenizer-accurate
+  # one (first line containing `</script` in any case) must agree. They disagree exactly
+  # when a payload has smuggled a closer in.
+  n="$(printf '%s\n' "$region" | LC_ALL=C awk 'END { print NR + 0 }')"
+  out="$(_t2_data_block "$f" | LC_ALL=C awk 'END { print NR + 0 }')"
+  want_eq "no unescaped </script> occurs before the intended one (both readers agree on the region)" "$out" "$n"
+
+  # Nothing in the region may be a `<`, `>` or `&` at all — the standing contract, now
+  # over data that arrived through the Stage 2 write paths.
+  n="$(_t2_lines "$region" '<')"
+  want_eq "no '<' byte in the data written by the Stage 2 commands" "0" "$n"
+  n="$(_t2_lines "$region" '>')"
+  want_eq "no '>' byte in it either" "0" "$n"
+  n="$(_t2_lines "$region" '&')"
+  want_eq "and no '&' byte" "0" "$n"
+
+  # ---- the payloads are THERE, as literal text ----
+  #
+  # A dashboard that silently dropped them would pass every check above and show a lie,
+  # so each payload is located in its escaped form. `<` is the escape the page
+  # carries; with the backslashes removed the payload reads as itself.
+  out="$(printf '%s' "$region" | LC_ALL=C sed 's/\\//g')"
+  want_contains "the bare </script> payload is carried as literal text" "u003c/script" "$out"
+  want_contains "the </script><script> payload is carried too" "u003c/scriptu003eu003cscriptu003e" "$out"
+  want_contains "the <img onerror> payload is carried" "u003cimg src=x onerror=alert(1)u003e" "$out"
+  want_contains "the ampersand is escaped, not dropped" "u0026" "$out"
+  want_contains "and the lone '<' survives as an escape" "u003c" "$out"
+  # The two quote characters are JSON's own structural tokens and must survive as JSON
+  # escapes rather than as the rewrite: a `"` that reached the data unescaped would have
+  # broken json_valid above, and one that was DELETED would show nothing here.
+  n="$(_t2_lines "$region" '\\"')"
+  if [ "$n" -ge 1 ]; then t_pass "the double-quote payload survives as a JSON escape"; else
+    t_fail "the double-quote payload survives as a JSON escape" "no \\\" anywhere in the data region"; fi
+  n="$(_t2_lines "$region" "'")"
+  if [ "$n" -ge 1 ]; then t_pass "the single-quote payload survives as itself"; else
+    t_fail "the single-quote payload survives as itself" "no ' anywhere in the data region"; fi
+
+  # ---- and nothing became markup anywhere in the FILE ----
+  out="$(LC_ALL=C grep -nE '<(script|img|svg)[^>]*(alert|onerror|onload)' "$f")"
+  t_check "no payload became a real tag anywhere in the page" "$out"
+  # The page still never writes markup from data, and still fetches nothing.
+  out="$(LC_ALL=C grep -nE '(inner|outer)HTML[[:space:]]*=|insertAdjacentHTML[[:space:]]*\(|document\.write[[:space:]]*\(|[^A-Za-z_.]eval[[:space:]]*\(|new[[:space:]]+Function[[:space:]]*\(' "$f")"
+  t_check "the page still renders with textContent only" "$out"
+
+  # ---- determinism, over data that arrived through the commands ----
+  cp "$f" "$T2/s2dash-1.html"
+  sleep 1
+  grun dashboard
+  t_check "two runs a second apart are byte-identical (build twice, same bytes)" \
+    "$(diff "$T2/s2dash-1.html" "$f" 2>&1 | head -6)"
+  # Determinism has to survive a replay too: `rebuild` re-derives every row from the
+  # journal, and a dashboard that changed afterwards would mean the journal is not a
+  # faithful record of what the page shows.
+  grun rebuild
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild rebuild replays every payload"; else
+    t_fail "guild rebuild replays every payload" "rc=$G_RC
+$G_ERR"; fi
+  grun dashboard
+  t_check "and the dashboard is byte-identical after a full journal replay" \
+    "$(diff "$T2/s2dash-1.html" "$f" 2>&1 | head -6)"
+
+  # ---- the docs' own surfaces carry the payloads as literal text ----
+  #
+  # The dashboard counts docs but does not name them (§9: the knowledge base is not one
+  # of the seven views), so a doc title's injection surface is `doc list` and `doc search`,
+  # and that is where it is asserted. `doc get` is the byte-exact one.
+  out="$(printf "SELECT COUNT(*) FROM doc;\n" | tsql "$db")"
+  grun doc list
+  n="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'END { print NR + 0 }')"
+  want_eq "doc list prints exactly one line per doc, with every payload as a title" "$out" "$n"
+  grun doc search "script"
+  n="$(printf '%s\n' "$G_OUT" | LC_ALL=C awk 'END { print NR + 0 }')"
+  want_eq "doc search finds the two </script> payload docs and returns two lines" "2" "$n"
+  i=1
+  for lbl in "$p1" "$p2" "$p3" "$p4" "$p5" "$p6" "$p7"; do
+    printf '%s' "$lbl" >"$T2/s2dash-want"
+    "$GUILD" doc get "payload-$i" >"$T2/s2dash-got" 2>/dev/null
+    t_check "doc get returns payload $i byte for byte" \
+      "$(cmp "$T2/s2dash-want" "$T2/s2dash-got" 2>&1 | head -2)"
+    i=$((i + 1))
+  done
+
+  unset GUILD_DIR
+  return 0
+}
+
+# ---- S2.8 · the two counts that named nobody ---------------------------------------
+#
+# `2 failed task(s) · 2 unresolved review finding(s)` sat on the brief's Summary line, and
+# `N Open findings` sat on the dashboard in the largest type on the page. NEITHER resolved
+# to an id. A task could be failed over three review findings and appear in no section of
+# any surface the guild ships, and the only way to read what a reviewer had flagged was to
+# hand-write SQL — which is precisely the v4 failure (`review_finding` was made a table so
+# that "what did reviewers flag that we never fixed?" becomes a query) reprinted in a
+# larger font.
+#
+# EVERY CHECK IN t2_brief AND t2_dashboard PASSED WHILE THAT WAS TRUE, because they assert
+# COUNTS. That is the regression this section exists for, so nothing below is satisfied by
+# a number: each check locates an actual TASK id inside the actual section that owes it,
+# and an actual finding row inside the page's own data document.
+#
+# The order is deliberate. Names first, on a clean board whose every count is known; then
+# the same two surfaces again with a hostile finding filed through the real `guild finding`
+# command, because a view built to print a reviewer's prose is a view built to print
+# whatever a reviewer typed.
+
+# _t2_brief_section <briefing-text> <heading> — the indented rows under a `Heading:` line,
+# up to the next unindented line.
+#
+# `want_contains` over the WHOLE briefing is not the assertion this section needs, and the
+# difference is the whole point: the activity feed already names every failed task and
+# every filed finding, so a `Failed Tasks:` section that never rendered at all would still
+# let a whole-output grep for TASK-002 pass. The row has to be found INSIDE the section
+# that owes it.
+_t2_brief_section() {
+  printf '%s\n' "$1" | LC_ALL=C awk -v H="$2" '
+    $0 == H { inside = 1; next }
+    inside && $0 !~ /^[ \t]/ { inside = 0 }
+    inside && $0 !~ /^[ \t]*$/ { print }
+  '
+}
+
+# _t2_json_get <json-text> <json-path> — one json_extract, through the hex transport, with
+# a NULL rendered as `(null)` rather than as an empty line that an equality test cannot
+# tell from a missing key.
+#
+# The engine parses the document, not grep: a grep for `"waived":1` passes just as happily
+# on a malformed JSON document, which is the one thing a `--json` surface may not be.
+# <json-path> is fixed text written at the call site, never a value.
+_t2_json_get() {
+  printf "SELECT COALESCE(CAST(json_extract(CAST(x'%s' AS TEXT), '%s') AS TEXT), '(null)');\n" \
+    "$(_t2_hex "$1")" "$2" | tsql "$(_t2_db)" 2>&1
+}
+
+# _t2_json_len <json-text> <json-path> — json_array_length at that path, or -1.
+_t2_json_len() {
+  printf "SELECT COALESCE(json_array_length(json_extract(CAST(x'%s' AS TEXT), '%s')), -1);\n" \
+    "$(_t2_hex "$1")" "$2" | tsql "$(_t2_db)" 2>&1
+}
+
+# _t2_json_is <json-text> <json-path> <expected-value> — `same` when the value at that
+# path is BYTE-IDENTICAL to <expected-value>, `DIFFERENT` otherwise.
+#
+# The comparison happens in the engine, on both sides hex-transported, because the values
+# it exists to check are multi-line and full of quotes: capturing one through `$(...)`
+# strips its trailing newlines and comparing it in the shell would be testing the capture,
+# not the page.
+_t2_json_is() {
+  printf "SELECT CASE WHEN json_extract(CAST(x'%s' AS TEXT), '%s') = CAST(x'%s' AS TEXT) THEN 'same' ELSE 'DIFFERENT' END;\n" \
+    "$(_t2_hex "$1")" "$2" "$(_t2_hex "$3")" | tsql "$(_t2_db)" 2>&1
+}
+
+# ---- the round-trip counter --------------------------------------------------------
+#
+# §2.2 is "ONE db_exec per LOGICAL COMMAND", and what it forbids is a trip count that GROWS
+# WITH THE DATA — in cloud mode every invocation is a network round trip. That defect is
+# invisible to every other assertion in this file: a briefing composed from twelve round
+# trips prints exactly the same text as one composed from one. Counting the PROCESS is the
+# only way to see it, so `tursodb` is shimmed with a counter and the two read-only Stage 2
+# commands are asked how many times they started the engine.
+GUILD_EXEC_COUNT=""
+
+# _t2_exec_shim <dir> <counter-file> — build a PATH directory holding a counting `tursodb`,
+# and point $GUILD_EXEC_COUNT at the counter. Returns 1 when either path is not absolute,
+# so the caller skips rather than measuring a shim that execs itself.
+#
+# BOTH PATHS ARE BAKED INTO THE SHIM AS LITERALS rather than read from its environment.
+# The shim runs as a grandchild of this harness — `guild` is between them — and an
+# environment variable that has to survive that trip is one more thing that can silently
+# not arrive, which would show up as a passing "0 round trips" rather than as an error.
+_t2_exec_shim() {
+  local dir="$1" counter="$2" real
+  # Resolved BEFORE the shim is anywhere near PATH, and required to be absolute: a shell
+  # that answers with a bare name would make the shim exec itself forever.
+  real="$(command -v tursodb 2>/dev/null)" || real=""
+  case "$real" in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  case "$counter" in
+    /*) ;;
+    *) return 1 ;;
+  esac
+  rm -rf "$dir"
+  mkdir -p "$dir" || return 1
+  {
+    printf '#!/bin/sh\n'
+    printf 'printf "call\\n" >>"%s"\n' "$counter"
+    printf 'exec %s "$@"\n' "$real"
+  } >"$dir/tursodb" || return 1
+  chmod +x "$dir/tursodb" || return 1
+  GUILD_EXEC_COUNT="$counter"
+  return 0
+}
+
+# _t2_execs — engine invocations counted since the counter was last truncated.
+_t2_execs() {
+  LC_ALL=C awk 'END { print NR + 0 }' "$GUILD_EXEC_COUNT" 2>/dev/null || printf '0\n'
+}
+
+t2_findings_and_failures() {
+  local db f req t1 t2 t3 out n rows html region shim
+  local inj_sum inj_det open close
+  section "Tier 2 · Stage 2c · failed tasks and review findings, BY NAME"
+
+  _t2_project findings 2026-01-01 || return 0
+  db="$(_t2_db)"
+  f="$GUILD_DIR/dashboard.html"
+
+  # A board with exactly the shape the brief skill documents: one goal, one phase, one
+  # requirement, three tasks — one failed and unresolved, one failed and waived by the
+  # user, one review ticket carrying the findings.
+  grun goal new --title "Ship the notifications overhaul" --priority 1
+  grun phase new --goal GOAL-001 --title "Delivery worker"
+  grun new req --title "Deliver notifications"
+  req="$G_OUT"
+  grun req assign "$req" PHASE-001
+  grun new task --title "Migrate legacy preference rows" --agent developer --req "$req"
+  t1="$G_OUT"
+  grun new task --title "Backfill the notification audit table" --agent developer --req "$req"
+  t2="$G_OUT"
+  grun new task --title "Review the delivery worker" --agent reviewer-security --req "$req"
+  t3="$G_OUT"
+
+  grun move "$t1" failed
+  grun move "$t2" failed
+  grun log "$t1" --agent developer \
+    --entry "Migration aborted: 412 legacy rows have a NULL channel."
+  # THE WAIVER, spelled exactly as skills/check-in/SKILL.md §3.3 tells the orchestrator to
+  # spell it. It is the only record anywhere that the user adjudicated this ticket —
+  # `task.status` is `failed` either way — so the prefix is load-bearing, and a brief that
+  # reported it as an open failure would be asking the user to decide something they have
+  # already decided.
+  grun log "$t2" --agent orchestrator \
+    --entry "Skipped by user on 2026-01-02 — excluded from REQ scope"
+  grun finding "$t3" --reviewer reviewer-security --severity major \
+    --summary "Unsigned callback token accepted" \
+    --detail "The consumer trusts the callback token without verifying its signature." \
+    --file src/queue/consume.ts --line 61
+  grun finding "$t3" --reviewer reviewer-edge-case --severity minor \
+    --summary "Retry backoff overflows at 32 attempts"
+  grun spool drain "$t1"
+  grun spool drain "$t2"
+  grun spool drain "$t3"
+  if [ "$G_RC" -eq 0 ]; then t_pass "the board seeds: two failed tasks and two findings"; else
+    t_fail "the board seeds: two failed tasks and two findings" "rc=$G_RC
+$G_ERR"; return 0; fi
+
+  # A RESOLVED finding, seeded straight in because nothing moves a disposition off `open`
+  # until Stage 3. It is the row that tells "nobody ever looked" apart from "somebody
+  # looked and fixed it", and the two surfaces treat it DIFFERENTLY on purpose: the brief
+  # lists unresolved work, the page lists the whole ledger. That difference is asserted
+  # in both directions below.
+  printf "INSERT INTO review_finding (task_id,reviewer,severity,summary,detail,file,line,disposition,fix_task_id,created_at) VALUES ('%s','reviewer-security','critical','Secrets logged at debug level','','src/log.ts',9,'fixed','%s','2026-01-03');\n" \
+    "$t3" "$t1" | tsql "$db" >/dev/null 2>&1
+  # Seeded rows are invisible to `guild rebuild` until they are journaled, and the replay
+  # determinism check below would then be measuring the seed rather than the page.
+  grun journal sync review_finding
+
+  # ---- 1 · the briefing NAMES them ----
+  grun brief
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild brief renders the populated board"; else
+    t_fail "guild brief renders the populated board" "rc=$G_RC
+$G_ERR"; return 0; fi
+
+  want_contains "the Summary line still carries the two counts" \
+    "2 failed task(s) (1 waived) · 2 unresolved review finding(s)" "$G_OUT"
+
+  rows="$(_t2_brief_section "$G_OUT" "Failed Tasks:")"
+  if [ -n "$rows" ]; then t_pass "and a Failed Tasks section exists under them"; else
+    t_fail "and a Failed Tasks section exists under them" \
+      "the count printed, the section did not — this is the regression exactly"; fi
+  n="$(_t2_lines "$rows" "^  $t1  \[unresolved\]")"
+  want_eq "the unresolved failure is named by ID, in that section" "1" "$n"
+  want_contains "with the reason its agent actually logged" \
+    "Migration aborted: 412 legacy rows have a NULL channel." "$rows"
+  n="$(_t2_lines "$rows" "^  $t2  \[waived\]")"
+  want_eq "a user-waived failure reads [waived], not as an open failure" "1" "$n"
+  n="$(_t2_lines "$rows" '\[unresolved\]')"
+  want_eq "and it is the ONLY unresolved one — the marker is not on both" "1" "$n"
+  # The waiver line is the LAST work-log entry on a waived ticket, so "the last entry"
+  # would print `Skipped by user on …` as its reason — restating the marker the row
+  # already carries and discarding the agent's report. The two stay orthogonal.
+  n="$(_t2_lines "$rows" 'Skipped by user')"
+  want_eq "the waiver marker is not repeated back as the row's reason" "0" "$n"
+  n="$(_t2_lines "$rows" '^  TASK-')"
+  want_eq "every failed task the count claims has a row of its own" "2" "$n"
+
+  rows="$(_t2_brief_section "$G_OUT" "Review Findings:")"
+  if [ -n "$rows" ]; then t_pass "a Review Findings section exists too"; else
+    t_fail "a Review Findings section exists too" "the count printed and named nobody"; fi
+  n="$(_t2_lines "$rows" "on $t3")"
+  want_eq "and every unresolved finding names the task it was filed against" "2" "$n"
+  out="$(printf '%s\n' "$rows" | LC_ALL=C sed -n '1p')"
+  want_contains "worst severity leads the section" \
+    "major  open  reviewer-security  on $t3  Unsigned callback token accepted" "$out"
+  want_contains "the location the reviewer gave is on the HUMAN surface, not only in --json" \
+    "src/queue/consume.ts:61" "$rows"
+  n="$(_t2_lines "$rows" 'Secrets logged at debug level')"
+  want_eq "a finding somebody already fixed is not in the unresolved section" "0" "$n"
+
+  # ---- 2 · --json carries both sections, checked by a parser ----
+  grun brief --json
+  out="$(printf "SELECT json_valid(CAST(x'%s' AS TEXT));\n" "$(_t2_hex "$G_OUT")" | tsql "$db" 2>&1)"
+  want_eq "brief --json over failures and findings is valid JSON" "1" "$out"
+
+  out="$(_t2_json_get "$G_OUT" '$.summary.tasks_failed')"
+  want_eq "its summary counts the failed tasks" "2" "$out"
+  out="$(_t2_json_get "$G_OUT" '$.summary.tasks_failed_waived')"
+  want_eq "and how many of them the user waived" "1" "$out"
+  out="$(_t2_json_get "$G_OUT" '$.summary.findings_open')"
+  want_eq "and the unresolved findings" "2" "$out"
+
+  out="$(_t2_json_len "$G_OUT" '$.failed_tasks')"
+  want_eq "the failed_tasks array holds both tickets" "2" "$out"
+  out="$(_t2_json_get "$G_OUT" '$.failed_tasks[0].id')"
+  want_eq "unresolved sorts first, and it is the one that failed" "$t1" "$out"
+  out="$(_t2_json_get "$G_OUT" '$.failed_tasks[0].waived')"
+  want_eq "with waived = 0" "0" "$out"
+  out="$(_t2_json_get "$G_OUT" '$.failed_tasks[1].id')"
+  want_eq "the waived ticket follows it" "$t2" "$out"
+  out="$(_t2_json_get "$G_OUT" '$.failed_tasks[1].waived')"
+  want_eq "with waived = 1" "1" "$out"
+  # A JSON NUMBER, not a marker string: a consumer branches on it instead of matching a
+  # word this codebase could later reword.
+  out="$(printf "SELECT json_type(CAST(x'%s' AS TEXT), '\$.failed_tasks[1].waived');\n" \
+    "$(_t2_hex "$G_OUT")" | tsql "$db" 2>&1)"
+  want_eq "waived is an integer a consumer can branch on, not a string to match" "integer" "$out"
+  out="$(_t2_json_get "$G_OUT" '$.failed_tasks[0].reason')"
+  want_contains "and the reason travels with it" "Migration aborted" "$out"
+
+  out="$(_t2_json_len "$G_OUT" '$.review_findings')"
+  want_eq "the review_findings array holds both unresolved findings" "2" "$out"
+  out="$(_t2_json_get "$G_OUT" '$.review_findings[0].task_id')"
+  want_eq "each naming its task" "$t3" "$out"
+  out="$(_t2_json_get "$G_OUT" '$.review_findings[0].severity')"
+  want_eq "worst severity first here too" "major" "$out"
+  out="$(_t2_json_get "$G_OUT" '$.review_findings[0].disposition')"
+  want_eq "and its disposition is the open one" "open" "$out"
+  # `detail` is the reviewer's full argument. It is deliberately absent from the text
+  # surface — a brief is a glance — so if it were absent here too, reading a finding would
+  # still require `guild export --json`, which is the thing this section removed.
+  out="$(_t2_json_get "$G_OUT" '$.review_findings[0].detail')"
+  want_eq "the full detail paragraph the text surface omits is HERE" \
+    "The consumer trusts the callback token without verifying its signature." "$out"
+  out="$(_t2_json_get "$G_OUT" '$.review_findings[0].line')"
+  want_eq "and the line number is a number" "61" "$out"
+
+  # ---- 3 · the dashboard's Findings view has rows, and the tile reaches it ----
+  grun dashboard
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild dashboard renders the same board"; else
+    t_fail "guild dashboard renders the same board" "rc=$G_RC
+$G_ERR"; return 0; fi
+  region="$(_s2_html_region "$f")"
+  html="$(cat "$f")"
+
+  out="$(_t2_json_len "$region" '$.findings')"
+  want_eq "the page carries every finding row, resolved ones included" "3" "$out"
+  out="$(_t2_json_get "$region" '$.summary.findings_total')"
+  want_eq "and a total that matches them" "3" "$out"
+  out="$(_t2_json_get "$region" '$.summary.findings_open')"
+  want_eq "with the open count the red tile prints" "2" "$out"
+  out="$(_t2_json_get "$region" '$.findings[0].task_id')"
+  want_eq "the first row names its task" "$t3" "$out"
+  # A finding without its task is a sentence with no subject: `review_finding` stores an
+  # id and nothing else, so a page built from the row alone repeats TASK-003 down a column
+  # and never says what TASK-003 is.
+  out="$(_t2_json_get "$region" '$.findings[0].task_title')"
+  want_eq "and TITLES it, through the LEFT JOIN" "Review the delivery worker" "$out"
+  out="$(_t2_json_get "$region" '$.findings[0].summary')"
+  want_eq "the reviewer's summary is on the row" "Unsigned callback token accepted" "$out"
+  out="$(_t2_json_get "$region" '$.findings[0].file')"
+  want_eq "so is the file" "src/queue/consume.ts" "$out"
+  out="$(_t2_json_get "$region" '$.findings[0].disposition')"
+  want_eq "unresolved rows sort first" "open" "$out"
+  out="$(_t2_json_get "$region" '$.findings[2].disposition')"
+  want_eq "and the resolved one is present, ordered last, not dropped" "fixed" "$out"
+  out="$(_t2_json_get "$region" '$.findings[2].fix_task_id')"
+  want_eq "carrying the ticket that answered it" "$t1" "$out"
+
+  # THE CHAIN FROM THE TILE TO THE VIEW, one check per link. A red `2 Open findings` that
+  # cannot be clicked is the count problem printed in the largest type on the page, and
+  # each of these three lines is one place it can silently come apart.
+  want_contains "Findings is a registered view with a draw function behind it" \
+    '{ id: "findings", label: "Findings", draw: viewFindings }' "$html"
+  want_contains "the red Open findings tile names that view" \
+    'tile("findings_open", "Open findings", num("findings_open") > 0, "findings")' "$html"
+  want_contains "a tile that names a view IS an anchor element" \
+    'el(view ? "a" : "div", "tile"' "$html"
+  want_contains "whose href is a same-document fragment built from that id" \
+    'box.href = "#" + view;' "$html"
+  want_contains "and the fragment switches the tab" \
+    'window.addEventListener("hashchange"' "$html"
+  # The view is a table of names, not another count.
+  want_contains "the view builds a table with the reviewer and what was flagged" \
+    '"What was flagged"' "$html"
+  want_contains "and the resolved rows are one filter away rather than absent" \
+    'Resolved & waived (' "$html"
+
+  # ---- 4 · a hostile finding, filed through the REAL command ----
+  #
+  # This view exists to print a reviewer's prose, which means it exists to print whatever
+  # a reviewer typed. `guild finding --summary` and `--detail` take arbitrary text and it
+  # lands in an HTML document, so the payloads are the ones the dashboard sections already
+  # use — the bare closer, the tokenizer-tolerant `</SCRIPT >`, an event handler that needs
+  # no script element at all, both quote kinds, an ampersand, and newlines.
+  inj_sum='</script><script>alert(1)</script>'
+  inj_det='"><img src=x onerror=alert(2)>
+</SCRIPT >
+Tom & Jerry'"'"'s "quoted" line'
+  grun finding "$t3" --reviewer "$inj_det" --severity critical \
+    --summary "$inj_sum" --detail "$inj_det" --file "$inj_sum" --line 7
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild finding accepts the hostile summary and detail"; else
+    t_fail "guild finding accepts the hostile summary and detail" "rc=$G_RC
+$G_ERR"; fi
+  grun spool drain "$t3"
+  if [ "$G_RC" -eq 0 ]; then t_pass "and the spool drain lands it on the board"; else
+    t_fail "and the spool drain lands it on the board" "rc=$G_RC
+$G_ERR"; fi
+
+  grun dashboard
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild dashboard renders over the hostile finding"; else
+    t_fail "guild dashboard renders over the hostile finding" "rc=$G_RC
+$G_ERR"; return 0; fi
+
+  # THE HEADLINE ASSERTION, in the form t2_dashboard_stage2 established: a browser ends the
+  # data element at the FIRST `</script` it sees, so "did anything inject" is exactly "does
+  # that first closer still close a COMPLETE JSON document".
+  out="$(_s2_html_closer "$f")"
+  open="${out%% *}"
+  close="${out##* }"
+  case "$open" in '' | *[!0-9]*) open=0 ;; esac
+  case "$close" in '' | *[!0-9]*) close=0 ;; esac
+  if [ "$close" -gt "$open" ] && [ "$open" -gt 0 ]; then
+    t_pass "the data element opens at line $open and closes at line $close"
+  else
+    t_fail "the data element opens and closes" "open=$open close=$close"
+    return 0
+  fi
+  region="$(_s2_html_region "$f")"
+  out="$(printf "SELECT json_valid(CAST(x'%s' AS TEXT));\n" "$(_t2_hex "$region")" | tsql "$db" 2>&1)"
+  want_eq "the first </script> after the opening tag still closes a COMPLETE JSON document" \
+    "1" "$out"
+  n="$(printf '%s\n' "$region" | LC_ALL=C awk 'END { print NR + 0 }')"
+  out="$(_t2_data_block "$f" | LC_ALL=C awk 'END { print NR + 0 }')"
+  want_eq "the naive and the tokenizer-accurate readers agree on the region" "$out" "$n"
+
+  n="$(_t2_lines "$region" '<')"
+  want_eq "no '<' byte anywhere in the data a finding put there" "0" "$n"
+  n="$(_t2_lines "$region" '>')"
+  want_eq "no '>' byte either" "0" "$n"
+  n="$(_t2_lines "$region" '&')"
+  want_eq "and no '&' byte" "0" "$n"
+
+  out="$(printf '%s' "$region" | LC_ALL=C sed 's/\\//g')"
+  want_contains "the </script> payload is carried as an escape, not dropped" \
+    "u003c/scriptu003eu003cscriptu003e" "$out"
+  want_contains "so is the <img onerror> payload" "u003cimg src=x onerror=alert(2)u003e" "$out"
+  want_contains "and the </SCRIPT > variant the tokenizer also honours" "u003c/SCRIPT " "$out"
+  want_contains "the ampersand is escaped rather than deleted" 'Tom \u0026 Jerry' "$region"
+
+  out="$(LC_ALL=C grep -nE '<(script|img|svg)[^>]*(alert|onerror|onload)' "$f")"
+  t_check "no payload became a real tag anywhere in the page" "$out"
+  out="$(LC_ALL=C grep -nE '(inner|outer)HTML[[:space:]]*=|insertAdjacentHTML[[:space:]]*\(|document\.write[[:space:]]*\(|[^A-Za-z_.]eval[[:space:]]*\(|new[[:space:]]+Function[[:space:]]*\(' "$f")"
+  t_check "the page still renders with textContent only" "$out"
+
+  # AND IT RENDERS AS LITERAL TEXT, which is the half the byte checks above cannot state:
+  # a page that deleted the payload would pass every one of them. The engine parses the
+  # document and compares the value to what the reviewer typed, byte for byte — newlines,
+  # both quote kinds and the ampersand included. `critical` sorts to the top of the open
+  # rows, so this is findings[0].
+  out="$(_t2_json_is "$region" '$.findings[0].summary' "$inj_sum")"
+  want_eq "the finding summary parses back out of the page byte for byte" "same" "$out"
+  out="$(_t2_json_is "$region" '$.findings[0].detail' "$inj_det")"
+  want_eq "and so does the multi-line detail, quotes and newlines and all" "same" "$out"
+  out="$(_t2_json_is "$region" '$.findings[0].reviewer' "$inj_det")"
+  want_eq "and the reviewer name, which is free text too" "same" "$out"
+
+  # The text brief is the other output channel, and a newline is its structural token: a
+  # payload that spanned lines there would forge rows, or a second heading.
+  grun brief
+  n="$(_t2_lines "$G_OUT" '^Review Findings:$')"
+  want_eq "the payload cannot forge a second Review Findings heading" "1" "$n"
+  rows="$(_t2_brief_section "$G_OUT" "Review Findings:")"
+  n="$(printf '%s\n' "$rows" | LC_ALL=C awk 'END { print NR + 0 }')"
+  want_eq "three unresolved findings are three lines, not one per newline in a payload" "3" "$n"
+  n="$(_t2_lines "$rows" "^  critical  open  ")"
+  want_eq "and the hostile one is a row like any other, worst severity first" "1" "$n"
+
+  # ---- 5 · determinism, with the payloads in ----
+  cp "$f" "$T2/findings-1.html"
+  sleep 1
+  grun dashboard
+  t_check "two runs a second apart are byte-identical (build twice, same bytes)" \
+    "$(diff "$T2/findings-1.html" "$f" 2>&1 | head -6)"
+  grun rebuild
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild rebuild replays the findings out of the journal"; else
+    t_fail "guild rebuild replays the findings out of the journal" "rc=$G_RC
+$G_ERR"; fi
+  grun dashboard
+  t_check "and the page is byte-identical after a full journal replay" \
+    "$(diff "$T2/findings-1.html" "$f" 2>&1 | head -6)"
+
+  # ---- 6 · ONE db_exec each (§2.2) ----
+  shim="$T2/execshim"
+  if ! _t2_exec_shim "$shim" "$T2/execs"; then
+    t_skip "the round-trip count for brief and dashboard" "tursodb has no absolute path"
+  else
+    : >"$GUILD_EXEC_COUNT"
+    PATH="$shim:$PATH" grun brief
+    n="$(_t2_execs)"
+    want_eq "guild brief starts the engine exactly ONCE" "1" "$n"
+    : >"$GUILD_EXEC_COUNT"
+    PATH="$shim:$PATH" grun brief --json
+    n="$(_t2_execs)"
+    want_eq "and so does guild brief --json" "1" "$n"
+    : >"$GUILD_EXEC_COUNT"
+    PATH="$shim:$PATH" grun dashboard
+    n="$(_t2_execs)"
+    want_eq "guild dashboard starts it exactly ONCE" "1" "$n"
+    : >"$GUILD_EXEC_COUNT"
+    PATH="$shim:$PATH" grun dashboard --json
+    n="$(_t2_execs)"
+    want_eq "and so does guild dashboard --json" "1" "$n"
+
+    # THE RULE IS "the trip count must not GROW WITH THE DATA", so the count is taken again
+    # over a board with many more of exactly the rows these two commands read. One is a
+    # number; one that survives twenty more findings is the rule.
+    n=1
+    while [ "$n" -le 20 ]; do
+      printf "INSERT INTO review_finding (task_id,reviewer,severity,summary,detail,file,line,disposition,created_at) VALUES ('%s','bulk-reviewer','nit','bulk finding %s','','',NULL,'open','2026-01-04');\n" \
+        "$t3" "$n"
+      n=$((n + 1))
+    done | tsql "$db" >/dev/null 2>&1
+    : >"$GUILD_EXEC_COUNT"
+    PATH="$shim:$PATH" grun brief
+    n="$(_t2_execs)"
+    want_eq "twenty more findings do not buy the brief a second round trip" "1" "$n"
+    : >"$GUILD_EXEC_COUNT"
+    PATH="$shim:$PATH" grun dashboard
+    n="$(_t2_execs)"
+    want_eq "nor the dashboard" "1" "$n"
+  fi
+
+  # ---- 7 · and neither command wrote anything ----
+  #
+  # Both are READS. A briefing that journals changes what the next one reports, and a page
+  # that logged "the dashboard was rendered" would drown the feed it exists to show.
+  _s2_mark
+  grun brief >/dev/null
+  grun brief --json >/dev/null
+  grun dashboard >/dev/null
+  grun dashboard --json >/dev/null
+  out="$(_s2_state)"
+  n="$(_s2_jrn)"
+  want_eq "four reads over findings wrote no row" "$S2_ROWS" "$out"
+  want_eq "and appended no journal line" "$S2_JRN" "$n"
+
+  unset GUILD_DIR
+  return 0
+}
+
+# ====================================================================================
+# Stage 2b — the producers
+# ====================================================================================
+#
+# STAGE 2 SHIPPED SIX WINDOWS AND NO PLUMBING, and no test caught it, because every
+# Stage 2 section above drives the CLI directly: `t2_direction` calls `guild goal new`,
+# so goals exist, so `Direction:` prints, so the section passes. What none of them asked
+# is the only question a user has — *does anything the guild actually runs ever create
+# one?* It did not. No skill and no agent called `goal new`, `phase new`, `bug new` or
+# `coverage set`; `qa-tester` appended defects to `.guild/qa/ledger.md` as markdown. So
+# for every real user, Direction, Bugs and Coverage were permanently empty and `guild
+# brief` was `guild board` with better typography — while the harness was green.
+#
+# This section is the guard against that reverting. It drives one realistic guild
+# through the EXACT command forms the skills and agents now document — new-requirement's
+# Step 6.5 placement, qa-strategist's coverage rows, qa-tester's `bug new` / `coverage
+# inspect`, the developer's `log`, the reviewer's `finding`, the orchestrator's `spool
+# drain` — and then asserts the three sections a hollow Stage 2 leaves blank are FULL.
+#
+# It opens on the hollow board deliberately: the same brief, the same dashboard, built
+# from the v4 surface alone (`new req`, `new task`), so that "Direction is populated" is
+# a measured DIFFERENCE rather than a claim about a board that was never empty. If a
+# future refactor breaks a producer, the Phase A checks still pass and only the Phase C
+# checks fail — which points at the plumbing rather than at the window.
+
+# _p_id <output> — the id from a create command that prints "<ID> <title>". This is the
+# `${BUG%% *}` the qa-tester agent is told to write, run against the real output so a
+# change to that output format fails here rather than in an agent at 2am.
+_p_id() {
+  printf '%s' "${1%% *}"
+}
+
+# _p_ok <name> — the last `grun` exited 0, and that is the whole question.
+#
+# `_s2_ok` also demands output, which is right for the create commands (they print the id
+# they derived) and wrong for the three the agents call most: `guild log`, `guild finding`
+# and `guild spool drain` succeed SILENTLY by design — an agent's write path prints
+# nothing so that a subagent's transcript is its report, not the CLI's.
+_p_ok() {
+  if [ "$G_RC" -eq 0 ]; then t_pass "$1"; return 0; fi
+  t_fail "$1" "rc=$G_RC
+$(printf '%s' "$G_ERR" | head -3)"
+  return 1
+}
+
+# _p_entries <dir> — the directory's entries, one per line, dotfiles included, or nothing
+# when it is empty. A glob rather than `ls -A`, so a filename holding a space or a newline
+# is one entry rather than several — which is exactly the class of bug the `--out` checks
+# below exist to catch.
+_p_entries() {
+  local e
+  for e in "$1"/* "$1"/.[!.]*; do
+    [ -e "$e" ] || continue
+    printf '%s\n' "${e##*/}"
+  done
+}
+
+# _p_section <brief-text> <label> — the body of one `Label:` block of `guild brief`,
+# which is indented two spaces and runs to the next unindented line. Used to tell
+# "the heading printed" from "the heading printed WITH ROWS UNDER IT".
+_p_section() {
+  printf '%s\n' "$1" | LC_ALL=C awk -v H="$2" '
+    $0 == H { on = 1; next }
+    on && $0 !~ /^  / { on = 0 }
+    on && $0 !~ /^[ \t]*$/ { print }
+  '
+}
+
+t2_producers() {
+  local db goal p1 p2 req1 req2 tdev tfix bug out n f body before after
+
+  section "Tier 2 · Stage 2b · the producer path (a guild driven the way the skills drive it)"
+
+  _t2_project producers 2026-01-01 || return 0
+  db="$(_t2_db)"
+  f="$GUILD_DIR/dashboard.html"
+
+  # ---- Phase A · the hollow board: everything Stage 2 shipped, nothing that feeds it --
+  #
+  # This is precisely what a user driving the guild through the shipped skills got.
+  grun new req --title "Coupon stacking rules engine" --body "Coupons must not stack."
+  _s2_ok "a v4-surface requirement is created" || return 0
+  req1="$G_OUT"
+  grun new task --title "Wire coupon UI to the evaluator" --agent developer --req "$req1"
+  _s2_ok "and a v4-surface task" || return 0
+  tdev="$G_OUT"
+
+  grun brief
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild brief renders the hollow board"; else
+    t_fail "guild brief renders the hollow board" "rc=$G_RC
+$G_ERR"; return 0; fi
+  body="$G_OUT"
+  want_contains "with no goals, Direction degrades to a sentence rather than a blank" \
+    "No goals declared" "$body"
+  n="$(_t2_lines "$body" '^Bugs:$')"
+  want_eq "the hollow board prints NO Bugs section (this is the gap Stage 2b closes)" "0" "$n"
+  n="$(_t2_lines "$body" '^Coverage:$')"
+  want_eq "and NO Coverage section" "0" "$n"
+
+  grun dashboard --json
+  want_contains "the hollow dashboard carries an empty goals array" '"goals": []' "$G_OUT"
+  want_contains "an empty bugs array" '"bugs": []' "$G_OUT"
+  want_contains "and an empty coverage array" '"coverage": []' "$G_OUT"
+
+  # ---- Phase B · the producers, in the exact forms the skills now document ------------
+  #
+  # guild:new-requirement Step 6.5 — the guild master declares direction, then attaches
+  # the requirement to a phase. Nothing else in the plugin may run these three commands.
+  grun goal new --title "Ship the v2 checkout experience" \
+    --body "Checkout is the revenue path and it is two releases behind." \
+    --priority 1 --date 2026-01-02
+  _s2_ok "new-requirement Step 6.5: guild goal new --title --body --priority --date" || return 0
+  goal="$(_p_id "$G_OUT")"
+  want_eq "goal new prints '<ID> <title>', so \${OUT%% *} is the id" "GOAL-001" "$goal"
+
+  grun phase new --goal "$goal" --title "Payments foundation" --ordinal 1 --date 2026-01-02
+  _s2_ok "guild phase new --goal --title --ordinal --date" || return 0
+  p1="$(_p_id "$G_OUT")"
+  grun phase new --goal "$goal" --title "Cart & coupon rework" --ordinal 2 --date 2026-01-02
+  _s2_ok "and a second phase under the same goal" || return 0
+  p2="$(_p_id "$G_OUT")"
+
+  grun req assign "$req1" "$p2"
+  _s2_ok "guild req assign <REQ> <PHASE> attaches the requirement to a phase" || return 0
+  grun new req --title "Cart persistence across devices" --body "Carts survive a device switch."
+  _s2_ok "a second requirement" || return 0
+  req2="$G_OUT"
+  grun req assign "$req2" "$p1"
+  _s2_ok "assigned to the earlier phase" || return 0
+
+  grun goal move "$goal" in-progress
+  _s2_ok "guild goal move <GOAL> in-progress" || return 0
+  grun move "$req2" "done"
+  _s2_ok "the first phase's requirement lands" || return 0
+  grun phase move "$p1" "done"
+  _s2_ok "guild phase move <PHASE> done" || return 0
+  grun phase move "$p2" in-progress
+  _s2_ok "and the goal advances to its second phase" || return 0
+
+  # qa-strategist Step 4 — the risk map IS the coverage table. Three areas, one of them
+  # with a committed spec, one with neither spec nor notes.
+  grun coverage set checkout --area "Checkout flow" --risk high \
+    --notes "Payment + money movement. Depth: full what-if matrix."
+  _s2_ok "qa-strategist: guild coverage set <id> --area --risk --notes" || return 0
+  want_eq "coverage set echoes '<id> <area>'" "checkout Checkout flow" "$G_OUT"
+  grun coverage set auth --area "Authentication" --risk high --spec "e2e/auth/login.spec.ts"
+  _s2_ok "guild coverage set <id> --area --risk --spec" || return 0
+  grun coverage set marketing --area "Marketing pages" --risk low
+  _s2_ok "and an area needs only --area (the strategist's smoke tier)" || return 0
+
+  # qa-tester Step 6 — the defect is a `bug` row, written in ONE call because nothing
+  # rewrites its text later. Multi-line --repro, exactly as the agent is told to write it.
+  grun bug new \
+    --title "Coupon evaluator stacks two percentage coupons when applied out of order" \
+    --severity critical \
+    --req "$req1" \
+    --found-by qa-tester \
+    --repro "1. Add SAVE10 to the cart
+2. Add SAVE20 before the cart re-renders
+Expected: the larger coupon wins, one discount applies (spec REQ-001 §3)
+Actual:   both apply and the order total goes negative" \
+    --body "Area: checkout · Mission: MISSION-checkout
+Oracle: REQ-001 §3, confirmed with the user."
+  _s2_ok "qa-tester: guild bug new --title --severity --req --found-by --repro --body" || return 0
+  bug="$(_p_id "$G_OUT")"
+  want_eq "bug new prints '<ID> <title>', so the agent's \${BUG%% *} yields the id" "BUG-001" "$bug"
+
+  # qa-tester Step 7 — stamp only what was actually driven.
+  grun coverage inspect auth
+  _s2_ok "qa-tester: guild coverage inspect <id> stamps the area it drove" || return 0
+
+  # The agent write path, drained by the orchestrator. This is what makes the activity
+  # feed name a real agent instead of reading `orchestrator` on every row.
+  grun move "$tdev" in-progress
+  _s2_ok "the orchestrator dispatches the developer ticket" || return 0
+  grun log "$tdev" --agent developer --entry "Wired the coupon evaluator into the cart UI."
+  _p_ok "developer: guild log <TASK> --agent --entry" || return 0
+  grun finding "$tdev" --reviewer reviewer-business-logic --severity major \
+    --summary "Two percentage coupons stack when applied out of order" \
+    --file src/coupons/evaluate.ts --line 88
+  _p_ok "reviewer: guild finding <TASK> --reviewer --severity --summary --file --line" || return 0
+  grun spool drain "$tdev"
+  _p_ok "orchestrator: guild spool drain <TASK> folds both in" || return 0
+
+  grun new task --title "Fix coupon stacking in the evaluator" --agent developer --req "$req1"
+  _s2_ok "the fix ticket the qa-tester declared as a follow-up" || return 0
+  tfix="$G_OUT"
+  grun bug fix "$bug" --task "$tfix"
+  _s2_ok "qa-tester: guild bug fix <BUG> --task <TASK> links the work to the defect" || return 0
+
+  # ---- Phase C · the three sections that were structurally unreachable ----------------
+
+  grun brief
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild brief renders the produced board"; else
+    t_fail "guild brief renders the produced board" "rc=$G_RC
+$G_ERR"; return 0; fi
+  body="$G_OUT"
+
+  out="$(_p_section "$body" "Direction:")"
+  if [ -n "$out" ]; then t_pass "DIRECTION IS POPULATED (it was 'No goals declared' in Phase A)"; else
+    t_fail "DIRECTION IS POPULATED (it was 'No goals declared' in Phase A)" \
+      "the Direction section is empty on a board with a goal, two phases and two requirements"; fi
+  want_contains "Direction names the goal by title" "Ship the v2 checkout experience" "$out"
+  want_contains "Direction shows the priority and status the guild master set" \
+    "[p1 in-progress]" "$out"
+  want_contains "Direction names the phase the goal is ON — the earliest not-done one" \
+    "on $p2 Cart & coupon rework" "$out"
+  want_contains "and the requirement rollup counts the whole goal, not just that phase" \
+    "1/2 req done" "$out"
+
+  out="$(_p_section "$body" "Bugs:")"
+  if [ -n "$out" ]; then t_pass "BUGS IS POPULATED (the section had no producer before Stage 2b)"; else
+    t_fail "BUGS IS POPULATED (the section had no producer before Stage 2b)" \
+      "no Bugs section on a board carrying an open critical defect"; fi
+  want_contains "the bug row carries its severity" "critical" "$out"
+  want_contains "its lifecycle status after 'bug fix'" "fixing" "$out"
+  want_contains "its title" "Coupon evaluator stacks two percentage coupons" "$out"
+  want_contains "who found it — the qa-tester's --found-by, not 'orchestrator'" \
+    "found by qa-tester" "$out"
+  want_contains "and the fix task, so the defect and the work against it read as one thing" \
+    "fix $tfix" "$out"
+
+  out="$(_p_section "$body" "Coverage:")"
+  if [ -n "$out" ]; then t_pass "COVERAGE IS POPULATED (its only writer used to be 'guild init')"; else
+    t_fail "COVERAGE IS POPULATED (its only writer used to be 'guild init')" \
+      "no Coverage section on a board with three mapped areas, two never inspected"; fi
+  want_contains "the never-inspected high-risk area is due" "checkout" "$out"
+  want_contains "so is the low-risk one" "marketing" "$out"
+  n="$(_t2_lines "$out" 'auth')"
+  want_eq "but the area the qa-tester STAMPED is not due, so it is absent" "0" "$n"
+
+  want_contains "the Summary line counts the open bug and calls out the critical one" \
+    "1 open bug(s) (1 critical)" "$body"
+  want_contains "and counts the areas due for inspection" "2 area(s) due for inspection" "$body"
+  want_contains "the unresolved review finding is counted" "1 unresolved review finding(s)" "$body"
+
+  # No section may be a wall of "(none)": the brief's whole design is absence-as-answer.
+  n="$(_t2_lines "$body" '(none)')"
+  want_eq "no section prints '(none)' — absence is a missing section, not a placeholder" "0" "$n"
+
+  # ---- the activity feed can finally narrate what moved -------------------------------
+  #
+  # `guild log` and `guild finding` wrote no `event` row at all before this round, so the
+  # two commands agents run most often were invisible to the one section that answers
+  # "what moved" — and every row on the feed read `orchestrator`.
+  out="$(_p_section "$body" "Since Last Check-in:")"
+  want_contains "the drained work-log entry appears on the activity feed" \
+    "logged  task $tdev" "$out"
+  want_contains "attributed to the DEVELOPER, not to the orchestrator" "developer  logged" "$out"
+  want_contains "the drained finding appears too" "filed  task $tdev" "$out"
+  want_contains "attributed to the reviewer that filed it" "reviewer-business-logic  filed" "$out"
+  want_contains "an event row carries the subject's TITLE, not just its id" \
+    "created  goal $goal  Ship the v2 checkout experience" "$out"
+  want_contains "and a 'moved' row carries both ends of the transition" \
+    "open → fixing" "$out"
+  want_eq "spool drain wrote one 'logged' event" "1" "$(_s2_events logged task)"
+  want_eq "and one 'filed' event" "1" "$(_s2_events filed task)"
+
+  # ---- the JSON surfaces agree with the text one -------------------------------------
+  grun brief --json
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild brief --json on the produced board"; else
+    t_fail "guild brief --json on the produced board" "rc=$G_RC
+$G_ERR"; fi
+  out="$(printf "SELECT json_valid(CAST(x'%s' AS TEXT));\n" "$(_t2_hex "$G_OUT")" | tsql "$db" 2>&1)"
+  want_eq "and it is valid JSON, checked by a parser" "1" "$out"
+  want_contains "the JSON brief carries the goal" "Ship the v2 checkout experience" "$G_OUT"
+  want_contains "the bug" "\"$bug\"" "$G_OUT"
+  want_contains "and the coverage area" "Checkout flow" "$G_OUT"
+
+  grun dashboard --json
+  if printf '%s' "$G_OUT" | LC_ALL=C grep -q '"goals": \[\]'; then
+    t_fail "the dashboard's goals array is no longer empty" "still []"
+  else t_pass "the dashboard's goals array is no longer empty"; fi
+  if printf '%s' "$G_OUT" | LC_ALL=C grep -q '"bugs": \[\]'; then
+    t_fail "nor its bugs array" "still []"
+  else t_pass "nor its bugs array"; fi
+  if printf '%s' "$G_OUT" | LC_ALL=C grep -q '"coverage": \[\]'; then
+    t_fail "nor its coverage array" "still []"
+  else t_pass "nor its coverage array"; fi
+  want_contains "the dashboard summary counts the goal" '"goals_total": 1' "$G_OUT"
+  want_contains "both phases" '"phases_total": 2' "$G_OUT"
+  want_contains "the open bug" '"bugs_open": 1' "$G_OUT"
+  want_contains "and all three coverage areas" '"coverage_total": 3' "$G_OUT"
+  want_contains "the requirement row carries its phase, so the Roadmap can nest it" \
+    "\"phase_id\":\"$p2\"" "$G_OUT"
+  want_contains "and its open-bug count, which is the risk pill on the roadmap line" \
+    '"bugs_open":1' "$G_OUT"
+
+  # ---- and the page a human opens actually shows them ---------------------------------
+  grun dashboard
+  if [ "$G_RC" -eq 0 ] && [ -f "$f" ]; then t_pass "guild dashboard writes the page"; else
+    t_fail "guild dashboard writes the page" "rc=$G_RC
+$G_ERR"; return 0; fi
+  out="$(_t2_data_block "$f")"
+  want_contains "the page's data block carries the goal title" \
+    "Ship the v2 checkout experience" "$out"
+  want_contains "the phase title" "Cart \\u0026 coupon rework" "$out"
+  want_contains "the bug title" "Coupon evaluator stacks two percentage coupons" "$out"
+  want_contains "the coverage area" "Checkout flow" "$out"
+  want_contains "and the spec path the qa-tester recorded" "e2e/auth/login.spec.ts" "$out"
+
+  # ---- rule 5, end to end: the whole produced board survives a replay -----------------
+  #
+  # Every producer above journals AND events. If any one of them did not, `rebuild`
+  # would drop it and the brief would come back a different document.
+  grun brief
+  printf '%s\n' "$G_OUT" | LC_ALL=C grep -v '^Generated:' >"$T2/prod-brief-before"
+  grun rebuild
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild rebuild replays the produced board"; else
+    t_fail "guild rebuild replays the produced board" "rc=$G_RC
+$G_ERR"; fi
+  grun brief
+  printf '%s\n' "$G_OUT" | LC_ALL=C grep -v '^Generated:' >"$T2/prod-brief-after"
+  t_check "and the brief is identical afterwards — direction, bugs, coverage and the feed" \
+    "$(diff "$T2/prod-brief-before" "$T2/prod-brief-after" 2>&1 | head -10)"
+
+  unset GUILD_DIR
+  return 0
+}
+
+# ====================================================================================
+# Stage 2b — the dashboard's remaining sharp edges
+# ====================================================================================
+#
+# Round 5 found four of these by rendering the page in a real browser rather than
+# grepping the source, which is the half of the dashboard contract this harness cannot
+# execute. Each check below is the STRUCTURAL residue of one of those findings — the
+# thing a grep CAN see that would have to change for the browser finding to come back.
+#
+#   `--out` onto a directory      reported success and left the staging file as the
+#                                 only output, under the one filename nothing serves
+#   `--out nosuch/`               failed in the shell's voice, then again in ours
+#   `--out -weird.html`           `dirname: illegal option -- w`, a coreutils error
+#                                 wearing the guild's exit code
+#   a `__proto__` graph node id   `edgeBy["__proto__"]` read back Object.prototype, so
+#                                 the array was never created and `.push` was undefined
+#   a JSON parse failure          drew every view's confident empty state and put the
+#                                 correction BELOW them
+#
+# _t2_line_of <file> <fixed-string> — the line number of the first line holding it, or 0.
+_t2_line_of() {
+  LC_ALL=C awk -v S="$2" 'index($0, S) { print NR; exit }' "$1" 2>/dev/null | LC_ALL=C head -1
+}
+
+t2_dashboard_hardening() {
+  local db f tmpl out n line1 line2 dir stray
+
+  section "Tier 2 · Stage 2b · the dashboard's --out contract and its two prototype traps"
+
+  _t2_project dashhard 2026-01-01 || return 0
+  db="$(_t2_db)"
+  tmpl="$SCRIPT_DIR/dashboard.tmpl.html"
+  dir="$T2/dashhard"
+
+  grun new req --title "Something to draw" --body "b"
+  grun new task --title "A task" --agent developer --req REQ-001
+
+  # ---- `--out` names the FILE ---------------------------------------------------------
+  mkdir -p "$dir/site"
+  grun dashboard --out "$dir/site"
+  if [ "$G_RC" -ne 0 ]; then t_pass "--out onto an existing directory is REFUSED"; else
+    t_fail "--out onto an existing directory is REFUSED" \
+      "rc=0: it reported success and wrote '$(ls "$dir/site")' into the directory"; fi
+  want_contains "and says which path it means and why" "is a directory" "$G_ERR"
+  want_contains "and suggests a filename inside it" "dashboard.html" "$G_ERR"
+  stray="$(_p_entries "$dir/site" | LC_ALL=C tr '\n' ' ')"
+  want_eq "THE TEMP FILE IS NEVER THE OUTPUT: the directory is still empty" "" "$stray"
+
+  grun dashboard --out "$dir/site/"
+  if [ "$G_RC" -ne 0 ]; then t_pass "a trailing slash on an existing directory is refused too"; else
+    t_fail "a trailing slash on an existing directory is refused too" "rc=0"; fi
+  want_contains "with the same message, not a 'mv: … are identical'" "is a directory" "$G_ERR"
+
+  # A trailing slash names a directory whether or not it exists. `-d` alone cannot see
+  # that: `dirname -- "nosuch/"` answers `.`, nothing is created, and the staging redirect
+  # then fails in the SHELL's voice before the guild adds a second, vaguer error.
+  grun dashboard --out "$dir/nosuch/"
+  if [ "$G_RC" -ne 0 ]; then t_pass "a trailing slash on a directory that does not exist is refused"; else
+    t_fail "a trailing slash on a directory that does not exist is refused" "rc=0"; fi
+  want_contains "in the guild's voice" "is a directory" "$G_ERR"
+  case "$G_ERR" in
+    *"No such file or directory"* | *"dashboard.sh: line"*)
+      t_fail "and NOT in the shell's — no raw redirect error leaks through" \
+        "stderr carried a shell-level message: $(printf '%s' "$G_ERR" | head -2)" ;;
+    *) t_pass "and NOT in the shell's — no raw redirect error leaks through" ;;
+  esac
+  if [ -e "$dir/nosuch" ]; then
+    t_fail "a refused --out creates nothing on disk" "$dir/nosuch exists"
+  else t_pass "a refused --out creates nothing on disk"; fi
+
+  # ---- a path is argv, and argv can start with a dash ---------------------------------
+  #
+  # Every utility that touches it needs `--`. Without it `dirname` printed
+  # `dirname: illegal option -- w` and the command exited 1 on a perfectly writable path.
+  ( cd "$dir" && "$GUILD" dashboard --out "-weird.html" >"$TMPROOT/out" 2>"$TMPROOT/err" )
+  G_RC=$?
+  G_OUT="$(cat "$TMPROOT/out" 2>/dev/null)"
+  G_ERR="$(cat "$TMPROOT/err" 2>/dev/null)"
+  if [ "$G_RC" -eq 0 ]; then t_pass "--out with a leading-dash filename succeeds"; else
+    t_fail "--out with a leading-dash filename succeeds" "rc=$G_RC
+$G_ERR"; fi
+  case "$G_ERR" in
+    *"illegal option"* | *"invalid option"* | *"unrecognized option"*)
+      t_fail "and no utility parses it as a flag" "$(printf '%s' "$G_ERR" | head -2)" ;;
+    *) t_pass "and no utility parses it as a flag" ;;
+  esac
+  if [ -f "$dir/-weird.html" ]; then t_pass "the file lands under that literal name"; else
+    t_fail "the file lands under that literal name" "no $dir/-weird.html"; fi
+  stray="$(_p_entries "$dir" | LC_ALL=C awk '/\.tmp\./ { n++ } END { print n + 0 }')"
+  want_eq "and no staging file is left beside it" "0" "$stray"
+
+  # ---- a `__proto__` graph node id ----------------------------------------------------
+  #
+  # `graph_node.id` is a free-text TEXT PRIMARY KEY with no writer until Stage 4, so this
+  # is a trap set for a stage that has not shipped rather than a live bug — which is
+  # exactly why it needs a test now: the browser finding will not be re-run in Stage 4.
+  printf "INSERT INTO graph_node (id, requirement_id, node_key, kind, status) VALUES ('__proto__', 'REQ-001', 'implement', 'work', 'running');\n" | tsql "$db" >/dev/null 2>&1
+  printf "INSERT INTO graph_node (id, requirement_id, node_key, kind, status) VALUES ('constructor', 'REQ-001', 'review', 'gate', 'pending');\n" | tsql "$db" >/dev/null 2>&1
+  printf "INSERT INTO graph_edge (from_node, to_node) VALUES ('__proto__', 'constructor');\n" | tsql "$db" >/dev/null 2>&1
+
+  f="$dir/proto.html"
+  grun dashboard --out "$f"
+  if [ "$G_RC" -eq 0 ]; then t_pass "the page still builds with prototype-key graph ids"; else
+    t_fail "the page still builds with prototype-key graph ids" "rc=$G_RC
+$G_ERR"; fi
+  out="$(_t2_data_block "$f")"
+  want_contains "and the ids reach the page as plain strings" '"__proto__"' "$out"
+  want_contains "including the second one" '"constructor"' "$out"
+  out="$(printf "SELECT json_valid(CAST(x'%s' AS TEXT));\n" "$(_t2_hex "$out")" | tsql "$db" 2>&1)"
+  want_eq "the data document is still valid JSON" "1" "$out"
+
+  # THE STRUCTURAL GUARD. Every map on the page whose KEY comes from the database is
+  # either namespaced at both build and read (`"e:"`, `"n:"`, `"g:"`, `"p:"`, `"r:"`) or
+  # read through `pick()`, which is a hasOwnProperty lookup.
+  #
+  # `edgeBy[txt(…)]` / `ids[txt(…)]` — a raw database id straight into a `{}` — is the
+  # exact shape that took the whole Graph view down, and it is the shape a well-meaning
+  # simplification reintroduces, so it is asserted absent by name. The two composition
+  # sites are then asserted PRESENT, because absence alone is also satisfied by deleting
+  # the lookups: the key must be prefixed where it is built (`f`) and where it is read.
+  n="$(LC_ALL=C grep -c -E '(edgeBy|ids)\[[[:space:]]*txt\(' "$tmpl")"
+  t_check "no graph map is indexed by a raw database id (the __proto__ crash shape)" \
+    "$(if [ "${n:-0}" = "0" ]; then printf ''; else
+         printf 'found %s raw-id lookup(s):\n%s' "$n" \
+           "$(LC_ALL=C grep -n -E '(edgeBy|ids)\[[[:space:]]*txt\(' "$tmpl" | head -4)"; fi)"
+  want_contains "the edge key is namespaced where it is BUILT" \
+    'var f = "e:" + txt(edges[i].from);' "$(cat "$tmpl")"
+  want_contains "and where it is READ back" \
+    'edgeBy["e:" + txt(ns[j].id)]' "$(cat "$tmpl")"
+  want_contains "the node-id map is namespaced too, or the Mermaid source reads [object Object]" \
+    'ids["n:" + txt(n.id)]' "$(cat "$tmpl")"
+  n="$(LC_ALL=C grep -c 'hasOwnProperty' "$tmpl")"
+  if [ "${n:-0}" -ge 1 ]; then t_pass "and the status/risk maps are read through an own-property lookup"; else
+    t_fail "and the status/risk maps are read through an own-property lookup" \
+      "no hasOwnProperty guard in the template: STALE_DAYS['constructor'] returns a function again"; fi
+
+  # ---- a page that cannot read its data must not assert what the data says ------------
+  #
+  # The escaping makes this path unreachable, which is exactly why it has to be right: it
+  # is the designated failure mode and nobody watches it. The old one drew six confident
+  # empty states — "No open defects", "No direction declared yet" — and put the one
+  # correction BELOW all of them, so the file's only honest line was the last one.
+  line1="$(_t2_line_of "$tmpl" 'if (PARSE_ERROR) { failClosed(); return; }')"
+  if [ -n "$line1" ]; then t_pass "chrome() fails closed on a parse error"; else
+    t_fail "chrome() fails closed on a parse error" \
+      "no 'if (PARSE_ERROR) { failClosed(); return; }' guard in the template"; fi
+  line2="$(_t2_line_of "$tmpl" 'v.draw(root);')"
+  if [ -n "$line1" ] && [ -n "$line2" ] && [ "$line1" -lt "$line2" ]; then
+    t_pass "and it returns BEFORE any view is drawn (line $line1 < $line2)"
+  else
+    t_fail "and it returns BEFORE any view is drawn" \
+      "PARSE_ERROR guard at line ${line1:-none}, first v.draw() at line ${line2:-none}"; fi
+  line2="$(_t2_line_of "$tmpl" 'add(tiles,')"
+  if [ -n "$line1" ] && [ -n "$line2" ] && [ "$line1" -lt "$line2" ]; then
+    t_pass "and before a single tile prints a number (line $line1 < $line2)"
+  else
+    t_fail "and before a single tile prints a number" \
+      "PARSE_ERROR guard at line ${line1:-none}, tiles at line ${line2:-none}"; fi
+  line2="$(_t2_line_of "$tmpl" 'content.insertBefore(box, content.firstChild)')"
+  if [ -n "$line2" ]; then t_pass "the banner is INSERTED FIRST, not appended under the views"; else
+    t_fail "the banner is INSERTED FIRST, not appended under the views" \
+      "failClosed() does not insertBefore(box, content.firstChild)"; fi
+  want_contains "and the header says the page is showing nothing rather than zero" \
+    "showing nothing, not zero" "$(cat "$tmpl")"
+
+  unset GUILD_DIR
+  return 0
+}
+
+# ====================================================================================
+# Stage 2b — the skill contract
+# ====================================================================================
+#
+# `t2_producers` proves the WRITE side: every command a skill or an agent is now told to
+# run exists and fills the window it is supposed to fill. This section is the other half,
+# and it is the half that fails silently.
+#
+# A skill is a document that tells a model what a command PRINTS. Nothing enforces that.
+# `skills/check-in/SKILL.md` said, until this round, that `guild next` "returns
+# `TASK-NNN <path>`" — a v4 sentence that survived the removal of `guild path` itself. The
+# CLI prints a bare id, no test disagreed, and the harness was green: the failure lands in
+# an orchestrator at 2am, parsing a second column that has not existed since Stage 1.
+#
+# So each check below pins one SENTENCE from one document, and names it. Read a failure as
+# "this file now lies", not "this feature broke" — the CLI may be perfectly right and the
+# document simply stale, and the message tells you where to look. These are the claims the
+# skills make about output SHAPE, which is exactly what a refactor changes without noticing:
+#
+#   guild next               a bare id — there is no path column   check-in/SKILL.md §3.1
+#   guild list task          four columns, $4 is the requirement   check-in/SKILL.md, release
+#   guild export --json      a "findings" array, and no files      brief/SKILL.md Step 2
+#   goal list / phase list   two DIFFERENT rollups                 product-owner, new-requirement
+#   the activity feed        title + actor + from→to               brief/SKILL.md Step 3
+#   create commands          which print an id ALONE, which do not qa-artifacts, product-owner
+#
+# One project, driven once; every check reads that same board. The board is shaped so no
+# two counts coincide — a rollup test on a board where 1/2 is the right answer twice
+# proves nothing about which thing is being counted.
+
+# _sc_fields <line> — how many whitespace-separated fields a line has. The question
+# "does `guild next` print a second column?" is exactly this and nothing more.
+_sc_fields() {
+  printf '%s\n' "$1" | LC_ALL=C awk 'NR == 1 { print NF }'
+}
+
+t2_skill_contract() {
+  local db goal p1 p2 p3 req1 req2 req3 tdev trev bug out n before after
+
+  section "Tier 2 · Stage 2b · the skill contract (what the docs promise the commands print)"
+
+  _t2_project contract 2026-03-01 || return 0
+  db="$(_t2_db)"
+
+  # ---- the board: every rollup a DIFFERENT number ------------------------------------
+  #
+  # Three phases, one done; two requirements on that phase, one done. So the goal's
+  # phase rollup is 1/3 and its first phase's requirement rollup is 1/2 — two fractions
+  # that cannot be confused for each other, which is the whole point.
+  grun goal new --title "Ship the notifications overhaul" --priority 1 --date 2026-03-01
+  _s2_ok "a goal to hang the rollups on" || return 0
+  goal="${G_OUT%% *}"
+  grun phase new --goal "$goal" --title "Delivery pipeline" --ordinal 1 --date 2026-03-01
+  _s2_ok "phase one" || return 0
+  p1="${G_OUT%% *}"
+  grun phase new --goal "$goal" --title "Preferences UI" --ordinal 2 --date 2026-03-01
+  _s2_ok "phase two" || return 0
+  p2="${G_OUT%% *}"
+  grun phase new --goal "$goal" --title "Digest scheduling" --ordinal 3 --date 2026-03-01
+  _s2_ok "phase three" || return 0
+  p3="${G_OUT%% *}"
+
+  grun new req --title "Notification delivery pipeline" --date 2026-03-01
+  _s2_ok "a requirement" || return 0
+  req1="$G_OUT"
+  grun new req --title "Notification preferences" --date 2026-03-01
+  _s2_ok "a second" || return 0
+  req2="$G_OUT"
+  grun new req --title "Weekly digest" --date 2026-03-01
+  _s2_ok "and a third, deliberately unaffiliated" || return 0
+  req3="$G_OUT"
+  grun req assign "$req1" "$p1" && grun req assign "$req2" "$p1"
+  _s2_ok "two requirements land on the same phase" || return 0
+  grun move "$req1" "done"
+  _s2_ok "one of them is done" || return 0
+  grun phase move "$p1" "done"
+  _s2_ok "and the phase closes with the other still open" || return 0
+
+  grun new task --title "Build the delivery worker" --agent developer --req "$req2"
+  _s2_ok "a developer ticket" || return 0
+  tdev="$G_OUT"
+  grun new task --title "Review the delivery worker" --agent reviewer --req "$req2"
+  _s2_ok "and a reviewer ticket" || return 0
+  trev="$G_OUT"
+
+  # ---- guild next prints a BARE id ---------------------------------------------------
+  #
+  # `skills/check-in/SKILL.md` §3.1 and its Command Reference, and
+  # `skills/check-in/references/state-format.md`, all read the answer as one token. v4
+  # printed `TASK-NNN <path>`; `guild path` was removed in v5 and the sentence outlived it.
+  grun next
+  want_eq "check-in §3.1: guild next prints the next actionable ticket" "$tdev" "$G_OUT"
+  want_eq "and it is a BARE id — no path column, because guild path is gone" \
+    "1" "$(_sc_fields "$G_OUT")"
+  if [ "$G_OUT" = "$trev" ]; then
+    t_fail "state-format: the reviewer gate holds $trev back while dev work is open" \
+      "guild next handed out the reviewer ticket first"
+  else
+    t_pass "state-format: the reviewer gate holds $trev back while dev work is open"
+  fi
+
+  grun move "$tdev" in-progress
+  _s2_ok "the orchestrator dispatches it" || return 0
+  grun next
+  want_eq "an in-progress ticket is resumed before a todo one is claimed" "$tdev" "$G_OUT"
+  want_eq "still one field" "1" "$(_sc_fields "$G_OUT")"
+
+  # ---- guild list task is FOUR columns, and $4 is the requirement ---------------------
+  #
+  # `check-in/SKILL.md` Step 3.5 runs `guild list task | awk '$4=="REQ-NNN" && …'` and
+  # `release/SKILL.md` Step 2 runs the same shape. A fifth column, or a reordering, turns
+  # both into a filter that silently matches nothing — the worst failure a gate can have.
+  grun list task
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C grep "^$tdev ")"
+  want_eq "check-in Step 3.5 / release Step 2: list task prints exactly four columns" \
+    "4" "$(_sc_fields "$out")"
+  want_eq "column 1 is the id" "$tdev" "$(printf '%s\n' "$out" | LC_ALL=C awk '{ print $1 }')"
+  want_eq "column 2 is the status" "in-progress" \
+    "$(printf '%s\n' "$out" | LC_ALL=C awk '{ print $2 }')"
+  want_eq "column 3 is the agent — the awk key the reviewer gate filters on" "developer" \
+    "$(printf '%s\n' "$out" | LC_ALL=C awk '{ print $3 }')"
+  want_eq "column 4 is the requirement — the awk key BOTH skills filter on" "$req2" \
+    "$(printf '%s\n' "$out" | LC_ALL=C awk '{ print $4 }')"
+
+  # `guild:brief` Step 2's allowlist promises this exact shape for the failed listing,
+  # because the whole reason it is allowed is to turn a bare count into names.
+  grun new task --title "Migrate legacy preference rows" --agent developer --req "$req2"
+  _s2_ok "a ticket to fail" || return 0
+  out="$G_OUT"
+  grun move "$out" failed
+  _s2_ok "moved to failed" || return 0
+  grun list task failed
+  want_eq "brief Step 2: 'guild list task failed' prints one line per failed task" "1" \
+    "$(_t2_lines "$G_OUT" "^$out ")"
+  want_eq "in the documented '<ID> failed <agent> <req>' shape" "$out failed developer $req2" \
+    "$G_OUT"
+
+  # ---- guild export --json carries findings, and writes no file ----------------------
+  #
+  # The third row of `guild:brief` Step 2's allowlist. The skill is emphatic that `--json`
+  # "writes NO files" — it is the one command on a read-only skill's allowlist whose bare
+  # form does write, so the flag is the entire safety argument.
+  grun log "$tdev" --agent developer --entry "Wired the delivery worker into the queue."
+  if [ "$G_RC" -eq 0 ]; then t_pass "the developer logs to the spool"; else
+    t_fail "the developer logs to the spool" "rc=$G_RC
+$G_ERR"; return 0; fi
+  grun finding "$tdev" --reviewer reviewer-security --severity major \
+    --summary "Unsigned callback token accepted" --file src/queue/consume.ts --line 61
+  if [ "$G_RC" -eq 0 ]; then t_pass "the reviewer files a finding into it"; else
+    t_fail "the reviewer files a finding into it" "rc=$G_RC
+$G_ERR"; return 0; fi
+  grun spool drain "$tdev"
+  if [ "$G_RC" -eq 0 ]; then t_pass "and the orchestrator drains it"; else
+    t_fail "and the orchestrator drains it" "rc=$G_RC
+$G_ERR"; return 0; fi
+
+  rm -rf "$GUILD_DIR/export"
+  grun export --json
+  if [ "$G_RC" -eq 0 ]; then t_pass "brief Step 2: guild export --json exits 0"; else
+    t_fail "brief Step 2: guild export --json exits 0" "rc=$G_RC
+$G_ERR"; fi
+  if [ -d "$GUILD_DIR/export" ]; then
+    t_fail "and writes NO files — the flag is why a read-only skill may run it" \
+      "$GUILD_DIR/export was recreated"
+  else t_pass "and writes NO files — the flag is why a read-only skill may run it"; fi
+  want_contains "it carries a findings array, which is the only reason the skill runs it" \
+    '"findings"' "$G_OUT"
+  want_contains "each finding names its severity" '"severity"' "$G_OUT"
+  want_contains "its file" '"file"' "$G_OUT"
+  want_contains "and its line — 'severity and file:line' is what Step 4 asks for" \
+    '"line"' "$G_OUT"
+  want_contains "and the finding's own text is there to narrate" \
+    "Unsigned callback token accepted" "$G_OUT"
+
+  # ---- the two rollups count DIFFERENT things ----------------------------------------
+  #
+  # `agents/product-owner.md` and `skills/new-requirement/SKILL.md` both annotate these
+  # two lines inline — `<phases-done>/<total>` on the goal, `<reqs-done>/<total>` on the
+  # phase. They are one column apart in two commands that otherwise look alike, and the
+  # product-owner reads them to propose a placement.
+  grun goal list
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C grep "^$goal ")"
+  want_eq "product-owner: goal list is '<GOAL> <status> <priority> <phases-done>/<total> <title>'" \
+    "$goal todo 1 1/3 Ship the notifications overhaul" "$out"
+  want_eq "the fraction counts PHASES (1 of 3 done), not the goal's requirements" "1/3" \
+    "$(printf '%s\n' "$out" | LC_ALL=C awk '{ print $4 }')"
+
+  grun phase list
+  out="$(printf '%s\n' "$G_OUT" | LC_ALL=C grep "^$p1 ")"
+  want_eq "product-owner: phase list is '<PHASE> <GOAL> <ordinal> <status> <reqs-done>/<total> <title>'" \
+    "$p1 $goal 1 done 1/2 Delivery pipeline" "$out"
+  want_eq "the fraction counts REQUIREMENTS (1 of 2 done) — a different question, one column over" \
+    "1/2" "$(printf '%s\n' "$out" | LC_ALL=C awk '{ print $5 }')"
+  n="$(_t2_lines "$G_OUT" "^$p3 ")"
+  want_eq "a phase with no requirements still lists, so the placement question can offer it" \
+    "1" "$n"
+  n="$(_t2_lines "$G_OUT" "$req3")"
+  want_eq "and an unaffiliated requirement appears under no phase at all" "0" "$n"
+
+  # ---- which create commands print an id ALONE ---------------------------------------
+  #
+  # Two different capture idioms are documented, and picking the wrong one yields an "id"
+  # with a title stuck to it that then fails a lookup three commands later:
+  #
+  #   REQ=$("$GUILD" new req --title …)      product-owner.md — the whole output IS the id
+  #   BUG=$("$GUILD" bug new …); ${BUG%% *}  qa-artifacts/SKILL.md — strip the title first
+  want_eq "product-owner: 'new req' prints the id ALONE, so REQ=\$(…) is directly usable" \
+    "1" "$(_sc_fields "$req3")"
+  grun next-id task
+  want_eq "new-requirement: 'next-id' prints just the number" "1" "$(_sc_fields "$G_OUT")"
+
+  grun bug new --title "Preference toggles silently revert after save" --severity critical \
+    --req "$req2" --found-by qa-tester --date 2026-03-02
+  _s2_ok "qa-tester: guild bug new" || return 0
+  bug="${G_OUT%% *}"
+  if [ "$(_sc_fields "$G_OUT")" -gt 1 ]; then
+    t_pass "qa-artifacts: 'bug new' prints '<ID> <title>' — which is WHY it says \${BUG%% *}"
+  else
+    t_fail "qa-artifacts: 'bug new' prints '<ID> <title>' — which is WHY it says \${BUG%% *}" \
+      "one field only: $G_OUT"
+  fi
+  want_eq "and \${BUG%% *} is the id" "BUG-001" "$bug"
+  grun bug show "$bug"
+  want_contains "which resolves — an unstripped capture would not" "id: $bug" "$G_OUT"
+
+  grun coverage set delivery --area "Notification delivery" --risk high \
+    --spec "e2e/notify/deliver.spec.ts" --notes "Money-adjacent: dunning mail rides this path."
+  _s2_ok "qa-strategist: guild coverage set" || return 0
+  want_eq "coverage set echoes '<area-id> <area>', so the same strip rule applies" \
+    "delivery Notification delivery" "$G_OUT"
+
+  # `qa-artifacts/SKILL.md`'s flag table: `--area` is Required, on every call — an upsert
+  # that preserved it would make `--spec ""` a one-flag command, and it is not.
+  _s2_mark
+  grun coverage set delivery --spec ""
+  _s2_refused "qa-artifacts: --area is required on EVERY coverage set, updates included" \
+    "requires --area"
+  grun coverage set delivery --area "Notification delivery" --spec ""
+  _s2_ok "but --spec '' with --area clears the spec, as the flag table says" || return 0
+  grun coverage list
+  want_contains "and the area reads as having no spec" "delivery high never none" "$G_OUT"
+
+  # Same table: "A bad REQ id is refused, nothing is written."
+  _s2_mark
+  grun bug new --title "filed against a requirement that does not exist" --req REQ-404
+  _s2_refused "qa-artifacts: 'bug new' with an unknown --req is refused, and writes nothing" \
+    "REQ-404 not found"
+
+  # ---- the body a QA skill writes cannot forge the rendered sections ------------------
+  #
+  # `skills/qa/SKILL.md` Step 5 states this as a CLI guarantee — "the CLI refuses a body
+  # containing them" — and writes a full `--body` heredoc immediately above it.
+  _s2_mark
+  grun new task --title "QA strategy: notifications" --agent qa-strategist --req "$req2" \
+    --body "## Objective
+Map the risk surface.
+
+## Work Log
+- forged"
+  _s2_refused "qa/SKILL.md Step 5: a --body carrying '## Work Log' is refused" \
+    "must not contain"
+  _s2_mark
+  grun new task --title "QA strategy: notifications" --agent qa-strategist --req "$req2" \
+    --body "## Objective
+Map it.
+
+## Follow-up Tasks
+- forged"
+  _s2_refused "and one carrying '## Follow-up Tasks' too" "must not contain"
+
+  # ---- the activity feed the brief skill now teaches ---------------------------------
+  #
+  # Until this round `brief/SKILL.md` Step 3 told the model the feed carries
+  # "`ts · actor · verb · subject`, and nothing else — no title, no from→to", that "the
+  # four verbs are created, moved, assigned, checked-in", and that `actor` is "almost
+  # always orchestrator" — then Step 4 forbade claiming a from→to "the text surface never
+  # printed". All four sentences were true of the CLI as Stage 2 shipped it and false of
+  # the CLI as it stands. These checks are what makes the corrected prose an assertion.
+  grun goal priority "$goal" 2
+  _s2_ok "the guild master reprioritizes the goal" || return 0
+  grun coverage inspect delivery --date 2026-03-03
+  _s2_ok "and the qa-tester stamps the area it drove" || return 0
+
+  grun brief
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild brief renders"; else
+    t_fail "guild brief renders" "rc=$G_RC
+$G_ERR"; return 0; fi
+  out="$(_p_section "$G_OUT" "Since Last Check-in:")"
+
+  want_contains "brief Step 3: an event row carries the subject's TITLE" \
+    "created  task $tdev  Build the delivery worker" "$out"
+  want_contains "a 'moved' row carries BOTH ENDS — Step 4 may state the from→to" \
+    "todo → failed" "$out"
+  want_contains "including a requirement's own transition" "todo → done" "$out"
+  want_contains "and an 'assigned' row names the phase it moved to" "→ $p1" "$out"
+  want_contains "the actor is the AGENT for a drained log, not 'orchestrator'" \
+    "developer  logged  task $tdev" "$out"
+  want_contains "and for a drained finding" "reviewer-security  filed  task $tdev" "$out"
+  want_contains "a 'logged' row carries the entry text" \
+    "Wired the delivery worker into the queue." "$out"
+  want_contains "a 'filed' row carries 'severity: summary'" \
+    "major: Unsigned callback token accepted" "$out"
+
+  # The verb set is wider than the four the old prose named. Each of these four is a verb
+  # a model told "there are four" would have to treat as corrupt output.
+  for n in logged filed inspected reprioritized; do
+    want_contains "the verb '$n' is on the feed, so 'the four verbs are …' was wrong" \
+      "  $n  " "$out"
+  done
+  want_eq "spool drain wrote the 'logged' event" "1" "$(_s2_events logged task)"
+  want_eq "and the 'filed' one" "1" "$(_s2_events filed task)"
+  want_eq "coverage inspect wrote its own" "1" "$(_s2_events inspected coverage)"
+  want_eq "goal priority wrote its own" "1" "$(_s2_events reprioritized goal)"
+
+  # ---- the read-only skills really are read-only -------------------------------------
+  #
+  # `guild:brief` and `guild:dashboard` both open by declaring it. Both would be wrong if
+  # rendering the board appended to the feed the render is reading.
+  _s2_mark
+  grun brief
+  if [ "$G_RC" -eq 0 ] && [ "$(_s2_state)" = "$S2_ROWS" ] && [ "$(_s2_jrn)" = "$S2_JRN" ]; then
+    t_pass "brief/SKILL.md: 'guild brief' writes no row and no journal line"
+  else
+    t_fail "brief/SKILL.md: 'guild brief' writes no row and no journal line" \
+      "rows $S2_ROWS -> $(_s2_state), journal $S2_JRN -> $(_s2_jrn)"
+  fi
+  grun brief --json
+  if [ "$G_RC" -eq 0 ] && [ "$(_s2_state)" = "$S2_ROWS" ]; then
+    t_pass "nor does --json"
+  else t_fail "nor does --json" "rows $S2_ROWS -> $(_s2_state)"; fi
+  grun dashboard --json
+  if [ "$G_RC" -eq 0 ] && [ "$(_s2_state)" = "$S2_ROWS" ]; then
+    t_pass "dashboard/SKILL.md: nor does 'guild dashboard --json'"
+  else t_fail "dashboard/SKILL.md: nor does 'guild dashboard --json'" "rows $S2_ROWS -> $(_s2_state)"; fi
+
+  # `brief/SKILL.md`'s flag table offers `--since YYYY-MM-DD` to a model that will
+  # sometimes hand it "this week". A silent reinterpretation would move the cutoff without
+  # saying so; the skill relies on it failing loudly instead.
+  grun brief --since "last monday"
+  if [ "$G_RC" -ne 0 ]; then t_pass "brief flag table: a malformed --since is refused, not guessed"; else
+    t_fail "brief flag table: a malformed --since is refused, not guessed" "rc=0"; fi
+  want_contains "and the refusal names the format it wants" "YYYY-MM-DD" "$G_ERR"
+
+  # `dashboard/SKILL.md`'s flag table: "--json … Cannot be combined with --out or --open."
+  grun dashboard --json --out "$T2/contract/x.html"
+  if [ "$G_RC" -ne 0 ] && [ ! -f "$T2/contract/x.html" ]; then
+    t_pass "dashboard flag table: --json refuses --out, and writes no file trying"
+  else t_fail "dashboard flag table: --json refuses --out, and writes no file trying" "rc=$G_RC"; fi
+  grun dashboard --json --open
+  if [ "$G_RC" -ne 0 ]; then t_pass "and refuses --open — there is nothing to open"; else
+    t_fail "and refuses --open — there is nothing to open" "rc=0"; fi
+
+  # ---- and the whole contract survives a replay --------------------------------------
+  grun brief
+  printf '%s\n' "$G_OUT" | LC_ALL=C grep -v '^Generated:' >"$T2/contract-before"
+  grun rebuild
+  if [ "$G_RC" -eq 0 ]; then t_pass "guild rebuild replays the board"; else
+    t_fail "guild rebuild replays the board" "rc=$G_RC
+$G_ERR"; fi
+  grun brief
+  printf '%s\n' "$G_OUT" | LC_ALL=C grep -v '^Generated:' >"$T2/contract-after"
+  t_check "and every shape above is byte-identical afterwards" \
+    "$(diff "$T2/contract-before" "$T2/contract-after" 2>&1 | head -10)"
+
+  unset GUILD_DIR
+  return 0
+}
+
 tier2() {
   section "Tier 2 · live database"
   if ! command -v tursodb >/dev/null 2>&1; then
@@ -3824,6 +7199,41 @@ tier2() {
   t2_journal_integrity
   t2_concurrency
   t2_gitattributes
+  t2_dashboard
+
+  # Stage 2 (design §13). The commands are new; the failure modes are not — every
+  # section below is a Stage 1 rule restated over a surface that did not exist when the
+  # rule was written, plus the two things only Stage 2 can get wrong: the LIKE pattern
+  # `doc search` builds out of user input, and the HTML element the dashboard inlines
+  # board data into.
+  t2_direction
+  t2_records
+  t2_coverage
+  t2_brief
+  t2_stage2_matrix
+  t2_stage2_utf8
+  t2_stage2_large
+  t2_dashboard_stage2
+
+  # Stage 2c. The two sections above assert that the brief and the page are UNINJECTABLE
+  # and that their counts are right. Neither asks the only question a reader has — WHICH
+  # ones — and both passed while `N failed task(s) · N unresolved review finding(s)` and a
+  # red `N Open findings` tile named nobody at all. This section is that question.
+  t2_findings_and_failures
+
+  # Stage 2b. Stage 2's own sections all drive the CLI directly, so every one of them
+  # passed on a plugin where nothing the user runs ever called a producer. These two are
+  # the questions those sections cannot ask: does the guild, driven the way its skills
+  # and agents now drive it, actually FILL the windows Stage 2 built — and do the
+  # dashboard's four browser-found sharp edges stay closed.
+  t2_producers
+  t2_dashboard_hardening
+
+  # And the other half of the same gap: `t2_producers` proves the commands the skills call
+  # exist; `t2_skill_contract` proves they still PRINT what those skills say they print.
+  # `guild next` returning a bare id while check-in's §3.1 promised `TASK-NNN <path>` is
+  # the shape of failure no other section in this file can see.
+  t2_skill_contract
   unset GUILD_DIR
   return 0
 }

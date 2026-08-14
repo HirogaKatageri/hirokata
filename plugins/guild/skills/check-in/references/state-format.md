@@ -20,9 +20,12 @@ rather than hand-rolling `find`/`mv`/ID arithmetic.
   config.yaml         # committed. storage mode; env var NAMES only, never a credential
   journal.ndjson      # committed. append-only change log — `guild rebuild` replays it
   export/REQ-NNN.md   # committed. GENERATED snapshot; `guild export` rewrites it wholesale
+  releases/{version}/ # committed. release snapshots COPIED from the export by guild:release
   guild.db            # gitignored. DERIVED state — the board itself
   spool/TASK-NNN.ndjson  # gitignored. agents' un-drained log/finding lines
+  spool/rejected/     # COMMITTED. spool lines a drain could not import — the only copy left
   journal.pending     # gitignored. quarantined journal lines — `guild journal recover`
+  dashboard.html      # gitignored by default. regenerated wholesale by `guild dashboard`
   backup-*/           # gitignored. pre-rebuild database and pre-compaction journal copies
   docs/               # evergreen researcher knowledge base
   qa/                 # evergreen QA artifacts
@@ -44,6 +47,11 @@ it. The reverse is not true: lose the journal and the history is gone.
 | Work log / progress | `work_log` rows | the assigned agent via `guild log`, folded in by `guild spool drain` |
 | Review findings | `review_finding` rows | reviewers via `guild finding`, folded in by `guild spool drain` |
 | Requirement status (`todo`/`in-progress`/`done`) | `requirement.status` | the orchestrator via `guild move` |
+| A requirement's phase (nullable) | `requirement.phase_id` | the orchestrator via `guild req assign REQ-NNN <PHASE-NNN\|none>` |
+| Direction — goals and phases | `goal`, `phase` rows | the orchestrator via `guild goal …` / `guild phase …`, on the user's instruction only |
+| Defects | `bug` rows | `qa-tester` via `guild bug new`; the orchestrator via `guild bug fix` / `close` |
+| Quality areas and their risk | `coverage` rows | `qa-strategist` via `guild coverage set` |
+| The inspection clock | `coverage.last_inspected_at` | `qa-tester` via `guild coverage inspect` — nothing else writes it |
 | Last check-in date | the `last-checkin` row in `guild_state` | the orchestrator via `guild checkin` |
 
 There is no second copy of any of these. The orchestrator never reconciles two stores. **Status is
@@ -82,10 +90,16 @@ review gate is the only conditional. `parallel-group` is not ordering — it is 
 assertion that grouped dev tickets touch disjoint files and may run together (see
 `task-lifecycle.md` "Parallel developer batching").
 
-## Rendering the live board view — `guild board`
+## Rendering the live views — `guild brief` and `guild board`
 
-`guild-status` and `check-in` build the status report by running `guild board`, which is one SQL
-script — it does **not** read a board file:
+**`guild brief` is the read surface `check-in` opens with**, and the one the `guild:brief` skill
+narrates: one query behind Direction, In Flight, Blocked, Open Bounties, Bugs, Coverage, Since Last
+Check-in and Roster Gaps, plus a `Next:` header byte-identical to `guild next`'s answer. It mutates
+nothing — no journal line, no `event` row. (`guild:guild-status` is a deprecated alias that loads
+`guild:brief`; it does not run `guild board` as a substitute.)
+
+`guild board` is still a real command and still correct — the narrower tasks-and-requirements view.
+It is one SQL script and does **not** read a board file:
 
 1. Lists `in-progress` tasks (In Progress), `todo` (Backlog), the newest 20 `done` (Recently
    Completed), and any `failed`.
@@ -93,7 +107,11 @@ script — it does **not** read a board file:
    with a `LEFT JOIN` and a `SUM(CASE ...)`.
 3. Reads the `last-checkin` row.
 
-The output shape is unchanged from the v4 board view — only the source changed.
+The output shape is unchanged from the v4 board view — only the source changed. It shows tasks and
+requirements only: goals, phases, bugs and coverage are in `guild brief` and the dashboard.
+
+`guild dashboard` writes the same state as one self-contained `.guild/dashboard.html` (seven
+views, all CSS/JS inline, no server, no network). Also read-only.
 
 ## Stale `in-progress` recovery
 

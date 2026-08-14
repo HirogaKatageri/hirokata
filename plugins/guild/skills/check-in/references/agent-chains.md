@@ -241,21 +241,21 @@ behavior, and QA reviews the update.
 
 All of these run through the guild CLI (`${CLAUDE_PLUGIN_ROOT}/scripts/guild`):
 
-1. **Materializing follow-ups**: read the "Follow-up Tasks" section, create real task files with
-   `guild new task …` (the CLI derives the next ID and writes them into `tasks/todo/`). (The
+1. **Materializing follow-ups**: read the "Follow-up Tasks" section, create real task rows with
+   `guild new task …` (the CLI derives the next ID in SQL and inserts them at `todo`). (The
    architect and product-owner instead create their tickets directly, inside `new-requirement` —
    this mechanism is for the tickets that run after planning: developer, test-planner, test-writer,
    and reviewer follow-ups.)
 2. **Status transitions**: `guild move TASK-NNN in-progress` on dispatch, `… done` on completion,
-   `… failed` on failure. Agents never move their own files.
+   `… failed` on failure. Agents never move their own work.
 3. **Compiling the review report and creating user-approved fix tickets**: after a `reviewer`
    ticket completes, append a dated section to `.guild/reviews/REQ-NNN.md`, then ask the user which
    findings (if any) become fix tickets — the only orchestrator-created tickets outside of
    `new-requirement`. No automatic re-review follows.
 4. **Enforcing the review gate**: `guild next` skips a `reviewer` ticket until its requirement's
-   other tickets have left `todo/` and `in-progress/`.
-5. **Tracking requirement progress**: computed live by `guild board` (done tickets / total tickets
-   per REQ, doneness read from the directory) — not stored.
+   other non-reviewer tickets have left `todo` and `in-progress`.
+5. **Tracking requirement progress**: computed live by `guild board` and `guild brief` (done tickets
+   / total tickets per REQ, from the `status` column) — not stored.
 6. **Marking requirements done**: `guild move REQ-NNN done` when no task for the requirement remains
    open (including any user-approved fix tickets).
 

@@ -66,6 +66,19 @@ Read the requirement document. Understand:
 - What's in scope and what's out
 - Edge cases and error scenarios
 
+**If the orchestrator tells you the requirement sits on a phase**, read that phase's context before
+designing — `"${CLAUDE_PLUGIN_ROOT}/scripts/guild" goal show GOAL-NNN` prints the goal, its phases,
+and their requirements, so
+you can see which sibling requirements the plan should stay consistent with (shared modules, work an
+earlier phase already delivered, ordering the goal implies). Many requirements have no phase at all;
+that is legal by design and changes nothing about how you plan.
+
+**Direction is not yours to set.** Goals and phases are the guild master's layer — never run
+`guild goal new`, `guild phase new`, or `guild req assign`. If planning reveals the work is really
+two phases' worth, or belongs under a different goal than it was filed under, say so in your report
+(or relay it as a `NEEDS INPUT` question when it changes scope) and let the orchestrator take it to
+the user.
+
 ### 2. Explore the Codebase
 
 Before designing, understand what exists:
@@ -300,3 +313,5 @@ yourself.
 - Don't skip the codebase analysis — it's what makes your plan actionable
 - Don't queue a separate researcher ticket — call `guild:researcher` inline and keep planning in
   the same session
+- Don't create or reassign goals and phases — flag the mismatch in your report and let the guild
+  master decide

@@ -13,7 +13,7 @@
 # What it does not: .guild/guild.db (derived state; `guild rebuild` replays it).
 #
 # This file is the DISPATCHER ONLY. Every command lives in a cmd_* function in one of
-# the five modules under lib/, which define functions and nothing else:
+# the modules under lib/, which define functions and nothing else:
 #
 #   lib/db.sh         driver, config, SQL literals, JSON escaping, the spool
 #   lib/journal.sh    the append-only change log: append, preflight, recover, sync,
@@ -22,6 +22,11 @@
 #                     batch / slice / next-id / log / finding / spool drain / checkin
 #   lib/render.sh     board, export (markdown + JSON)
 #   lib/init.sh       init, v4 archival, docs/qa carry-over, the journal wrappers
+#   lib/direction.sh  goal / phase / req assign — the layer above requirements (Stage 2)
+#   lib/records.sh    bug / doc — defects and the evergreen knowledge base (Stage 2)
+#   lib/quality.sh    coverage — the quality areas the QA discipline maps and inspects
+#   lib/brief.sh      brief — the structured briefing behind the guild:brief skill
+#   lib/dashboard.sh  dashboard — the six-view self-contained HTML page
 #
 # THERE IS NO `guild path`. In v4 the path WAS the storage, so an agent could resolve a
 # path and Edit it. In v5 only requirements get an export file, that file is generated
@@ -53,7 +58,7 @@ GUILD_SCRIPT_DIR="$(cd -P "$(dirname "$_guild_self")" && pwd)"
 unset _guild_self _guild_dir
 
 GUILD_LIB_DIR="$GUILD_SCRIPT_DIR/lib"
-for _guild_mod in db journal artifacts render init; do
+for _guild_mod in db journal artifacts render init direction records brief quality dashboard; do
   if [ ! -f "$GUILD_LIB_DIR/$_guild_mod.sh" ]; then
     printf 'guild: missing module %s/%s.sh — is the plugin checkout complete?\n' \
       "$GUILD_LIB_DIR" "$_guild_mod" >&2
@@ -97,6 +102,17 @@ Setup:
                                  (moved, never deleted); carry over docs/ + qa/.
                                  Cloud mode is NOT yet verified and is refused.
 
+Direction (goals and phases sit ABOVE requirements; a requirement's phase is optional):
+  guild goal new   --title T [--body B] [--priority 1-5] [--date YYYY-MM-DD]
+  guild goal list  [status]     "<GOAL-ID> <status> <priority> <done>/<total> <title>"
+  guild goal show  <GOAL-ID>    The goal, its phases, and their requirements
+  guild goal move  <GOAL-ID> <status>       todo|in-progress|done
+  guild goal priority <GOAL-ID> <1-5>       1 highest .. 5 lowest
+  guild phase new  --goal GOAL-NNN --title T [--ordinal N] [--date YYYY-MM-DD]
+  guild phase list [--goal GOAL-NNN]
+  guild phase move <PHASE-ID> <status>      todo|in-progress|done
+  guild req assign <REQ-NNN> <PHASE-NNN|none>   Attach a requirement to a phase (or detach)
+
 Create (templates, IDs derived in SQL) — each prints the new ID:
   guild new req  --title T [--desc D | --body B] [--date YYYY-MM-DD]
   guild new task --title T --agent A --req REQ-NNN [--plan PLAN-NNN] [--plan-slice slug]
@@ -124,12 +140,43 @@ Agent writes — one appended line, no database connection (§2.4):
                           --summary S [--detail D] [--file F] [--line N]
   guild spool drain <TASK-ID>   Orchestrator: fold a task's spool into the database
 
+Defects (first-class records, not prose in a work log):
+  guild bug new   --title T [--body B] [--repro R] [--severity critical|major|minor]
+                  [--req REQ-NNN] [--found-by WHO] [--date YYYY-MM-DD]
+  guild bug list  [open|fixing|fixed|wontfix] [--severity critical|major|minor]
+  guild bug show  <BUG-ID>      Render the bug as markdown
+  guild bug fix   <BUG-ID> --task TASK-NNN   Link the fix task; moves the bug to `fixing`
+  guild bug close <BUG-ID> [--wontfix]       Close as `fixed`, or as `wontfix`
+
+Quality areas (what the product is made of, from a quality standpoint; `last_inspected_at`
+is what makes "what has nobody looked at" a query — the QA discipline writes these):
+  guild coverage set <area-id> --area T [--risk high|medium|low] [--spec PATH]
+                  [--notes N]   Upsert; preserves anything not passed, never the clock
+  guild coverage inspect <area-id> [--date YYYY-MM-DD]   Stamp last_inspected_at
+  guild coverage list [--risk high|medium|low] [--due]
+                                "<area-id> <risk> <last-inspected|never> <spec|none> <area>"
+  guild coverage show <area-id> Render the area as markdown
+
+Knowledge base (evergreen — survives releases and board resets; the architect reads it):
+  guild doc put   <slug> --title T [--body B | --file F] [--source S]   Upsert; prints the slug
+  guild doc get   <slug>        Print the body VERBATIM (round-trips byte for byte)
+  guild doc list                "<slug> <updated> <title>"
+  guild doc search <query>      Case-insensitive substring search over title and body
+
 Query:
   guild list <req|task|plan> [status]   List "<ID> <status>" lines (tasks add "<agent> <req>"
                                         columns — filter with awk, e.g. $3=="reviewer" && $4=="REQ-001")
   guild next                            Print the next actionable "<TASK-ID>" or "none"
   guild batch <TASK-ID>                 Print the dev tickets that dispatch together (parallel-group)
   guild board                           Render the live board
+  guild brief [--since YYYY-MM-DD] [--json]
+                                        The structured briefing: direction, what is in flight,
+                                        what is blocked, open bounties, bugs, coverage due, and
+                                        what moved since the last check-in. Reads only.
+  guild dashboard [--open] [--out PATH] [--json]
+                                        Write a self-contained .guild/dashboard.html —
+                                        roadmap, board, graph, bugs, coverage, activity.
+                                        No server, no network, works offline.
 
 Durability:
   guild export [--json]         Regenerate .guild/export/*.md, or dump state as JSON
@@ -175,6 +222,12 @@ main() {
   db_load_config
 
   case "$cmd" in
+    goal)      cmd_goal "$@" ;;
+    phase)     cmd_phase "$@" ;;
+    req)       cmd_req "$@" ;;
+    bug)       cmd_bug "$@" ;;
+    coverage)  cmd_coverage "$@" ;;
+    doc)       cmd_doc "$@" ;;
     new)       cmd_new "$@" ;;
     read)      cmd_read "$@" ;;
     meta)      cmd_meta "$@" ;;
@@ -191,6 +244,8 @@ main() {
     next)      cmd_next "$@" ;;
     batch)     cmd_batch "$@" ;;
     board)     cmd_board "$@" ;;
+    brief)     cmd_brief "$@" ;;
+    dashboard) cmd_dashboard "$@" ;;
     export)    cmd_export "$@" ;;
     rebuild)   cmd_rebuild "$@" ;;
     journal)   cmd_journal "$@" ;;

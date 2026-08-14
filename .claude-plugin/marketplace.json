@@ -1,6 +1,6 @@
 {
   "name": "hirokata",
-  "version": "4.0.0",
+  "version": "4.1.0",
   "owner": {
     "name": "Gian Patrick Quintana",
     "email": "gian.quintana@hirokata.dev"
@@ -23,14 +23,14 @@
     {
       "name": "guild",
       "source": "./plugins/guild",
-      "version": "4.0.0",
-      "description": "Continuous agent orchestration system. A live 3-way interview between product-owner, architect, and user plans each requirement up front; the board then drives parallel development, test planning, unit & integration testing, and a 4-reviewer pass that produces a report for user-approved fixes, through a directory-based ticket board driven by a deterministic CLI, with crash-safe session resume, a Svelte/SvelteKit specialist developer agent, and an independent QA discipline. Say 'check in' to start a work session.",
+      "version": "5.0.0-beta",
+      "description": "Continuous agent orchestration on a Turso-backed board where status is a column, not a directory. A live 3-way interview between product-owner, architect, and user plans each requirement; goals and phases give it direction; the board then drives parallel development, test planning, unit & integration testing, and a 4-reviewer pass that produces a report for user-approved fixes, all through a deterministic CLI with crash-safe session resume. 'guild brief' narrates the board and 'guild dashboard' renders it as one offline HTML page, while an independent QA discipline files bugs and maps risk coverage as rows and a Svelte/SvelteKit specialist agent handles Svelte work. Recovery is a journal replay. Say 'check in' to start a work session.",
       "author": {
         "name": "Gian Patrick Quintana",
         "email": "gian.quintana@hirokata.dev"
       },
       "license": "MIT",
-      "keywords": ["orchestration", "agents", "board", "continuous-workflow", "requirements", "review"]
+      "keywords": ["orchestration", "agents", "board", "continuous-workflow", "requirements", "review", "turso", "sqlite", "dashboard", "qa"]
     },
     {
       "name": "research",

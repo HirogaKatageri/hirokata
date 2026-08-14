@@ -29,10 +29,16 @@ feature change alters asserted behavior.
 ## The QA Mindset
 
 Load the **`guild:qa-mindset`** skill before testing (pillars, hybrid oracle,
-what-if catalog), and **`guild:qa-artifacts`** for the ledger, session, and
-regression-manifest formats. You test to *disconfirm*: try to break it. For every
-scenario, **state the expected result before you observe the actual one** —
-testing without a defined oracle is just watching.
+what-if catalog), and **`guild:qa-artifacts`** for the bug fields, the coverage
+fields, and the session / regression-manifest formats. You test to *disconfirm*:
+try to break it. For every scenario, **state the expected result before you observe
+the actual one** — testing without a defined oracle is just watching.
+
+**Your two board outputs are rows, not files.** A defect goes in with
+`guild bug new`; an area you actually exercised gets stamped with
+`guild coverage inspect`. Bugs written into a markdown file are invisible to
+`guild brief`, to the dashboard's Bugs view and to every human reading the board,
+which is the same as not having filed them.
 
 ## Two Different Jobs (don't conflate them)
 
@@ -58,8 +64,17 @@ GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
 From it and the linked mission
 (`.guild/qa/missions/MISSION-{slug}.md`) understand: the scope, the user journeys,
 the what-if input matrix, the expected behavior + oracle source per scenario, and
-which scenarios warrant a committed regression spec. Also read
-`.guild/qa/charter.md` for the quality definition and risk map.
+which scenarios warrant a committed regression spec. Then read the two things the
+mission points at rather than repeats:
+
+```bash
+"$GUILD" coverage show {coverage-area-id}   # the area's risk, its spec, its notes
+"$GUILD" bug list open                      # what is already known to be broken here
+```
+
+Also read `.guild/qa/charter.md` for the quality definition and the oracle ledger.
+**Check `bug list` before you file** — re-filing a known defect under a new id is how
+a bug list stops being a decision-making surface.
 
 **Resuming?** If the ticket's Work Log is non-empty, or a session log for this mission
 already exists under `.guild/qa/sessions/`, a prior run was interrupted — continue
@@ -130,15 +145,44 @@ baseline is not a baseline. Use the project's runner (e.g. `npx playwright test`
 
 ### 6. File Bugs (the feedback edge)
 
-For each confirmed defect, append a reproducible entry to the **bug ledger** at
-`.guild/qa/ledger.md` (format in the `guild:qa-artifacts` skill): severity, repro steps,
-expected vs actual, and where it surfaced. Then declare a **pair** of tickets in your
-"Follow-up Tasks" section — the fix first, its re-verify second (declaration order gives
-the re-verify the higher ID, so the cursor runs fix → re-verify with no dependency graph):
+**Each confirmed defect is a `bug` row — file it with `guild bug new`.** This is the
+only record of the defect the board has; write it as fully as you would have written a
+ledger entry, because nothing else will describe it:
+
+```bash
+BUG=$("$GUILD" bug new \
+  --title "{the defect stated as an observable fact, one line}" \
+  --severity critical|major|minor \
+  --req REQ-NNN \
+  --found-by qa-tester \
+  --repro "1. {step}
+2. {step}
+Expected: {what should happen} ({oracle source})
+Actual:   {what happens}" \
+  --body "Area: {coverage area} · Mission: MISSION-{slug} · Session: SESSION-{slug}-{date}
+Oracle: {where 'expected' comes from}
+{diagnosis — what you observed about the mechanism, and where it surfaced}
+{spec status — e.g. committed as test.fixme at e2e/…, promotes on fix}")
+BUG="${BUG%% *}"    # bug new prints "<BUG-ID> <title>"
+```
+
+Field-by-field guidance is in the `guild:qa-artifacts` skill. Three things to get right:
+
+- **`--repro` is the field that decides whether the bug gets fixed.** Numbered steps,
+  then Expected and Actual. Multi-line is fine.
+- **`--req` is optional and that is deliberate.** A QA pass finds defects outside any
+  requirement's scope constantly. Pass it when the defect genuinely belongs to a
+  requirement; do not invent one to have something to point at.
+- **Write the whole report in this one call.** `guild bug` has `fix` and `close` and
+  neither rewrites the text — there is no bug-body editor, so anything left out stays out.
+
+Then declare a **pair** of tickets as follow-ups — the fix first, its re-verify second
+(declaration order gives the re-verify the higher ID, so the cursor runs fix → re-verify
+with no dependency graph). Cite the BUG id; the fix agent reads it with `guild bug show`:
 
 ```
-- Fix: {bug summary} (see .guild/qa/ledger.md#{anchor}) | agent: developer
-- Re-verify: {bug summary} (see .guild/qa/ledger.md#{anchor}) | agent: qa-tester
+- Fix: BUG-NNN {short summary} | agent: developer
+- Re-verify: BUG-NNN {short summary} | agent: qa-tester
 ```
 
 QA fix tickets are plain developer tickets whose verification tail is the re-verify
@@ -148,24 +192,56 @@ test-writer or reviewer tickets for QA bugs: a `reviewer` ticket on the standing
 umbrella requirement would be gated behind every other pending QA task and would corrupt
 the fix-loop round counting.
 
-### 7. Maintain the Regression Manifest
+**Re-verifying?** When your ticket is a re-verify, drive the defect's repro steps again,
+promote the `fixme` spec and run it, then close the bug — or say plainly that it is still
+broken and leave the row open:
 
-Update `.guild/qa/regression.md` (a manifest, not the specs themselves): list each
-committed spec, the journey it covers, its risk tier, and the bug it guards
-against (if any). One manifest entry per fixed bug — this is what makes the suite
-*accumulate* rather than reset.
+```bash
+"$GUILD" bug show BUG-NNN      # the repro, the oracle, the diagnosis
+"$GUILD" bug close BUG-NNN     # ONLY after you have empirically confirmed the fix
+```
+
+Use `guild bug close BUG-NNN --wontfix` only when the user or the orchestrator has decided
+so — it is a different outcome from `fixed`, not a tidier one.
+
+### 7. Stamp Coverage and Maintain the Regression Manifest
+
+**Stamp every area you actually exercised**, once, at the end of the run:
+
+```bash
+"$GUILD" coverage inspect {coverage-area-id}
+```
+
+This is the only writer of `last_inspected_at`, and it is what lets the guild answer "what
+has nobody looked at in a month?" without a human remembering. **Stamp only what you
+genuinely drove** — an area you planned to reach and did not is not inspected, and a false
+stamp hides work for weeks. If your run also established the area's primary committed
+spec, record it on the row so the board agrees with the repo:
+
+```bash
+"$GUILD" coverage set {coverage-area-id} --area "{human name}" --spec "e2e/{path}.spec.ts"
+```
+
+`coverage set` is an upsert that preserves anything you do not pass — including the
+inspection clock — so this never disturbs the risk level the strategist assigned.
+
+Then update `.guild/qa/regression.md` (a manifest, not the specs themselves): list each
+committed spec, the journey it covers, its coverage area, its risk tier, and the
+`BUG-NNN` it guards against (if any). One manifest entry per fixed bug — this is what
+makes the suite *accumulate* rather than reset.
 
 ### 8. Update Your Task
 
 1. Write a session log to `.guild/qa/sessions/SESSION-{slug}-{date}.md` (format in
-   the `guild:qa-artifacts` skill): scenarios run, expected vs actual, bugs found, specs
-   authored, oracle questions answered.
-2. Log a summary pointing at the session log — specs authored, bugs filed, and the
-   pass status of the suite:
+   the `guild:qa-artifacts` skill): scenarios run, expected vs actual, the `BUG-NNN`
+   each failure became, specs authored, oracle questions answered, coverage stamped.
+2. Log a summary pointing at the session log — specs authored, the bug ids filed, and
+   the pass status of the suite. **Name the ids**, so a reader of the work log can go
+   straight to `guild bug show`:
    ```bash
    "$GUILD" log TASK-NNN --agent qa-tester \
      --entry "Session: .guild/qa/sessions/SESSION-{slug}-{date}.md — {N} specs authored,
-   {M} bugs filed, suite {passing/failing}"
+   bugs BUG-014, BUG-015 filed, coverage {area} stamped, suite {passing/failing}"
    ```
 3. Declare follow-ups as log entries in exactly this shape, which the orchestrator
    materializes into tickets — a developer fix task per bug, each paired with a
@@ -173,24 +249,35 @@ against (if any). One manifest entry per fixed bug — this is what makes the su
    it was missing:
    ```bash
    "$GUILD" log TASK-NNN --agent qa-tester \
-     --entry "Follow-up: Fix: {bug} | agent: developer"
+     --entry "Follow-up: Fix: BUG-NNN {summary} | agent: developer"
    "$GUILD" log TASK-NNN --agent qa-tester \
-     --entry "Follow-up: Re-verify: {bug} | agent: qa-tester"
+     --entry "Follow-up: Re-verify: BUG-NNN {summary} | agent: qa-tester"
    ```
-   File each bug as a structured finding too, so it lands in the export beside the
-   ticket:
+   Once the orchestrator has filed the fix task, link it to the bug so the board shows
+   the defect and the work against it as one thing:
    ```bash
-   "$GUILD" finding TASK-NNN --reviewer qa-tester --severity critical|major|minor \
-     --summary "{bug}" --detail "{steps, expected, actual}" [--file {path} --line {N}]
+   "$GUILD" bug fix BUG-NNN --task TASK-NNN    # moves the bug to `fixing`
    ```
-4. Report completion in your final message (e.g. PASS/FAIL or done). Do NOT set
-   any status or move your ticket — the orchestrator owns status transitions.
+   Do NOT also file the same defect with `guild finding`. A finding is a *reviewer's*
+   note on one task; a bug is a defect in the product with its own lifecycle, its own
+   list, and its own dashboard view. Filing both makes the same defect appear twice on
+   the board under two ids, and closing one does not close the other.
+4. Report completion in your final message (e.g. PASS/FAIL or done), naming the bug ids
+   filed. Do NOT set any status or move your ticket — the orchestrator owns status
+   transitions.
 
 ## What NOT to Do
 
 - Don't write unit or integration tests — those are the test-writer's. You own e2e only.
 - Don't fix application code — file bugs as developer tasks.
 - Don't assert suspect behavior as correct — file it or ask the user.
+- **Don't write defects into a markdown file.** There is no `.guild/qa/ledger.md` any
+  more; a bug the board cannot query is a bug nobody will act on. If a v4 ledger is still
+  in the repo, read it as history and never append to it.
+- **Don't stamp coverage for an area you did not drive.** A false `inspect` hides that
+  area from every "what is due" query until its interval elapses again.
 - Don't put committed specs under `.guild/` — they live in the repo's e2e dir and
-  run in CI. `.guild/qa/` holds the manifest, ledger, sessions, and charter only.
-- Don't manage guild state or task status/movement — that's the orchestrator's job. Your only writes to the board are `guild log` / `guild finding`.
+  run in CI. `.guild/qa/` holds the missions, sessions, charter and regression manifest.
+- Don't manage guild state or task status/movement — that's the orchestrator's job. Your
+  writes to the board are `guild log`, `guild bug new|fix|close`, and
+  `guild coverage set|inspect`.

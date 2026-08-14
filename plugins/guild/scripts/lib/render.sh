@@ -112,6 +112,27 @@ _render_flat() {
   printf "replace(replace(%s, %s, ''), %s, ' ')" "$1" "$(_render_cr)" "$(_render_nl)"
 }
 
+# _render_flat_arg <value> — `_render_flat`'s SHELL-SIDE TWIN: CR deleted, LF turned into
+# a space, so the value cannot span lines.
+#
+# It exists because a create command ECHOES BACK a title it has just stored (`guild goal
+# new` and `guild bug new` both print `<ID> <title>`), and that title is argv the process
+# already holds — a second round trip to read it back would answer with the same bytes.
+# The stored column is never touched; this is presentation, applied at the one place where
+# a free-text value shares a line with a structural field.
+#
+# It lives HERE, beside `_render_flat`, because it is the same rule stated on the other
+# side of the driver, and two modules needed it: lib/direction.sh and lib/records.sh each
+# grew a private, byte-identical copy under a different name, which is precisely the
+# "second copy of the one answer" this file's header exists to prevent.
+#
+# `tr` rather than a `${v//…}` loop: parameter expansion over a large value is quadratic
+# under bash 3.2 (measured: 92s at 400 KB for `${v#*|}` with no match), and a title is
+# unvalidated argv that may legally be document-sized. tr is one linear pass.
+_render_flat_arg() {
+  printf '%s' "${1-}" | LC_ALL=C tr -d '\r' | LC_ALL=C tr '\n' ' '
+}
+
 # _render_byte <2-hex-digits> — a SQL string literal holding exactly that one byte.
 #
 # The transport of §2.2.1 turned inward: `CAST(x'09' AS TEXT)` is the only way to name a

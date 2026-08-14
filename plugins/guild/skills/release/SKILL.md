@@ -60,7 +60,7 @@ No completed requirements to release since the last release.
 
 ### 3. Pre-release Gate
 
-A task's status is the subdirectory it lives in (`tasks/{todo,in-progress,done,failed}/`), not a frontmatter field. `guild list task` prints `<ID> <status> <agent> <requirement>`, so a REQ's tasks come from one awk filter:
+A task's status is a **column** on its row (`todo`/`in-progress`/`done`/`failed`), not a directory and not a frontmatter field. `guild list task` prints `<ID> <status> <agent> <requirement>`, so a REQ's tasks come from one awk filter:
 
 ```bash
 "$GUILD" list task | awk '$4=="REQ-NNN"'

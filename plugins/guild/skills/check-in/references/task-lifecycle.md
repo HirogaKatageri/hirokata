@@ -14,7 +14,7 @@ editing it loses the edit.
 All task creation, movement, and lookup go through the guild CLI at
 `${CLAUDE_PLUGIN_ROOT}/scripts/guild` (see `scripts/README.md`).
 
-## Task File Format
+## Task Record Format
 
 ```markdown
 ---
@@ -70,11 +70,12 @@ so anything written there is discarded.
 | `agent` | string | yes | Assigned agent (see enum below). The orchestrator spawns `guild:{agent}`. |
 | `requirement` | string | yes | Linked requirement ID (e.g., `REQ-001`) |
 | `plan` | string | no | Linked plan ID (e.g., `PLAN-001`), `null` if none |
-| `plan-slice` | string | no | Slice **slug** for a per-task plan slice (e.g. `signup`). Resolve the current file with `guild slice PLAN-NNN <slug>`. When present, the developer reads this instead of the full plan. |
+| `plan-slice` | string | no | Slice **slug** for a per-task plan slice (e.g. `signup`). Read it with `guild slice PLAN-NNN <slug>`. When present, the developer reads this instead of the full plan. |
 | `parallel-group` | string | no | A label (e.g., `A`, `B`) shared by `developer`/`developer-svelte` tickets the architect has verified touch **non-overlapping** files. Tickets with the same group run concurrently; a ticket with no group runs solo. Scoped per plan. |
 | `created` | string | yes | Creation date (YYYY-MM-DD) |
 
-> There is **no `status` field** — status is the containing directory. There is **no `depends-on`
+> There is **no `status` frontmatter field** — status is a column on the row, projected into the
+> rendered frontmatter by `guild read` but never written by editing it. There is **no `depends-on`
 > field** — sequencing is creation order (ID order) plus the per-REQ review gate, not a dependency
 > graph. The research-first flow works because the researcher ticket is created before (lower ID
 > than) the post-research architect ticket.
@@ -96,26 +97,27 @@ in normal operation.
 
 ## Status Values & Transitions
 
-Status is the directory; transitions are `guild move` calls performed by the **orchestrator**:
+Status is the `task.status` column; transitions are `guild move` calls performed by the
+**orchestrator**:
 
 ```
-tasks/todo/  → tasks/in-progress/  → tasks/done/
-                                   → tasks/failed/
+todo  →  in-progress  →  done
+                      →  failed
 ```
 
-| Directory | Meaning |
-|-----------|---------|
-| `tasks/todo/` | Ready to be picked up (waiting in the queue) |
-| `tasks/in-progress/` | An agent is actively working on it |
-| `tasks/done/` | Successfully completed |
-| `tasks/failed/` | User-adjudicated: the agent failed and the user chose not to retry (waived). Does not block the review gate or requirement completion; waived tickets are reported in the completion summary. |
+| Status | Meaning |
+|--------|---------|
+| `todo` | Ready to be picked up (waiting in the queue) |
+| `in-progress` | An agent is actively working on it |
+| `done` | Successfully completed |
+| `failed` | User-adjudicated: the agent failed and the user chose not to retry (waived). Does not block the review gate or requirement completion; waived tickets are reported in the completion summary. |
 
 (There is no `blocked` status — without a dependency graph there is nothing to block on.)
 
 **The orchestrator owns every transition.** On dispatch it runs `guild move TASK-NNN in-progress`;
 on the agent's completion `guild move TASK-NNN done`; on failure `guild move TASK-NNN failed`; on
-retry `guild move TASK-NNN todo`. **Agents never move their own files** — they report completion
-and the orchestrator moves the task.
+retry `guild move TASK-NNN todo`. **Agents never move their own work** — they report completion
+and the orchestrator moves the row.
 
 ## Work Log Convention
 
@@ -135,8 +137,9 @@ and agent name:
 ```
 
 The start entry is not optional politeness — it is what the recovery triage keys on. On check-in,
-each task in `tasks/in-progress/` is triaged three ways:
-- **Empty Work Log** → never started → back to `tasks/todo/`.
+each `in-progress` task is triaged three ways — **after `guild spool drain TASK-NNN`**, because an
+undrained ticket renders an empty Work Log and would be reset:
+- **Empty Work Log** → never started → `guild move TASK-NNN todo`.
 - **Final entry reports completion/failure** → the session died before the orchestrator recorded
   it → the orchestrator records the outcome now (follow-ups, then move) without re-dispatching.
 - **Started but unfinished** → stays `in-progress`; the resumed agent reads the Work Log and
@@ -255,7 +258,7 @@ The operative procedure lives in the check-in skill, **Step 3.4** (parse → ski
 `guild move done` so a crash never strands unmaterialized follow-ups. This file owns only the line
 grammar above; do not duplicate the procedure here.
 
-## Requirement File Format
+## Requirement Record Format
 
 A row in the `requirement` table, rendered by `guild read REQ-NNN`. `status` is a column
 (`todo` ≈ the old `draft`), set only by `guild move`.
@@ -282,9 +285,15 @@ created: 2026-04-07
 [What's explicitly excluded]
 ```
 
-**Status (directory) transitions:** `requirements/todo/` → `requirements/in-progress/` →
-`requirements/done/`, performed with `guild move REQ-NNN <status>`. `guild new req` scaffolds a stub
-in `requirements/todo/`. No `status` frontmatter field.
+**Status transitions:** `todo` → `in-progress` → `done`, performed with
+`guild move REQ-NNN <status>`. `guild new req` inserts the row at `todo`. No `status` frontmatter
+field, and no directories.
+
+**Direction is optional and lives above the requirement.** `requirement.phase_id` is nullable:
+`guild req assign REQ-NNN PHASE-NNN` attaches it to a phase (and `… none` detaches it), and
+unaffiliated requirements are legal by design. Goals and phases have their own verbs
+(`guild goal …`, `guild phase …`) and **do not gate** — the per-REQ review gate is still the only
+conditional in `guild next`.
 
 ## Knowledge Base: `.guild/docs/`
 
@@ -325,6 +334,12 @@ sources:
 Researcher task work logs contain only a short pointer (`See: .guild/docs/{slug}.md`) — the full
 findings live in the doc.
 
+> **The `doc` table exists alongside the directory.** `guild init` carries a v4 `.guild/docs/` tree
+> into it, and `guild doc put|get|list|search` read and write it. The researcher still writes
+> markdown files to `.guild/docs/`, and the architect still globs that directory — so the directory
+> is the live surface today and the table is seeded but not yet produced into. Do not "fix" one by
+> deleting the other; wiring the researcher onto `guild doc put` is a change, not a cleanup.
+
 ## Review Reports: `.guild/reviews/`
 
 Compiled by the **orchestrator** (not an agent) after a `reviewer` ticket batch completes — see
@@ -354,7 +369,7 @@ Findings marked critical/major here are what the orchestrator lists when it asks
 (`AskUserQuestion`) which should become fix tickets. There is no automatic fix loop and no round
 cap — see check-in Step 3.5 and agent-chains.md Chain 4.
 
-## Plan File Format
+## Plan Record Format
 
 The architect writes one overview plus one slice brief per developer task. **There are no plan
 files and no slice directory** — a plan is a row and a slice is a row.

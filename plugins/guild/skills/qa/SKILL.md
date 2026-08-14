@@ -6,9 +6,9 @@ description: >
   comprehensive e2e tests", "write regression tests", "test the running app",
   "what-if testing", or any request to empirically test the product and author
   end-to-end regression coverage. Seeds the guild's independent QA discipline:
-  a qa-strategist plans risk-based coverage, then qa-testers run the app and
-  author Playwright specs while filing bugs back to the board.
-version: 2.0.0
+  a qa-strategist maps the risk surface onto the board as coverage rows, then
+  qa-testers run the app and author Playwright specs while filing defects as bug rows.
+version: 3.0.0
 user-invocable: true
 arguments:
   - name: scope
@@ -27,10 +27,17 @@ qa-tester runs the actual product and authors end-to-end regression specs, and a
 defects are filed back as developer fix tasks, each paired with a re-verify
 qa-tester task that empirically confirms the fix.
 
+**QA's two durable outputs are board rows.** The strategist writes the risk map as
+`coverage` rows (`guild coverage set`); the tester files defects as `bug` rows
+(`guild bug new`) and stamps the areas it drove (`guild coverage inspect`). That is what
+puts QA's work in `guild brief`, in the dashboard's Bugs and Coverage views, and in
+reach of a cadence. `.guild/qa/` still holds the charter, the missions, the session logs
+and the regression manifest — the thinking, not the records.
+
 The discipline and artifact formats live in two reference skills the QA agents
 load automatically; consult them if you need detail while seeding:
 - `guild:qa-mindset` — the discipline (pillars, what-if catalog, hybrid oracle)
-- `guild:qa-artifacts` — `.guild/qa/` artifact formats
+- `guild:qa-artifacts` — which output is a row, which is prose, and the fields for each
 
 ## Step 1: Check for Guild
 
@@ -95,7 +102,8 @@ in CI **So that** the suite keeps working without a QA pass.
 ## Technical Considerations
 
 - e2e specs live in the project's real test dir and run in CI.
-- The charter, missions, bug ledger and regression manifest live under `.guild/qa/`.
+- Defects are `bug` rows and quality areas are `coverage` rows — both on the board.
+- The charter, missions, session logs and regression manifest live under `.guild/qa/`.
 
 ## Out of Scope
 
@@ -117,21 +125,23 @@ TASK=$("$GUILD" new task --title "QA strategy: {scope}" --agent qa-strategist \
   --req "$REQ" --date {today} --body "$(cat <<'DOC'
 ## Objective
 
-Plan a {mode} QA pass for: {scope}. Build/refresh the charter, risk map, and
-coverage matrix, then create the qa-tester mission tickets.
+Plan a {mode} QA pass for: {scope}. Map the risk surface onto the board as `coverage`
+rows, write the charter, then create the qa-tester mission tickets.
 
 ## Context
 
 - Requirement: {REQ id}
 - Mode: {full | cadence}
 - Scope: {product | named area}
+- Existing risk surface: `guild coverage list` (upsert into it; do not fork new ids)
 - Charter: .guild/qa/charter.md (create or update in place)
 
 ## Acceptance Criteria
 
 - [ ] Oracle sources resolved (specs / board / code+app / user)
-- [ ] Charter written with quality definition, risk map, coverage matrix
-- [ ] qa-tester mission tickets created, prioritized by risk
+- [ ] One `guild coverage set` row per quality area, with risk, spec path and reasoning
+- [ ] Charter written with the quality definition and the oracle ledger
+- [ ] qa-tester mission tickets created, prioritized by what `coverage list --due` returns
 DOC
 )")
 ```
@@ -140,9 +150,8 @@ DOC
 `guild read "$TASK"` renders. Do NOT include a `## Work Log` or `## Follow-up Tasks`
 heading — those are rendered from the board, and the CLI refuses a body containing
 them.
-```
 
-The task now lives in `tasks/todo/` and is discoverable by `"$GUILD" next`.
+The task is a row with `status = 'todo'` and is discoverable by `"$GUILD" next`.
 
 ## Step 6: Confirm and Offer to Run
 
@@ -170,13 +179,17 @@ QA reuses all existing orchestration — no special-casing needed:
 2. The orchestrator dispatches `qa-tester` tasks **sequentially — one at a time,
    never in parallel** (each tester drives its own dev server + Playwright, so
    concurrent testers would collide on the same port).
-3. Each `qa-tester` runs the app, authors specs, and for every bug declares a
-   **pair** of follow-ups: a `developer` fix task, then a re-verify `qa-tester`
-   task (declared second → higher ID → the cursor runs fix, then re-verify).
+3. Each `qa-tester` runs the app, authors specs, files each defect with
+   `guild bug new`, stamps the areas it drove with `guild coverage inspect`, and for
+   every bug declares a **pair** of follow-ups: a `developer` fix task, then a re-verify
+   `qa-tester` task (declared second → higher ID → the cursor runs fix, then re-verify).
 4. The re-verify qa-tester IS the verification tail for QA fixes: it empirically
-   confirms the fix and promotes the spec from `fixme` to passing. QA fixes do not
-   get test-writer/reviewer tickets — a reviewer on the standing QA umbrella REQ
-   would be gated behind every other pending QA task.
+   confirms the fix, promotes the spec from `fixme` to passing, and closes the bug with
+   `guild bug close`. QA fixes do not get test-writer/reviewer tickets — a reviewer on
+   the standing QA umbrella REQ would be gated behind every other pending QA task.
+
+After a pass, everything QA produced is queryable without opening a file:
+`guild bug list open`, `guild coverage list --due`, `guild brief`, `guild dashboard`.
 
 ## Standing Cadence (opt-in, per project)
 
@@ -191,17 +204,26 @@ for an in-session cadence:
 /schedule create "weekly product QA" --cron "0 9 * * 1" --prompt "/guild:qa product cadence"
 ```
 
-A `cadence` pass differs from a full pass: the strategist skips full re-planning
-and declares a single qa-tester mission that (a) runs the existing regression
-suite from `.guild/qa/regression.md`, and (b) does a focused exploratory pass on
-the top-risk areas from the charter — filing anything new it finds. This keeps the
-suite green and extends coverage over time without rebuilding the charter.
+A `cadence` pass differs from a full pass: the strategist skips full re-planning and
+asks the board what is due —
+
+```bash
+"$GUILD" coverage list --due    # never inspected, or stale for its risk level
+```
+
+— then declares a single qa-tester mission that (a) runs the existing regression suite
+from `.guild/qa/regression.md`, and (b) does a focused exploratory pass on exactly those
+areas, filing anything new it finds. This keeps the suite green and extends coverage over
+time without rebuilding the charter. **If nothing is due, the pass ends there** — that is
+the cadence working, not failing.
 
 ## Rules
 
-- **Never overwrite** the charter/ledger/regression manifest — update in place.
+- **Never overwrite** the charter or the regression manifest — update in place.
+- **Defects are `bug` rows, not markdown.** There is no `.guild/qa/ledger.md` in v5.
+- **The risk map is `coverage` rows, not a charter table.** One id per area, upserted.
 - **IDs are derived by the CLI** — never hand-assign or maintain counters.
-- **No `status` field** — an artifact's status is the directory it lives in.
+- **Status is a column**, and only `guild move` sets it. There is no status field to edit.
 - **Committed specs live in the repo's e2e dir**, never under `.guild/`.
 - **Don't bake in bugs** — suspect behavior is filed or asked, never asserted as
   correct (the hybrid oracle rule).

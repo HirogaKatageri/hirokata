@@ -844,7 +844,23 @@ spool_append() {
 }
 
 # _spool_sql <TASK-ID> <spool-path> — emit ONE SQL script folding every spool entry into
-# work_log / review_finding.
+# work_log / review_finding, AND announcing each one on the `event` feed.
+#
+# THE EVENT ROWS ARE NOT DECORATION (design rule 5, scripts/README.md: "a mutation that
+# records no event is invisible to the entire reason Stage 2 exists"). The drain is where
+# the two commands agents run most often — `guild log` and `guild finding` — actually
+# become rows, and it used to write none: a whole shift of agent work landed in the
+# database and `guild brief`'s "Since Last Check-in" showed nothing, so the one section
+# that answers "what moved" could not narrate the work that moved. Two verbs, `logged` and
+# `filed`, and the ACTOR IS THE ENTRY'S OWN `agent` / `reviewer` — which is also what stops
+# every row on the feed reading `orchestrator`.
+#
+# They cost no extra round trip and no extra statement group: they are two more INSERTs in
+# the per-line block, guarded by the same `CASE WHEN json_valid(x)` subquery and the same
+# `kind` predicate as the row they announce, so a line that imports nowhere announces
+# nothing. The payload is built by `json_object()` in the engine — agent text never reaches
+# it as a shell-composed string — and is clipped with substr() because an event payload is
+# a feed entry, not a second copy of the work log.
 #
 # Field extraction is done by the engine's JSON functions rather than by parsing JSON in
 # awk: the whole line goes in as a single SQL literal and json_extract picks it apart, so
@@ -887,11 +903,17 @@ spool_append() {
 # A wholly EMPTY line is the one thing skipped without a report, because it carries no
 # entry to lose — a stray newline is not an agent's work log.
 _spool_sql() {
-  local id="$1" path="$2" tid now line lit ln perline
+  local id="$1" path="$2" tid now actorlit line lit ln perline
   # The task id arrives as argv and _spool_check_id only checks its shape, so it is free
   # text; the timestamp is generated here, so it is not. One encode per DRAIN, not per line.
   tid="$(sql_text "$id" 'the task id')"
   now="$(sql_str "$(db_now)")"
+  # The FALLBACK actor only — the entry's own `agent` / `reviewer` wins, because the whole
+  # point of the event rows below is that the feed stops reading `orchestrator` on every
+  # line. `${GUILD_ACTOR:-orchestrator}` is the same default `_art_actor` uses; it is
+  # spelled out here rather than called, because lib/db.sh is the layer BELOW artifacts.sh
+  # and must not reach up into it.
+  actorlit="$(sql_text "${GUILD_ACTOR:-orchestrator}" "\$GUILD_ACTOR")"
   ln=0
 
   # One scan clears the whole file; the per-line check below is only armed if it fails.
@@ -930,6 +952,21 @@ SELECT $tid,
        CAST(json_extract(j, '\$.line') AS INTEGER),
        'open',
        COALESCE(CAST(json_extract(j, '\$.ts') AS TEXT), $now)
+FROM (SELECT CASE WHEN json_valid(x) THEN x END AS j FROM (SELECT $lit AS x))
+WHERE json_extract(j, '\$.kind') = 'finding';
+INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
+SELECT COALESCE(CAST(json_extract(j, '\$.ts') AS TEXT), $now),
+       COALESCE(NULLIF(CAST(json_extract(j, '\$.agent') AS TEXT), ''), $actorlit),
+       'logged', 'task', $tid,
+       json_object('entry', substr(COALESCE(CAST(json_extract(j, '\$.entry') AS TEXT), ''), 1, 200))
+FROM (SELECT CASE WHEN json_valid(x) THEN x END AS j FROM (SELECT $lit AS x))
+WHERE json_extract(j, '\$.kind') = 'log';
+INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
+SELECT COALESCE(CAST(json_extract(j, '\$.ts') AS TEXT), $now),
+       COALESCE(NULLIF(CAST(json_extract(j, '\$.reviewer') AS TEXT), ''), $actorlit),
+       'filed', 'task', $tid,
+       json_object('severity', COALESCE(CAST(json_extract(j, '\$.severity') AS TEXT), 'minor'),
+                   'summary', substr(COALESCE(CAST(json_extract(j, '\$.summary') AS TEXT), ''), 1, 200))
 FROM (SELECT CASE WHEN json_valid(x) THEN x END AS j FROM (SELECT $lit AS x))
 WHERE json_extract(j, '\$.kind') = 'finding';
 SELECT 'UNKNOWN|$ln'
