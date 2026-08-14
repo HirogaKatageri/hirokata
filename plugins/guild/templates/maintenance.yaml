@@ -1,0 +1,62 @@
+# maintenance — the guild's inspection cycle (design v5 §6.2).
+#
+# QA IS NOT A SEPARATE DISCIPLINE WITH ITS OWN WORKFLOW. It is the guild's second
+# template, running on the same graph machinery and ending at the same gate — so the
+# guild master learns one interaction rather than two.
+#
+# `qa-check` is what makes this a cycle rather than a chore: `coverage.last_inspected_at`
+# and `coverage.risk` turn "what needs inspecting" into a query, and when nothing
+# qualifies the cycle ends there having cost almost nothing.
+#
+# TRIGGERS ARE MANUAL ONLY. A full inspection runs the real product one mission at a
+# time; firing it automatically on every completed requirement would quietly multiply
+# what a requirement costs. An unattended shift may WORK an inspection — everything from
+# `qa-check` through `qa-report` only observes and records — but never START one.
+#
+# ONE TESTER AT A TIME IS AN INVARIANT, NOT A DEFAULT. `parallel: never` on `qa-execute`
+# is half of it; `agent.serial = 1` on qa-tester is the other half, and the workflow
+# compiler must fail loudly rather than silently serialize. Two independent mechanisms,
+# because a single missed check here produces intermittent failures instead of an error.
+
+name: maintenance
+description: Inspect the built product, report findings, repair on approval.
+
+nodes:
+  # Is an inspection due, and over what? Reads `coverage`: areas touched by recently
+  # completed requirements, high-risk areas past their interval, anything with no spec.
+  # Ends the cycle early if nothing warrants inspection.
+  - key: qa-check
+    needs: [qa-planning]
+    required: true
+
+  # qa-strategist: risk map, coverage matrix, declares the inspection missions.
+  - key: qa-plan
+    needs: [qa-planning]
+    after: [qa-check]
+
+  # qa-tester: runs the real product, applies the what-if catalog, authors e2e specs,
+  # records a verdict per coverage area. One tester at a time, always.
+  - key: qa-execute
+    needs: [qa-execution]
+    after: [qa-plan]
+    fanout: per-mission
+    parallel: never
+
+  # Compiles observations into `bug` rows and stamps coverage.last_inspected_at.
+  - key: qa-report
+    needs: [qa-planning]
+    after: [qa-execute]
+    required: true
+
+  - key: gate-repairs
+    kind: gate
+    after: [qa-report]
+    prompt: "Inspection of {requirement} found issues — approve which get repaired."
+    kind_detail: select-findings
+    required: true
+
+  - key: repair
+    needs: [implement]
+    after: [gate-repairs]
+    fanout: per-approved-finding
+    parallel: by-group

@@ -174,8 +174,14 @@ no `set -e` (the dispatcher owns that).
 | `lib/records.sh` | `bug`, `doc`: defects and the evergreen knowledge base |
 | `lib/quality.sh` | `coverage`: the quality areas the QA discipline maps, and the inspection clock that makes "what is due" a query |
 | `lib/brief.sh` | `brief`: the structured briefing, text and JSON |
-| `lib/dashboard.sh` + `dashboard.tmpl.html` | `dashboard`: the six-view self-contained HTML page and the data it inlines |
+| `lib/dashboard.sh` + `dashboard.tmpl.html` | `dashboard`: the seven-view self-contained HTML page and the data it inlines |
 | `lib/roster.sh` | `sync-agents`, `match`, `bounties`, `capability-request(s)`: the roster, the deterministic matcher and recruiting |
+| `lib/graph.sh` | `graph new` / `graph <REQ>` / `graph validate` / `graph deviate`: the execution graph — **and THE ONE YAML SCANNER.** Nothing else in the CLI parses YAML |
+| `lib/template.sh` | `templates`, `template`: the templates as a readable surface, projected from `lib/graph.sh`'s scanner into the flat form `lib/segment.sh` reads |
+| `lib/segment.sh` | `segment`, `node`, `gate`, `gates`: the runnable batches between gates, the work-node writer, and the two-decision control surface |
+| `lib/shift.sh` | `shift`: the unattended loop's **controller** — which requirement is next, and whether to keep going. The shift record lives in `event` and only in `event` |
+| `lib/gitsafe.sh` | `git branch-for` / `commit-task` / `revert-task` / `shift-status`: **the only git the guild may do**, behind one allowlisted wrapper |
+| `lib/report.sh` | `shift-report`: what happened while you were away, reconstructed from the `event` log |
 | `lib/init.sh` | `init`, v4 archival, docs/qa carry-over, roster seeding, `rebuild`, `journal` subcommands |
 
 **One answer per problem, and it lives in the module that owns it.** Stage 2 added four
@@ -187,6 +193,44 @@ heading list per document kind), one shell-side flattener (`_render_flat_arg`), 
 `H key=<integer>` count transport shared by `brief` and `dashboard`, and one
 `${GUILD_ACTOR:-orchestrator}`. A second copy of any of them is the bug, not the
 duplication.
+
+Stage 3 and Stage 4 each shipped a **private projection registry** — `_roster_json_row` and
+`_graph_json_row`, both carrying a header admitting in capitals that they belonged in
+`_art_json_row` and were stopgaps because that file was owned by another author that phase.
+Both are gone; their seven tables are arms of the one registry. That specific duplication is
+worth naming because its failure is silent and delayed: `guild rebuild` re-inserts every
+column from the journal, so a projection that goes stale drops a column **on replay**, months
+later, on the one command you run because something already went wrong.
+
+Stage 4 added three more modules the same way and produced one more of these to reconcile:
+**there is exactly one YAML parser**, `_graph_parser_src` in `lib/graph.sh`, and
+`lib/template.sh` is a projection of its output rather than a second scanner. The two had
+disagreed about the default `fanout:`, about whether `fanout: none` was a spelling at all,
+about legal indentation and about backslash escapes — and the divergence would have been
+invisible: `guild graph new` would have instantiated a project template correctly while
+`guild segment`, which reads the same file for one fact (a node key's `parallel:` mode) and
+degrades *silently* when it cannot, quietly ran everything sequentially.
+
+Stage 5 added three more, again in parallel with each other, and the reconciliation pass found
+four things worth naming — three of them documentation drifting away from code, which is the
+failure mode this file exists to catch early:
+
+- **`lib/gitsafe.sh` had re-derived the journal-marker loop** rather than calling
+  `_graph_journal_markers`, with a header explaining that a wrapper to swallow one line of
+  output was not worth it. `lib/shift.sh`, written the same week, calls it with exactly that
+  redirect. There is one journal write path again.
+- **`lib/shift.sh`'s header said the CLI "has never shelled out to git and Stage 5 is the
+  worst possible moment to start"** — while its sibling module was adding `guild git`. Both
+  statements were defensible; only one could be true. The split is now stated as the design it
+  is: the controller contains no git *because* `_gs_git`'s allowlist is the single place a
+  reader has to audit, and a second call site would make that audit two files wide.
+- **Two writers of the `ended` event disagreed by one key.** The step's own stop condition
+  wrote `steps`; `guild shift --end` did not. `guild shift-report` reads `$.steps` off
+  whichever row closed the shift without knowing which wrote it, so a hand-ended shift
+  reported "0 step(s)". Both writers now emit the same keys.
+- **The marker-channel comment in `lib/shift.sh` had drifted** from the SQL beneath it (the
+  `RUN|` line grew two fields; `SJ|` lost one). The awk reader agreed with the SQL, so nothing
+  was broken — but the comment is the only specification that channel has.
 
 **Portability rule.** The schema and every query must run on *both* engines — TursoDB
 (local) and libSQL (cloud). `STRICT` tables, `RETURNING`, WAL, `PRAGMA foreign_keys` and
@@ -215,6 +259,7 @@ regexes are not an acceptable fix here.
 | `guild goal show <GOAL-ID>` | The goal, its phases, and their requirements, as markdown |
 | `guild goal move <GOAL-ID> <status>` | Set status to `todo`\|`in-progress`\|`done`; prints the ID |
 | `guild goal priority <GOAL-ID> <1-5>` | Reprioritize (1 highest); prints the ID |
+| `guild goal rollup [GOAL-ID]` | Recompute goal and phase status from the requirements beneath: a phase is `done` when every requirement in it is, a goal when every phase is, `in-progress` when any child has left `todo`. **Childless rows are untouched** — a human set those. Idempotent; prints `<ID> <from> -> <to>` per change, nothing when nothing moved |
 | `guild phase new --goal GOAL-NNN --title T [--ordinal N] [--date D]` | Create a phase; `--ordinal` is derived as `MAX+1` within the goal when omitted |
 | `guild phase list [--goal GOAL-NNN]` | `<PHASE-ID> <GOAL-ID> <ordinal> <status> <reqs-done>/<total> <title>` |
 | `guild phase move <PHASE-ID> <status>` | Set status to `todo`\|`in-progress`\|`done`; prints the ID |
@@ -235,6 +280,8 @@ regexes are not an acceptable fix here.
 | `guild new req --title T [--desc D \| --body B] [--date D]` | Create a requirement; prints the ID |
 | `guild new task --title T --req REQ-NNN (--agent A \| --needs cap,cap) [--prefers cap,cap] [--plan PLAN-NNN] [--plan-slice slug] [--parallel-group LABEL] [--objective O \| --body B] [--date D]` | Create a task; prints the ID. **One of `--agent` or `--needs` is required**; both together pin a member *and* record what the work needed |
 | `guild new plan --title T --req REQ-NNN [--desc D \| --body B] [--task TASK-NNN] [--date D]` | Create a plan; prints the ID |
+| `guild plan slice <PLAN-NNN> --slug SLUG --title T [--body B \| --file F] [--files "a,b,c"]` | Upsert one plan slice — the architect's unit of parallel implementation work; prints `PLAN-NNN/slug`. `--files` is the **disjoint-file assertion** that concurrent dispatch rests on, stored as a JSON array. Omitted `--body`/`--files` preserve what is stored; `--files ''` clears the set |
+| `guild plan slices <PLAN-NNN> [--files]` | `<slug> <title>`, or with `--files` `<slug> <json-array-of-files>` (two surfaces because a title and a JSON array both contain spaces, so both can only be the last field) |
 | `guild read <ID>` | Render the artifact as markdown, from the database |
 | `guild meta <ID> [field]` | Print the frontmatter block (or one field) — cheaper than `read` |
 | `guild status <ID>` | Print the artifact's status |
@@ -246,6 +293,16 @@ regexes are not an acceptable fix here.
 | `guild bounties [--json]` | Open, dependency-satisfied tasks with their matched member — then everything that **cannot** be worked and why (`status-blocked`, `deps:<ids>`, `no-eligible-agent:<caps>`) |
 | `guild capability-request <cap> --req REQ-NNN --rationale "…" --proposes NAME [--spec "…"]` | File a roster gap; prints the request ID. Also **admits the capability to the vocabulary**, so a new agent file declaring it will sync |
 | `guild capability-requests [--open]` | `<id> <status> <capability> <req> <proposed-agent> <rationale>` |
+| `guild templates` | `<name> <source>` — the templates that exist, and whether the file that wins is the project's or the plugin's. Opens no database |
+| `guild template <name> [<node-key> <field>]` | The whole template as one fact per line, or **one field byte-exact**. Fields: `key kind prompt kind_detail required needs after fanout parallel agents` |
+| `guild graph new <REQ-NNN> [--template standard\|maintenance]` | Instantiate the execution graph; prints `<REQ> <template> <n> nodes <n> edges <n> gates`. **Refuses a second run.** Every node, edge, gate row, the template record and the event are ONE script |
+| `guild graph <REQ-NNN> [--explain]` | Render the graph; `--explain` diffs **template vs actual** with every deviation's reason |
+| `guild graph validate <REQ-NNN>` | The deviation rules against what is **stored**. Exit 0 and one line, or exit 1 listing every `FAIL <code> <detail>` |
+| `guild graph deviate <REQ-NNN> --kind add-node\|drop-node\|reshape --node KEY --reason "…" [--needs c,c] [--prefers c,c] [--after K,K] [--title T] [--parallel-group G]` | Change the graph's shape, with a recorded reason. `add-node` **requires** `--needs` and every capability must be declared by an active member; `drop-node` stitches predecessors to successors; `--kind add-gate` is **refused, always** |
+| `guild segment <REQ-NNN> [--json]` | The next gate-free run of node batches, each marked parallel or sequential, with the member each node dispatches to and the gate it stops at. Reads only. Exits 1 rather than emitting a parallel batch holding two `serial` members |
+| `guild node <NODE-ID> <status> [--task TASK-NNN]` | Move a **work** node: `pending\|ready\|running\|done\|failed\|skipped`. This is what makes readiness propagate. `--task` binds the ticket the orchestrator dispatched. A **gate is refused** — its status is a decision |
+| `guild gate <NODE-ID> --approve\|--reject [--decision "…"]` | Record the guild master's decision. Approval sets the gate node `done` (which unblocks its successors); rejection sets it `failed` (which holds them). Refused when not ready, when already approved, or when a `select-findings` gate is approved with no `--decision` |
+| `guild gates [--pending] [--json]` | `<node> <req> <status> <kind> <ready\|waiting> <prompt>` — every gate board-wide. `ready` means it is awaiting the guild **master**; `waiting` means it is awaiting the guild |
 | `guild retitle <ID> "New title"` | Change the title (v4 edited the file's frontmatter); fixes up the body's `# ` heading when it still matches |
 | `guild checkin [YYYY-MM-DD]` | Record the check-in date — the **only** writer of `last-checkin` |
 | `guild log <TASK-ID> --agent A --entry "…"` | **Agent write.** Append one work-log entry to the task's spool |
@@ -254,9 +311,17 @@ regexes are not an acceptable fix here.
 | `guild list <req\|task\|plan> [status]` | List `<ID> <status>` lines, sorted; task lines add `<agent> <requirement>` columns for awk filtering |
 | `guild next` | Print the next actionable `<TASK-ID>`, or `none` |
 | `guild batch <TASK-ID>` | Print all `todo`/`in-progress` task IDs sharing the task's `parallel-group` and `requirement`; a task with no group is a batch of one |
+| `guild shift [--max-tasks N] [--max-minutes M] [--requirement REQ-NNN] [--dry-run] [--json]` | **One turn** of the unattended loop: `run` (this requirement is actionable — go read `guild segment`) or `stop` (with the reason, written to `event`). Budgets default to 10 tasks / 60 minutes and are **fixed when the shift opens** |
+| `guild shift --end [--reason R] [--note "…"]` | Close the open shift. `R` ∈ `gate` `infrastructure` `max-tasks` `max-minutes` `idle` `collision` `operator` — the last two are the ones only the orchestrator can see |
+| `guild shift --policy [--json]` | The may / may-not table in full. Touches no database |
+| `guild shift-report [--since YYYY-MM-DD] [--json]` | What happened while you were away, from the `event` log: shifts and their outcomes, what finished, what failed and was retried, what is blocked, the gates waiting, what was filed and committed, and why it stopped. Window defaults to where the **last shift began**. Reads only |
+| `guild git branch-for <REQ-NNN> [--from REF]` | Ensure `guild/REQ-NNN` exists and switch to it, recording the baseline commit. Refuses a dirty tree the shift did not create |
+| `guild git commit-task <TASK-NNN> [--path P]… [--all] [--type T] [--scope S] [--subject S] [--dry-run]` | Commit one `done` task as `<type>: <subject>` with `Guild-Task: TASK-NNN` in the trailer. Refuses a task that is not done, one already committed, the wrong branch, an unvouched baseline, and an ambiguous diff (say `--path` or `--all`) |
+| `guild git revert-task <TASK-NNN> [--dry-run]` | Discard a `failed` task's partial edits into `.guild/backup-revert-<TASK>-<ts>/`. Deletes nothing |
+| `guild git shift-status` | Repository, branch, default branch, baseline, tree state, the events recorded for this shift and the commits it made. Reads only |
 | `guild board` | Render the live board |
 | `guild brief [--since YYYY-MM-DD] [--json]` | The structured briefing: direction, in flight, blocked, open bounties, bugs, coverage due, and what moved since the last check-in. Reads only |
-| `guild dashboard [--open] [--out PATH] [--json]` | Write a self-contained `.guild/dashboard.html` — roadmap, board, graph, bugs, coverage, activity. No server, no network, works offline |
+| `guild dashboard [--open] [--out PATH] [--json]` | Write a self-contained `.guild/dashboard.html` — roadmap, board, graph, bugs, findings, coverage, activity. No server, no network, works offline |
 | `guild export [--json]` | Regenerate `.guild/export/*.md`, or dump board state as JSON |
 | `guild rebuild` | Replay `journal.ndjson` into a fresh database |
 | `guild journal compact [--force]` | Snapshot current state as a new baseline journal |
@@ -266,8 +331,9 @@ regexes are not an acceptable fix here.
 Environment: `GUILD_DIR` (guild root, default `.guild`), `GUILD_ACTOR` (who mutations are
 attributed to, default `orchestrator`), `GUILD_SCHEMA` (override the path to `schema.sql`),
 `GUILD_AGENTS_DIR` (where `sync-agents` reads agent definitions; defaults to
-`$CLAUDE_PLUGIN_ROOT/agents`, then the checkout's own `agents/`), `GUILD_ASSUME_YES` (skip
-the v4 archival prompt).
+`$CLAUDE_PLUGIN_ROOT/agents`, then the checkout's own `agents/`), `GUILD_TEMPLATES_DIR`
+(searched for `<name>.yaml` **before** `.guild/templates/` and the plugin's `templates/`),
+`GUILD_ASSUME_YES` (skip the v4 archival prompt).
 
 ### There is no `guild path`
 
@@ -284,6 +350,7 @@ export, silently. For `TASK-*` and `PLAN-*` the file never existed at all.
 | read a ticket | `cat "$(guild path TASK-1)"` | `guild read TASK-1` |
 | read one field | `fm "$(guild path TASK-1)" agent` | `guild meta TASK-1 agent` |
 | read a plan slice | `cat "$(guild slice P-1 auth)"` | `guild slice PLAN-1 auth` |
+| write a plan slice | Write `PLAN-1/slice-auth.md` | `guild plan slice PLAN-1 --slug auth --title T --body '…' --files 'a.ts,b.ts'` |
 | append to the Work Log | Edit the ticket file | `guild log TASK-1 --agent developer --entry '…'` |
 | record a review finding | Edit the ticket file | `guild finding TASK-1 --reviewer r --severity major --summary '…'` |
 | write a requirement/plan document | Edit the file | `guild new req\|plan --body "$(cat <<'DOC' … DOC)"` at creation |
@@ -298,8 +365,11 @@ orchestrator's own input.
 
 **Still missing (pending a later stage), stated plainly so nothing pretends otherwise:**
 
-- **No writer for `plan_slice`.** `guild slice` reads one; nothing creates one. The architect puts
-  each slice brief in its developer ticket's `--objective` instead.
+- ~~**No writer for `plan_slice`.**~~ **Closed in Stage 4** by `guild plan slice` / `guild plan
+  slices`. `guild slice <PLAN> <slug>` still reads the brief; the architect now files it, with the
+  file set that makes the slices' disjointness reviewable. (A slice brief may still live in the
+  developer ticket's `--objective` — nothing forces a plan to be sliced — but `fanout: per-slice`
+  dispatches one implementation node per slice row, so an unsliced plan fans out to one.)
 - **No body writer after creation.** A requirement, plan or task document is written once, by
   `guild new … --body`. Two Stage 2 records are the exceptions and are re-writable in place:
   `guild doc put` is an upsert, and `guild bug` has `fix` / `close`.
@@ -545,23 +615,253 @@ with *"check the roster is loaded at all: 'guild sync-agents'"*. A silent foreve
 not reachable; it would require a capability ticket, and a capability ticket on an unsynced
 board is an error message.
 
-## Status transitions (who calls `move`)
+## The execution graph: templates, segments, gates
 
-Carried over from v4 unchanged, and now load-bearing rather than stylistic — it is what
-makes concurrent agents safe against a single writer.
+Through Stage 3 the order of work was compiled into the skills — `check-in` knew that review
+follows test-write, and changing that meant editing prose in three places. **In v5 the chain
+is data.**
 
-The **orchestrator** (the check-in skill) owns every status transition:
+### Templates are files, and a project may override one
 
-- On dispatch: `guild move TASK-NNN in-progress`
-- On success: `guild move TASK-NNN done`
-- On failure: `guild move TASK-NNN failed`
-- On retry:   `guild move TASK-NNN todo`
+Two ship with the plugin, at `templates/`:
+
+| Template | For | Shape |
+|---|---|---|
+| `standard` | building a requirement | `gate-plan → implement → test-plan → test-write → review → gate-repairs → repair` |
+| `maintenance` | inspecting what was built | `qa-check → qa-plan → qa-execute → qa-report → gate-repairs → repair` |
+
+A project overrides one **by name** by dropping its own copy at `.guild/templates/<name>.yaml`.
+There is no merge and no inheritance — **the file that wins is the whole answer**, so
+`guild graph` never runs a chain that is half yours and half ours. `guild templates` says
+which file that is; `guild template <name>` prints what it parsed to.
+
+The accepted YAML is a small closed subset, refused **by name and line number** when a file
+steps outside it — the honest way to hand-parse a format with a real specification, given the
+CLI depends on the turso binaries and coreutils and nothing else (no python, no jq, no node,
+no yq). `_graph_parser_src` in `lib/graph.sh` documents and enforces it.
+
+### The graph is instantiated once, per requirement
+
+`guild graph new REQ-NNN --template standard` writes `graph_node`, `graph_edge` and `gate`
+rows and records the template in `guild_state`, all in one script, and **refuses a second
+run** — re-instantiating would either duplicate every node or silently discard the deviations
+recorded against the ones that are there.
+
+**Every template node key gets at least one node.** Fanout decides how many: `per-slice` is
+one per `plan_slice` (so the architect's slices are what make concurrent implementation
+possible), `fixed` with `agents:` is one per named member (`review` fans to four), and
+`per-declaration` / `per-approved-finding` / `per-mission` start as **one anchor node** that
+stands in for tickets that do not exist yet. Leaving a key with zero rows would be silent and
+dangerous: `review` is `after: [test-write]`, so with no `test-write` row `review` has no
+unfinished predecessor and is immediately ready — review before anything was written.
+
+### Deviation, with teeth
+
+The architect may change the shape, and every change writes a `graph_deviation` row carrying
+a **non-empty reason**. `guild graph validate` enforces the rules against what is **stored**,
+not against what was typed, because rows also arrive by journal replay from another machine:
+
+- a `required: true` node may be **reshaped** but never **dropped**;
+- **a gate may never be dropped, and no new gate may be added** — `--kind add-gate` is refused
+  outright, and a `kind = 'gate'` node whose key is not the template's fails validation;
+- every `add-node` names a capability an **active** roster member declares.
+
+`guild graph REQ-NNN --explain` prints template vs actual side by side with each reason, so a
+run that went wrong is diffed against a known baseline rather than read from scratch.
+
+### Readiness is one hop, and that is not an optimization
+
+**A node is READY when every one of its DIRECT predecessors is `done` or `skipped`.** That is
+a plain join over `graph_edge` (`_graph_ready_where`) — no traversal, no transitive closure,
+and therefore no `WITH RECURSIVE`, which TursoDB does not have (see *Portability rule* above)
+and which a dependency graph is the textbook case for. Readiness **propagates one node at a
+time as the segment runs**, which is why the closure is never needed.
+
+`guild segment`'s multi-batch look-ahead — batch 4 is not ready now but will be — is the same
+one-hop question asked repeatedly **in awk**, over the flat node list and edge list the single
+query returned. A gate is recorded and never satisfied, which is what ends the segment before
+it while still scheduling runnable work on other branches.
+
+### Three status writers, and only three
+
+| Command | Writes | Who |
+|---|---|---|
+| `guild move <ID> <status>` | `requirement` / `task` / `plan` | orchestrator |
+| `guild node <NODE-ID> <status>` | `graph_node` (work nodes only) | orchestrator |
+| `guild gate <NODE-ID> --approve\|--reject` | `gate` **and** its `graph_node` | orchestrator, on the guild master's answer |
+
+Carried over from v4 unchanged, and now load-bearing rather than stylistic — a single writer
+is what makes concurrent agents safe.
+
+- On dispatch: `guild move TASK-NNN in-progress` **and** `guild node NODE-ID running [--task TASK-NNN]`
+- On success: `guild move TASK-NNN done` **and** `guild node NODE-ID done`
+- On failure: `guild move TASK-NNN failed` **and** `guild node NODE-ID failed`
+- On retry:   `guild move TASK-NNN todo` **and** `guild node NODE-ID pending`
 - On a roster gap: `guild move TASK-NNN blocked` — no member can take the bounty. Tasks
   only; `blocked → done` is refused (see *The roster* above)
 
+**Both halves, always.** A ticket moved without its node leaves the graph stalled — the
+segment re-emits the same batch forever and the gate behind it never opens. A node moved
+without its ticket leaves the board lying about what is in flight.
+
+`guild node` **refuses a gate**, and that refusal is the whole reason it has a guard:
+`guild gate --approve` sets a gate node `done`, and `done` is what unblocks its successors, so
+a command that could write a gate node directly would be an approval with no decision, no
+timestamp and no record of who made it — the guild master's control surface bypassed by the
+process that is supposed to be enforcing it.
+
 Sub-agents do **not** move their own work and do **not** write to the database. They do their
-work, report with `guild log` / `guild finding`, and let the orchestrator drain the spool and move
-the row. (Agents read inputs with `guild read` / `guild meta` / `guild slice`.)
+work, report with `guild log` / `guild finding` / `guild bug new`, and let the orchestrator
+drain the spool and move the rows. (Agents read inputs with `guild read` / `guild meta` /
+`guild slice`.)
+
+### Gates: two, fixed, and the only thing a subagent cannot reach
+
+`gate-plan` comes before anything is built and `gate-repairs` comes after review. **Subagents
+cannot call `AskUserQuestion`** — only the orchestrator session can — so a generated workflow
+physically cannot ask the guild master anything. Segmenting at gates is not a stylistic
+choice; it is the only shape that preserves guild-master control, and it is why the segment
+boundary and the "stop and notify" boundary are the same line.
+
+`guild gates --pending` carries a **readiness** column, and it is the point rather than
+decoration: a pending gate whose predecessors are still running is awaiting the *guild*, not
+the guild master. Listing the two identically is how a board grows a queue of decisions that
+cannot be made — and it is the same fact `guild gate` refuses on one command later.
+
+### `guild next` / `guild batch` survive as the graph-less fallback
+
+The design retired them in favour of `guild segment`. In the implementation they stayed:
+`guild brief`'s `Next:` line is built on the same cursor rule, and a board created before
+Stage 4 has requirements with no graph at all. They are the fallback and nothing more —
+`guild segment` is what orders a requirement that has a graph.
+
+One consequence worth knowing when writing a dispatcher: **`task_dependency` has no writer in
+v5.** Ordering moved to `graph_edge`. So `guild bounties`' dependency filter is vacuously
+satisfied and every open ticket reads as claimable. `bounties` and `match` answer *who* can
+take a ticket; only the graph answers *whether it may run yet*.
+
+## The unattended shift: `shift`, `git`, `shift-report`
+
+**Run until the next gate, then stop and notify.** A segment is by definition everything that
+can run without asking anyone anything, so the segment boundary and the stop boundary are the
+same line and unattended mode needs no separate notion of *how far may it go*.
+
+### `guild shift` is the controller, not the runner
+
+A shell script cannot spawn an agent; the orchestrator can. So `guild shift` is called once per
+turn and answers exactly one question — *what now* — with `run` (this requirement is
+actionable) or `stop` (with the reason). **It does not re-emit the batches.** `guild segment`
+already produces that document, and a second answer to "what runs next" is the divergence every
+module header in this CLI is written to prevent:
+
+| Command | Decides |
+|---|---|
+| `guild shift` | which requirement, and whether to continue |
+| `guild segment` | what runs inside it |
+| `guild git` | what happens to the working tree |
+
+The loop is therefore: `guild shift` → `guild git branch-for` (once) → `guild segment --json` →
+dispatch batch 1 → `guild node … done|failed` → `guild git commit-task|revert-task` →
+`guild shift` again.
+
+### The shift record lives in `event`, and only in `event`
+
+There is no shift table and no `guild_state` key. Four verbs on `subject_type = 'shift'` —
+`started` (whose payload *is* the budget), `stepped`, `ended` — plus `retried` / `gave-up` on
+`graph_node` and `blocked` on `task`, which are the failure policy's three records. Every
+derived fact is a scalar subquery over them: the open shift is *the newest `started` with no
+matching `ended`*, its clock is that row's `ts`, tasks spent is the count of distinct
+`graph_node` rows moved since.
+
+Insert-only state has a second payoff: **a crashed shift is not a corrupt row.** It is a
+`started` with no `ended`, which the next `guild shift` resumes and `guild shift --end` closes.
+Nothing is repaired by hand.
+
+### What it picks up, and what it will not start
+
+1. Open build bounties whose dependencies are satisfied — the `standard` template.
+2. Nodes of an inspection **the guild master already started** — the `maintenance` template.
+3. Nothing left → the shift ends `idle`.
+
+Implemented as a tier: a graph recorded as `standard` may be picked up cold; **anything else
+only if a node has already moved past `pending`.** The default for an unknown template is the
+cautious tier, deliberately — a project that drops its own YAML into `.guild/templates/` gets
+the careful treatment until a human starts the first node, because the CLI cannot know whether
+that template's first step is cheap. **An idle shift ends idle rather than inventing work.**
+
+### Budget, stop conditions, and the stall detector
+
+A shift ends on the first of, in this precedence: `gate`, `infrastructure`, `max-tasks`,
+`max-minutes`, `idle` — plus `collision` and `operator`, which only the orchestrator can
+report. `gate` outranks the ceilings because reaching a gate is the shift *succeeding*: if both
+are true the morning read should say "a decision is waiting", not "out of budget".
+
+- **The task budget's unit is a graph node this shift moved**, counted once however many times
+  it moves, and read from the `event` rows `guild node` writes — so it counts work actually
+  dispatched, never work the CLI merely planned. A retry costs nothing.
+- **The budget is fixed when the shift opens.** Passing the same values every turn is fine (a
+  `/loop` entry does exactly that); passing different ones is refused with nothing written. A
+  ceiling you can raise from inside the loop is not a ceiling.
+- **The stall detector** is "repeated infrastructure failure" made mechanical: each `stepped`
+  event records the budget spent at that moment, and two steps in a row with the same count end
+  the shift as `infrastructure`. Threshold two, not one, because one is reachable honestly.
+
+The whole stop reason is computed **in SQL, in one expression, inside the same transaction that
+records it** — so the directive on stdout and the row in the database cannot disagree.
+
+### The policy table is enforcement, not commentary
+
+`guild shift --policy` prints §8.2's two columns. Every action a step can take is guarded by a
+lookup into that same table, so moving a row from MAY to MAY NOT stops the statement being
+generated — in the live path and in `--dry-run` together. `--dry-run` is not a description of
+the policy; **it is the policy, run with the writes left out.**
+
+Where the CLI is the only door, the door is locked: `guild node` refuses a gate node,
+`guild gate` is the sole writer of a decision, `guild git` has no push verb and refuses the
+default branch, `guild capability-request` files a row rather than creating an agent. Where it
+is not — nothing stops a session running bare `git push` — the denial list travels with every
+directive instead.
+
+### Git safety (§8.6): one wrapper, one allowlist
+
+`lib/gitsafe.sh` is the only thing in the CLI that shells out to git, and **every invocation
+goes through `_gs_git`**, so there is one place to read to know what the guild can do to a
+repository and one place a future edit has to get past:
+
+- **Verb allowlist**, not a denylist: exactly what the four commands call. `push`, `fetch`,
+  `pull`, `remote`, `merge`, `rebase`, `reset`, `cherry-pick`, `clean`, `gc`, `filter-branch`
+  and `tag` are absent, so a typo becomes a loud internal error rather than a published branch.
+  `clean` in particular is absent by design — untracked files are quarantined with `mv`.
+- **Flag denylist** as a second layer: `-f` / `--force` / `--force-with-lease` / `-D` /
+  `--hard` / `--amend` / `--no-verify` are refused wherever they appear.
+- **Hooks are not bypassed.** A repository's own pre-commit checks are the kind of safety this
+  module exists to respect; a hook that blocks is a refusal you see in the morning.
+- **`-c commit.gpgsign=false`** — a correctness point, not only a hang-avoidance one: a machine
+  commit made by a shift must not carry the guild master's signature. It is not their commit.
+- **`branch-for` refuses a dirty tree the shift did not create**, because `git switch` carries
+  uncommitted changes with it and a guild master's work-in-progress must never be dragged onto
+  a shift branch. The guild's own directory is excluded from that check — the board is expected
+  to be dirty.
+- **`commit-task` refuses to mis-attribute a diff.** When other finished tasks of the same
+  requirement are still uncommitted, it stops and asks for `--path` (the plan slice's
+  disjoint-file assertion) or `--all`, which is recorded as such in the event payload.
+- **`revert-task` deletes nothing.** The diff is written to `.guild/backup-revert-<TASK>-<ts>/`
+  and untracked files are *moved* there.
+
+### `guild shift-report` vs `guild brief`
+
+Both read the same tables and answer different questions, and the value of having two is that
+neither compromises for the other. **The brief reports state; the report reports events.**
+
+| | Question | Spine | Default window |
+|---|---|---|---|
+| `guild brief` | where does the project stand | the board, as it is now | the last check-in |
+| `guild shift-report` | what happened while I was away | one shift: an id, a clock, a budget, an outcome | where the **last shift began** |
+
+The test for any future section is the question it answers, not the table it reads: if the
+answer does not change when a shift runs, it belongs in the brief. `shift-report` mutates
+nothing — a report that logged itself would be an event inside the window it exists to
+summarize.
 
 ## Direction and records: goals, phases, bugs, coverage, docs
 
@@ -902,4 +1202,45 @@ T2=$("$GUILD" new task --title "Port the codec" --req REQ-001 --needs implement,
 # ... a human writes agents/developer-rust.md with `capabilities: [implement, rust]` ...
 "$GUILD" sync-agents                         # admits it, and closes the request
 "$GUILD" move "$T2" todo                     # the bounty is claimable again
+```
+
+The graph, end to end — from the architect's instantiation to a closed requirement. Two
+segments, two gates, and nothing in between that stops for a human:
+
+```bash
+# --- the architect, after the plan, its slices and the tickets exist -------------
+"$GUILD" plan slice PLAN-004 --slug auth-service --title "Auth service" \
+  --files "src/lib/auth/service.ts,src/lib/auth/types.ts" --body "$BRIEF_AUTH"
+"$GUILD" graph new REQ-007 --template standard    # REQ-007 standard 9 nodes 10 edges 2 gates
+"$GUILD" graph deviate REQ-007 --kind add-node --node research --needs research \
+  --after gate-plan --reason 'the payments webhook API is undocumented in the repo'
+"$GUILD" graph validate REQ-007                   # exit 0, or exit 1 listing every FAIL
+"$GUILD" graph REQ-007 --explain                  # template vs actual, with the reason
+
+# --- gate 1: the guild master approves the plan (guild:new-requirement asks) -----
+"$GUILD" gates --pending                          # REQ-007/gate-plan … ready
+"$GUILD" gate REQ-007/gate-plan --approve --decision 'ship it; keep the migration separate'
+
+# --- segment 1: implement -> test-plan -> test-write -> review -------------------
+"$GUILD" segment REQ-007                          # ordered batches, up to gate-repairs
+"$GUILD" segment REQ-007 --json                   # the same, for a workflow compiler
+
+# one batch at a time: dispatch, then record BOTH halves
+"$GUILD" move TASK-011 in-progress
+"$GUILD" node REQ-007/implement.auth-service running --task TASK-011
+# ... the agent works, and reports with `guild log` / `guild finding` / `guild bug new` ...
+"$GUILD" spool drain TASK-011
+"$GUILD" move TASK-011 done
+"$GUILD" node REQ-007/implement.auth-service done  # <- what makes test-plan ready
+
+# --- gate 2: the findings and bugs collected during the run, judged together -----
+"$GUILD" segment REQ-007                           # no batches; next gate is ready
+"$GUILD" gate REQ-007/gate-repairs --approve --decision '1,2,4 — token signing first'
+"$GUILD" new task --title "Fix: unsigned callback token accepted" \
+  --needs implement --req REQ-007                  # one per approved item
+
+# --- segment 2: repair, then the graph is exhausted ------------------------------
+"$GUILD" segment REQ-007                           # [repair]
+"$GUILD" move REQ-007 done
+"$GUILD" goal rollup                               # the phase and goal above it follow
 ```

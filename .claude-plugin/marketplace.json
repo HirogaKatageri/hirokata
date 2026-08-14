@@ -23,14 +23,14 @@
     {
       "name": "guild",
       "source": "./plugins/guild",
-      "version": "5.0.0-beta.3",
-      "description": "Continuous agent orchestration on a Turso-backed board where status is a column, not a directory. A live 3-way interview between product-owner, architect, and user plans each requirement; goals and phases give it direction; tickets name a required CAPABILITY rather than an agent, so any roster member whose declared capabilities cover it is eligible and adding an agent file is the whole of hiring; the board then drives parallel development, test planning, unit & integration testing, and a 4-reviewer pass that produces a report for user-approved fixes, all through a deterministic CLI with crash-safe session resume. 'guild brief' narrates the board and 'guild dashboard' renders it as one offline HTML page, while an independent QA discipline files bugs and maps risk coverage as rows and a Svelte/SvelteKit specialist agent handles Svelte work. A capability nothing in the roster covers is a loud roster gap the architect files at plan time, not a silent fallback. Recovery is a journal replay. Say 'check in' to start a work session.",
+      "version": "5.0.0",
+      "description": "Continuous agent orchestration on a Turso-backed board where status is a column, not a directory. The chain is DATA: a YAML template instantiated per requirement into an execution graph, with exactly two gates — the plan is approved before anything is built, and findings, bugs and failures are presented together as one decision after review. 'guild segment' says what runs next; a ticket names a required CAPABILITY rather than an agent, so any roster member whose declared capabilities cover it is eligible and adding an agent file is the whole of hiring. It can work a shift while you are away — 'guild shift' claims bounties, runs segments, retries a failure once, commits per completed task on its own branch, and stops at the next gate, because a gate is the one decision no subagent can make; it never pushes and never touches the default branch. 'guild brief' says where the project stands, 'guild shift-report' says what moved overnight, and 'guild dashboard' renders the board as one offline HTML page, while an independent QA discipline files bugs and maps risk coverage as rows. Recovery is a journal replay. Say 'check in' to start a work session, or 'work a shift' to leave it running.",
       "author": {
         "name": "Gian Patrick Quintana",
         "email": "gian.quintana@hirokata.dev"
       },
       "license": "MIT",
-      "keywords": ["orchestration", "agents", "board", "continuous-workflow", "requirements", "review", "turso", "sqlite", "dashboard", "qa"]
+      "keywords": ["orchestration", "agents", "board", "execution-graph", "gates", "unattended", "requirements", "review", "turso", "sqlite", "dashboard", "qa"]
     },
     {
       "name": "research",

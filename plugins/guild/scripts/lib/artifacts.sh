@@ -14,9 +14,20 @@
 # Bash 3.2 compatible: no associative arrays, no `declare -A`, no `mapfile`, no ${var^^}.
 #
 # Depends on lib/db.sh      : die, db_fail, db_require_init, db_exec, db_query, db_now,
-#                             sql_str, sql_text, guild_root, spool_path, spool_append,
-#                             spool_drain
+#                             sql_str, sql_text, utf8_valid_file, guild_root, spool_path,
+#                             spool_append, spool_drain
 #          on lib/journal.sh : journal_preflight, journal_append, journal_row, journal_sync
+#          on lib/render.sh  : _render_flat, _render_flat_arg, _render_col
+#          on lib/init.sh    : _init_read_body (the verbatim --file slurp)
+#          on lib/records.sh : _rec_check_slug (the ONE key alphabet — see cmd_plan_slice)
+#
+# THE LAST THREE ARE FORWARD REFERENCES, and they are deliberate reuse rather than a
+# layering accident. scripts/guild sources every module before it dispatches anything, so
+# a function defined in a later module is resolvable by the time any command runs; this
+# file has reached into lib/render.sh for `_render_flat` since Stage 1 for exactly the
+# reason the other two are here now — ONE implementation of "flatten a value", "slurp a
+# file verbatim" and "is this a valid key" is worth more than a local copy of each, and
+# the copies are what drift.
 #
 # THE JOURNAL ORDERING CONTRACT (lib/journal.sh, durability guarantee 1). Every command
 # below that mutates then journals calls `journal_preflight` FIRST, before any SQL. The
@@ -268,6 +279,15 @@ _art_actor() {
 # table X contain" and three places for a column added later to be forgotten in two of
 # them. `journal_append <table> upsert <row>` takes one table name; there is one function
 # that answers what a row of it looks like.
+#
+# STAGE 4 FOLDED IN THE LAST TWO STRAYS. lib/roster.sh shipped `_roster_json_row` and
+# lib/graph.sh shipped `_graph_json_row`, each with a header saying in capitals that it
+# belonged here and was a stopgap because this file was owned by another author that phase.
+# Both are gone: their seven cases are the roster and graph arms below, and their call sites
+# call this. The rule the strays were breaking is the one that matters most for a table
+# nobody looks at often — `guild rebuild` re-inserts every column from the journal, so a
+# projection that goes stale silently drops a column on replay, and a SECOND registry is
+# exactly how one goes stale while the other does not.
 _art_json_row() {
   case "${1-}" in
     requirement)
@@ -305,6 +325,36 @@ _art_json_row() {
       ;;
     coverage)
       printf "json_object('id',id,'area',area,'risk',risk,'spec_path',spec_path,'last_inspected_at',last_inspected_at,'notes',notes)"
+      ;;
+    plan_slice)
+      printf "json_object('id',id,'plan_id',plan_id,'slug',slug,'title',title,'body',body,'files',files)"
+      ;;
+    # ---- the roster (Stage 3; folded in from `_roster_json_row` in Stage 4) ----
+    #
+    # `active`, `serial`, `required` and `capability_request.id` are INTEGER columns on
+    # STRICT tables, and json_object preserves their type — which is what keeps a replayed
+    # row insertable rather than a string where a number belongs.
+    agent)
+      printf "json_object('name',name,'model',model,'description',description,'active',active,'serial',serial)"
+      ;;
+    agent_capability)
+      printf "json_object('agent',agent,'capability',capability)"
+      ;;
+    capability_request)
+      printf "json_object('id',id,'capability',capability,'requirement_id',requirement_id,'rationale',rationale,'proposed_agent',proposed_agent,'proposed_spec',proposed_spec,'status',status,'created_at',created_at)"
+      ;;
+    # ---- the execution graph (Stage 4; folded in from `_graph_json_row`) ----
+    graph_node)
+      printf "json_object('id',id,'requirement_id',requirement_id,'node_key',node_key,'kind',kind,'task_id',task_id,'parallel_group',parallel_group,'status',status)"
+      ;;
+    graph_edge)
+      printf "json_object('from_node',from_node,'to_node',to_node)"
+      ;;
+    graph_deviation)
+      printf "json_object('id',id,'requirement_id',requirement_id,'kind',kind,'node_key',node_key,'reason',reason,'created_at',created_at)"
+      ;;
+    gate)
+      printf "json_object('node_id',node_id,'prompt',prompt,'kind',kind,'status',status,'decision',decision,'decided_at',decided_at)"
       ;;
     *) die "guild: no row projection for table '${1-}'" ;;
   esac
@@ -1100,9 +1150,9 @@ EOF
 # so the whole overview goes in at creation: `--desc "$(cat overview.md)"`.
 #
 # v4 also created an empty PLAN-NNN/ slice directory here. v5 has no slice files: slices
-# are `plan_slice` rows, and no Stage 1 command writes them (see the report). Until one
-# does, a slice's brief belongs in its developer ticket's `--objective`, which is the
-# field the developer already reads.
+# are `plan_slice` rows, written after the plan exists with `guild plan slice` (below).
+# Nothing is created here, deliberately — a plan's slices are the architect's decomposition
+# and an empty placeholder set would be indistinguishable from a decomposition of one.
 cmd_new_plan() {
   local now nowlit actorlit created idexpr rowexpr body sql result id row
   local taskexpr from misses
@@ -1447,15 +1497,17 @@ cmd_status() {
 # v4 printed a PATH to a slice FILE the architect had written. v5 stores slices as
 # `plan_slice` rows, so there is no file to point at and this prints the slice body —
 # the same thing the caller was going to read. Both v4 spellings of the argument are
-# accepted (`auth`, `slice-auth`, `slice-auth.md`) so existing call sites keep working.
+# accepted (`auth`, `slice-auth`, `slice-auth.md`) so existing call sites keep working;
+# the normalization is `_art_slice_slug`, which `guild plan slice` writes through, so
+# reader and writer cannot disagree about what a slug IS.
 #
-# AND IN STAGE 1 THERE ARE NO SLICE ROWS. No command writes `plan_slice`, while the
-# architect always sets `--plan-slice {slug}` on a developer ticket and the developer
-# agents call this as their "primary brief" — so on the hot path this command's ONLY
-# reachable answer is the miss. A bare `not found` reads as "your plan is broken" and
-# sends the agent looking for a file; it is a documented gap, so the error says so and
-# names the field that actually holds the brief. This is the CLI's half of that gap; the
-# other half is the agent definitions that still call it first (they are not this file).
+# STAGE 4 GAVE THIS COMMAND ITS WRITER. Through Stage 3 nothing wrote `plan_slice` while
+# the architect always set `--plan-slice {slug}` on a developer ticket and the developer
+# agents called this as their "primary brief" — so the only reachable answer on the hot
+# path was the miss, and the error had to explain a gap. `guild plan slice` (below) is
+# that writer, so the miss is now an ordinary miss: this plan has no slice by that name.
+# It still names where a brief lives when there is no slice row, because nine agent
+# files call this first and a bare `not found` sends them looking for a file.
 cmd_slice() {
   local plan="${1-}" slug="${2-}" planlit sluglit sql tmp l1 l2 out
   [ -n "$plan" ] || die "guild: slice requires a PLAN id"
@@ -1465,10 +1517,7 @@ cmd_slice() {
     *) die "guild: unrecognized id '$plan'" ;;
   esac
 
-  slug="${slug%.md}"
-  case "$slug" in
-    slice-*) slug="${slug#slice-}" ;;
-  esac
+  slug="$(_art_slice_slug "$slug")"
 
   db_require_init
   planlit="$(sql_text "$plan" 'the PLAN id')"
@@ -1494,16 +1543,457 @@ SELECT body FROM plan_slice WHERE plan_id = $planlit AND slug = $sluglit;
     rm -f "$tmp"
     die "guild: $plan/$slug not found
 
-Stage 1 has no writer for plan slices, so $plan has none unless they were inserted
-directly. A ticket's brief is its own '## Objective' section — read the ticket:
+The slices this plan does have:
 
-  guild read TASK-NNN
+  guild plan slices $plan
 
-The architect writes the slice brief into the developer ticket's --objective at creation,
-which is where the plan-slice frontmatter field points in practice."
+If the architect wrote no slice for it, the brief is the ticket's own '## Objective'
+section — 'guild read TASK-NNN' — which is where the plan-slice frontmatter field
+points when there is no row. The architect files one with:
+
+  guild plan slice $plan --slug $slug --title T --body '...' --files 'a.ts,b.ts'"
   fi
   tail -n +3 "$tmp"
   rm -f "$tmp"
+}
+
+# ============================ PLAN SLICES — THE WRITER (§6.1) ========================
+#
+#   guild plan slice  <PLAN-NNN> --slug SLUG --title T [--body B | --file F]
+#                                [--files "a,b,c"]
+#   guild plan slices <PLAN-NNN> [--files]
+#
+# WHY THIS BLOCKS STAGE 4, stated once so nobody removes it as a convenience. The
+# standard template's `implement` node carries `fanout: per-slice` and
+# `parallel: by-group`: the graph compiler asks a plan how many implementation nodes it
+# has, and the answer is its slice rows. Through Stage 3 there were none — `plan_slice`
+# was a table with a reader (`guild slice`, above), nine agent files instructing agents
+# to call that reader, and no way at all to put a row there. `fanout: per-slice` over an
+# empty set is one node or none, so the whole fan-out half of §6.1 was unreachable.
+#
+# THE FILE SET IS THE POINT, not decoration. `--files` records the slice's files as a
+# JSON array, and that array IS the architect's disjoint-file assertion — the claim that
+# these slices touch no file in common and may therefore run concurrently. §6.3 lists
+# "splitting `implement` into three sequential waves because the slices are not disjoint"
+# as a legitimate deviation, which is a decision somebody has to be able to CHECK. A file
+# set that lives only in a prose brief cannot be checked by anything.
+#
+# UPSERT, LIKE `doc put` AND `coverage set`. A slice is refined — the architect writes the
+# brief, then comes back with the file set once the shape is settled — and re-running with
+# the same slug must not be a primary-key error or a second row. What is NOT passed is
+# PRESERVED (the body, the file set), which is why `--files ''` exists as the explicit
+# clear: "this slice turned out to touch nothing" and "I did not restate the file list"
+# are different statements and only one of them should empty the column.
+#
+# THE BODY IS STORED VERBATIM — neither defused nor guarded, exactly as `cmd_doc_put`
+# stores a doc body and for the identical reason. `guild slice` prints it ALONE, with no
+# frontmatter, no headings and no markers around it, so that channel has no structural
+# token for a value to impersonate; neutralizing it would corrupt real briefs (a slice
+# brief legitimately contains fenced code, `---` rules and headings of its own) to defend
+# against nothing. The columnar surface (`plan slices`) never emits the body at all.
+
+# _art_slice_slug <slug> — THE canonical form of a slice slug.
+#
+# One normalizer, called by the reader AND the writer, because a slug the writer stores
+# and the reader cannot find is the worst possible failure here: the developer agent asks
+# for its primary brief and is told the plan is broken. v4 wrote slice FILES, so its call
+# sites spell the argument three ways (`auth`, `slice-auth`, `slice-auth.md`) and all
+# three still have to land on the same row.
+#
+# Both strips are ANCHORED fixed-literal parameter expansions (`%.md`, `#slice-`), so they
+# are constant-time and rule 5 (no `${v%%pat*}` on unbounded text) is not in play.
+_art_slice_slug() {
+  local slug="${1-}"
+  slug="${slug%.md}"
+  case "$slug" in
+    slice-*) slug="${slug#slice-}" ;;
+  esac
+  printf '%s\n' "$slug"
+}
+
+# _art_slice_file <path> — echo one validated, trimmed member of `--files`, or die.
+#
+# The length bound comes FIRST, before any trim, for `_art_capability`'s reason: the trim
+# is `${v#"${v%%[![:space:]]*}"}`, which is O(n²) under bash 3.2 (rule 5), and this flag
+# is unvalidated argv that the adversarial matrix will happily hand 100 KB. Bounding a
+# path to 1024 bytes makes the trim free — and no repository has a 1 KB path.
+#
+# The CR/LF refusal is NOT here — it is on the whole list, in `_art_slice_files_expr`,
+# and that placement is the whole point. The split is `tr ',' '\n'` followed by `read`, so
+# by the time a token reaches this function an embedded newline has ALREADY become a
+# second path: `--files 'a<LF>b,c'` would silently assert three files where the caller
+# named two. A check here would never fire; a check before the split refuses it.
+_art_slice_file() {
+  local v="${1-}"
+  if [ ${#v} -gt 1024 ]; then
+    die "guild: --files entries are at most 1024 characters (got ${#v})"
+  fi
+  v="${v#"${v%%[![:space:]]*}"}"
+  v="${v%"${v##*[![:space:]]}"}"
+  case "$v" in
+    "")
+      die "guild: --files has an empty path — check for a doubled or trailing comma."
+      ;;
+  esac
+  printf '%s\n' "$v"
+}
+
+# _art_slice_files_expr <csv> — the SQL expression for `plan_slice.files`: a real JSON
+# array built by the engine, or `'[]'`.
+#
+# json_array() rather than a string this shell concatenates, for the reason
+# `_art_capability_payload` uses it: the column must hold JSON that a later reader can
+# parse, and a shell that builds JSON by hand is a shell that has to implement JSON
+# STRING ESCAPING by hand — for paths containing quotes, backslashes and non-ASCII. Each
+# element still travels as `sql_text` (§2.2.1): a path is free text.
+#
+# The split is `tr` + a HEREDOC, not `IFS=','; set -- $list`, for `_art_capability_rows`'s
+# two reasons — the IFS form needs `set -f` restored on every path out, and a `die` on the
+# right of a PIPE kills only the subshell, so a rejected path would be reported and then
+# ignored. Trailing comma yields one fewer token (`$( )` strips tr's trailing newline);
+# `a,,b` yields an empty middle token, which `_art_slice_file` refuses by name.
+#
+# THE COUNT IS CAPPED at 200. The cap bounds the composed statement (each element is a
+# hex-encoded literal) and it bounds the append loop below, whose `out="$out…"` is the one
+# shape in this function that could go quadratic. It is also a statement about the data: a
+# "slice" naming more than 200 files is not a unit of parallel work, and saying so at the
+# flag is kinder than a 400 KB SQL script that fails somewhere else.
+#
+# CR AND LF ARE REFUSED ON THE WHOLE LIST, before the split, because after the split they
+# are indistinguishable from a comma: `tr` turns commas into newlines and `read` consumes
+# newlines, so an embedded LF would quietly become an extra path in the assertion. A path
+# cannot legitimately contain either, and the file set is read back on line-oriented
+# surfaces — json_array() escapes control characters, so this is belt and braces, but "the
+# value could not have contained the token" beats "the encoder escaped it".
+_art_slice_files_expr() {
+  local list="${1-}" out="" tok n=0 nl=$'\n' cr=$'\r'
+  [ -n "$list" ] || { printf "'[]'"; return 0; }
+  case "$list" in
+    *"$cr"* | *"$nl"*)
+      die "guild: --files may not contain a newline or a carriage return.
+Paths are separated by commas: --files 'src/auth/session.ts,src/auth/index.ts'.
+The file set is the architect's disjoint-file assertion and it is read back a line at a
+time ('guild plan slices --files'); a path that can span lines could forge another
+slice's entry, and a newline inside one would silently split it into two files."
+      ;;
+  esac
+
+  while IFS= read -r tok; do
+    tok="$(_art_slice_file "$tok")" || exit 1
+    n=$((n + 1))
+    [ "$n" -le 200 ] ||
+      die "guild: --files lists more than 200 paths.
+A slice is a unit of parallel work with a disjoint file set; at that size it is a plan,
+not a slice. Split it into several slices, each with its own --slug."
+    out="$out${out:+, }$(sql_text "$tok" '--files')"
+  done <<EOF
+$(printf '%s' "$list" | LC_ALL=C tr ',' '
+')
+EOF
+
+  [ -n "$out" ] || { printf "'[]'"; return 0; }
+  printf 'json_array(%s)' "$out"
+}
+
+# _art_slice_parse_flags <args...> — the `plan slice` flag set.
+#
+# Sets ps_slug ps_title ps_body ps_body_set ps_file ps_files ps_files_set, resetting them
+# first so a second call cannot inherit the first one's values.
+#
+# UNKNOWN FLAGS ARE REFUSED HERE, where `_art_parse_flags` and `_qa_parse_flags` swallow
+# them. That is not inconsistency for its own sake: those two carry v4 signatures whose
+# tolerance is part of the contract, this command has no v4 counterpart, and the flag most
+# likely to be mistyped is `--files` — whose silent loss does not fail, it produces a slice
+# that ASSERTS IT TOUCHES NO FILES and therefore runs concurrently with everything. A
+# swallowed flag that widens parallelism is not a flag worth being permissive about.
+# `guild phase list` already refuses unknown flags for the same class of reason.
+_art_slice_parse_flags() {
+  ps_slug=""
+  ps_title=""
+  ps_body=""
+  ps_body_set=0
+  ps_file=""
+  ps_files=""
+  ps_files_set=0
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --slug) shift; ps_slug="${1-}"; if [ $# -gt 0 ]; then shift; fi ;;
+      --title) shift; ps_title="${1-}"; if [ $# -gt 0 ]; then shift; fi ;;
+      --body) shift; ps_body="${1-}"; ps_body_set=1; if [ $# -gt 0 ]; then shift; fi ;;
+      --file) shift; ps_file="${1-}"; if [ $# -gt 0 ]; then shift; fi ;;
+      --files) shift; ps_files="${1-}"; ps_files_set=1; if [ $# -gt 0 ]; then shift; fi ;;
+      *)
+        die "guild: unexpected argument '$(_render_flat_arg "$1")'
+
+  guild plan slice <PLAN-NNN> --slug SLUG --title T [--body B | --file F] [--files \"a,b,c\"]"
+        ;;
+    esac
+  done
+}
+
+# _art_slice_body — resolve the slice brief from --body or --file into `ps_body`, or
+# leave `ps_body_set` at 0 so the caller preserves what is stored.
+#
+# `--file` is here for `doc put --file`'s reason and it is the architect's actual
+# workflow: a slice brief is drafted as a file, and `--body "$(cat brief.md)"` loses every
+# trailing newline to command substitution. `_init_read_body`'s out-parameter form exists
+# precisely so that "the body is stored verbatim" actually holds at the CALL SITE.
+#
+# The UTF-8 check is explicit rather than left to sql_text so the error can name the PATH
+# rather than the flag: `--file` is something the caller typed and may have several of.
+_art_slice_body() {
+  [ -n "$ps_file" ] || return 0
+  [ "$ps_body_set" = 0 ] ||
+    die "guild: plan slice takes --body or --file, not both"
+  [ -e "$ps_file" ] || die "guild: no such file: $ps_file"
+  [ -f "$ps_file" ] || die "guild: not a regular file: $ps_file"
+  [ -r "$ps_file" ] || die "guild: cannot read $ps_file (permission denied)"
+  utf8_valid_file "$ps_file" ||
+    die "guild: $ps_file is not valid UTF-8, so it was not stored.
+
+The guild stores text as UTF-8; re-encode the file and re-run —
+
+  iconv -f latin1 -t utf8 '$ps_file' > t && mv t '$ps_file'
+
+An invalid byte would not survive the trip: free text reaches SQL as bytes cast to TEXT,
+and tursodb substitutes U+FFFD where libSQL keeps the byte (design 2.2.1)."
+  _init_read_body ps_body "$ps_file"
+  ps_body_set=1
+  return 0
+}
+
+# cmd_plan_slice <PLAN-NNN> --slug SLUG --title T [--body B | --file F] [--files "a,b,c"]
+# Upserts one slice. Prints the slice id, `PLAN-001/auth-service`.
+#
+# ONE SCRIPT, ONE ROUND TRIP, FOUR STATEMENTS:
+#
+#   INSERT INTO event …          (verb chosen from whether the row existed BEFORE)
+#   UPDATE plan_slice … RETURNING 'OK|' || <row json>;   -- fires iff it already existed
+#   INSERT INTO plan_slice … SELECT … FROM plan p WHERE p.id = <plan>
+#                              AND NOT EXISTS (<the slice>)
+#                        RETURNING 'OK|' || <row json>;  -- fires iff it did not
+#   SELECT 'MISS|<plan>' WHERE NOT EXISTS (<the plan>);  -- diagnostics
+#
+# EXACTLY ONE OF THE TWO WRITES FIRES, so exactly one `OK|` line comes back and the caller
+# parses one protocol. `FROM plan p WHERE p.id = …` is the referential check, in this
+# file's usual shape: a slug filed against a plan that does not exist selects zero rows,
+# nothing is written, and the MISS line names what was missing.
+#
+# WHY NOT `ON CONFLICT(id) DO UPDATE`, which `doc put` and `coverage set` both use.
+# `plan_slice` carries TWO coincident unique constraints — `id` (the primary key) and
+# `UNIQUE (plan_id, slug)` — and because the id IS `plan_id || '/' || slug`, re-filing a
+# slug violates BOTH AT ONCE. An upsert handles a conflict on its named target and RAISES
+# on any other, so which of the two the engine notices first decides whether this command
+# updates a row or dies with `UNIQUE constraint failed`. That ordering is an engine
+# implementation detail, it is not on §3.0's verified list for either engine, and it is
+# the kind of difference that would show up on one engine only — the worst kind to find
+# late. UPDATE-then-guarded-INSERT depends on no constraint-detection order at all.
+#
+# OMITTED MEANS PRESERVE, and with two statements that needs no cleverness: the UPDATE
+# simply does not name a column the caller did not pass, and the INSERT supplies the
+# column default ('' / '[]'). The earlier single-statement form had to read the old value
+# back with a scalar subquery against the very row it was writing; not needing to is the
+# second reason this shape is the right one.
+#
+# The id is COMPOSED IN SQL as `<plan> || '/' || <slug>` (§3.2: `PLAN-001/auth-service`),
+# not in the shell, because the plan id is unvalidated argv and must travel as hex — so
+# there is no shell-side string to concatenate that would still be safe to interpolate.
+cmd_plan_slice() {
+  local plan="${1-}" slug idexpr planlit sluglit titlelit setlist
+  local bodyexpr filesexpr payloadexpr now nowlit actorlit rowexpr sql row
+  [ -n "$plan" ] || die "guild: plan slice requires a PLAN id"
+  case "$plan" in
+    PLAN-*) ;;
+    *) die "guild: unrecognized id '$(_render_flat_arg "$plan")' (expected PLAN-NNN)" ;;
+  esac
+  shift
+  _art_slice_parse_flags "$@"
+  [ -n "$ps_slug" ] || die "guild: plan slice requires --slug
+
+The slug is the name the developer ticket carries in --plan-slice and the name the
+developer agent reads back with 'guild slice $plan <slug>'. Keep it short and typeable:
+'auth-service', 'migrations'."
+  [ -n "$ps_title" ] || die "guild: plan slice requires --title"
+  slug="$(_art_slice_slug "$ps_slug")"
+  # The slug is a KEY somebody retypes — into `--plan-slice`, into `guild slice`, into the
+  # composed `PLAN-001/<slug>` id — so it takes the CLI's one key alphabet rather than a
+  # near-copy of it. `_rec_check_slug` lives in lib/records.sh; every module is sourced
+  # before any command runs (scripts/guild), and this file already reaches the same way
+  # into lib/render.sh for `_render_flat`. A second bracket expression here is exactly the
+  # divergence that function's own comment is about, and it would decide whether the
+  # architect's `auth-service` and the developer's `auth-service` are one row.
+  _rec_check_slug "$slug" 'slice slug' '--title'
+  _art_slice_body
+
+  # Validated before any connection is opened, like every other argument check here: a
+  # mistyped path must cost nothing and touch nothing.
+  filesexpr=""
+  [ "$ps_files_set" = 0 ] || filesexpr="$(_art_slice_files_expr "$ps_files")" || exit 1
+
+  db_require_init
+  journal_preflight
+
+  planlit="$(sql_text "$plan" 'the PLAN id')"
+  # The slug passed `_rec_check_slug`'s alphabet, so it is a known-safe value and sql_str
+  # is right for it — it is also the one value that must read back identically in the id,
+  # the error text and the journal line.
+  sluglit="$(sql_str "$slug")"
+  idexpr="$planlit || '/' || $sluglit"
+  titlelit="$(sql_text "$ps_title" '--title')"
+  now="$(db_now)"
+  nowlit="$(sql_str "$now")"
+  actorlit="$(sql_text "$(_art_actor)" "\$GUILD_ACTOR")"
+  rowexpr="$(_art_json_row plan_slice)"
+
+  # The two column values, and the UPDATE's SET list. A column the caller did not pass is
+  # absent from the SET list — that is what "omitted means preserve" costs here — and gets
+  # the schema's own default on the INSERT path, where there is nothing to preserve.
+  # `--title` is always restated: it is required, so it is the one field the caller is
+  # unambiguously asserting on every call (`coverage set --area` works the same way).
+  bodyexpr="''"
+  [ "$ps_body_set" = 0 ] || bodyexpr="$(sql_text "$ps_body" "${ps_file:---body}")"
+  setlist="title = $titlelit"
+  [ "$ps_body_set" = 0 ] || setlist="$setlist,
+    body = $bodyexpr"
+  if [ -n "$filesexpr" ]; then
+    # `--files ''` is an explicit clear and reaches here as '[]'.
+    setlist="$setlist,
+    files = $filesexpr"
+  fi
+
+  # THE PAYLOAD RECORDS THE ASSERTION, AND ONLY WHEN ONE WAS MADE. `--files` given: the
+  # event carries the array, because "the architect claimed these files are disjoint" is
+  # exactly the fact a later reader wants dated and attributed. `--files` omitted: the key
+  # is ABSENT rather than restating what is already stored — this command did not assert
+  # it, and an event log that cannot tell an assertion from an echo is one nobody can
+  # audit the disjointness claim from.
+  payloadexpr="json_object('slug', $sluglit, 'title', $titlelit)"
+  [ -z "$filesexpr" ] ||
+    payloadexpr="json_object('slug', $sluglit, 'title', $titlelit, 'files', $filesexpr)"
+  [ -n "$filesexpr" ] || filesexpr="'[]'"
+
+  sql="BEGIN;
+INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
+SELECT $nowlit, $actorlit,
+       CASE WHEN EXISTS (SELECT 1 FROM plan_slice WHERE id = $idexpr) THEN 'updated' ELSE 'created' END,
+       'plan_slice', $idexpr, $payloadexpr
+FROM plan WHERE id = $planlit;
+UPDATE plan_slice SET $setlist
+WHERE id = $idexpr
+  AND EXISTS (SELECT 1 FROM plan WHERE id = $planlit)
+RETURNING 'OK|' || $rowexpr;
+INSERT INTO plan_slice (id, plan_id, slug, title, body, files)
+SELECT $idexpr, p.id, $sluglit, $titlelit, $bodyexpr, $filesexpr
+FROM plan p
+WHERE p.id = $planlit
+  AND NOT EXISTS (SELECT 1 FROM plan_slice WHERE id = $idexpr)
+RETURNING 'OK|' || $rowexpr;
+SELECT 'MISS|' || $planlit
+  WHERE NOT EXISTS (SELECT 1 FROM plan WHERE id = $planlit);
+COMMIT;
+"
+
+  row="$(_art_update_run "$plan" "write $plan/$slug" "$sql")" || exit 1
+  journal_append plan_slice upsert "$row"
+  printf '%s/%s\n' "$(_render_flat_arg "$plan")" "$slug"
+}
+
+# cmd_plan_slices <PLAN-NNN> [--files] — a plan's slices.
+#
+#   guild plan slices PLAN-001
+#     auth-service Extract the session store
+#     migrations Add the token table
+#
+#   guild plan slices PLAN-001 --files
+#     auth-service ["src/auth/session.ts","src/auth/index.ts"]
+#     migrations ["db/migrations/003_tokens.sql"]
+#
+# TWO SURFACES RATHER THAN ONE WIDE ONE, and the reason is the output-channel rule
+# (§2.2.2) rather than taste. A title is free text with spaces in it, so it can only ever
+# be the LAST field on a line; a JSON file set also contains spaces (inside its strings),
+# so it too can only be last. They cannot both be last, and a line carrying them both
+# would have a field boundary that neither value is forbidden to contain.
+#
+# The slug is `_render_col`-flattened even though the writer validated its alphabet: ids
+# and slugs are replayed from `.guild/journal.ndjson`, which lives in git, and a
+# structural field must not depend on who wrote that file. The file set is `_render_flat`
+# on top of json_array's own escaping — belt and braces on a value that must not span
+# lines. The body is never emitted here; `guild slice` is the reader for that.
+#
+# An existence marker leads the script so "no such plan" and "a plan with no slices"
+# remain distinguishable in ONE round trip; the marker line is then dropped.
+cmd_plan_slices() {
+  local plan="${1-}" want_files=0 planlit cols sql tmp out
+  [ -n "$plan" ] || die "guild: plan slices requires a PLAN id"
+  case "$plan" in
+    PLAN-*) ;;
+    *) die "guild: unrecognized id '$(_render_flat_arg "$plan")' (expected PLAN-NNN)" ;;
+  esac
+  shift
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --files) want_files=1; shift ;;
+      *) die "guild: plan slices takes a PLAN-NNN and optionally --files" ;;
+    esac
+  done
+
+  db_require_init
+  planlit="$(sql_text "$plan" 'the PLAN id')"
+  if [ "$want_files" = 1 ]; then
+    cols="$(_render_col 'slug') || ' ' || $(_render_flat 'files')"
+  else
+    cols="$(_render_col 'slug') || ' ' || $(_render_flat 'title')"
+  fi
+
+  sql="SELECT 'P' FROM plan WHERE id = $planlit;
+SELECT $cols FROM plan_slice WHERE plan_id = $planlit ORDER BY slug;
+"
+  tmp="$(_art_tmpfile)" || exit 1
+  if ! printf '%s' "$sql" | db_exec >"$tmp"; then
+    out="$(cat "$tmp" 2>/dev/null || true)"
+    rm -f "$tmp"
+    db_fail "could not list the slices of $plan" "$out"
+  fi
+  if [ "$(_art_first_line "$tmp")" != "P" ]; then
+    rm -f "$tmp"
+    die "guild: $plan not found"
+  fi
+  tail -n +2 "$tmp"
+  rm -f "$tmp"
+}
+
+# cmd_plan <slice|slices> [args...] — the `guild plan` namespace.
+#
+# `guild new plan` still CREATES a plan; this namespace is about what is INSIDE one. They
+# are deliberately not folded together: `new` takes `--title/--req` and prints a new
+# PLAN-NNN, while these take an existing plan and address a slice within it, and
+# overloading `new` would have made `guild new plan --slug` mean something in one flag
+# combination and nothing in another.
+cmd_plan() {
+  local sub="${1-}"
+  [ $# -eq 0 ] || shift
+  case "$sub" in
+    slice) cmd_plan_slice "$@" ;;
+    slices) cmd_plan_slices "$@" ;;
+    new)
+      die "guild: a plan is created with 'guild new plan' —
+
+  guild new plan --title T --req REQ-NNN [--desc D | --body B] [--task TASK-NNN]
+
+'guild plan' addresses what is inside an existing plan: slice, slices."
+      ;;
+    '')
+      die "guild: plan needs a subcommand
+
+  guild plan slice  <PLAN-NNN> --slug SLUG --title T [--body B | --file F] [--files \"a,b,c\"]
+  guild plan slices <PLAN-NNN> [--files]
+
+A slice is one unit of parallel implementation work. --files is the architect's
+disjoint-file assertion: the files this slice touches, and nothing else touches."
+      ;;
+    *) die "guild: unknown plan subcommand '$sub' (slice|slices)" ;;
+  esac
 }
 
 # cmd_next_id <req|task|plan> — the next numeric ID for a kind, zero-padded to 3 digits

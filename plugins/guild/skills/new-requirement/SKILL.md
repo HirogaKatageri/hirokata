@@ -7,9 +7,10 @@ description: >
   guild board. Runs a live 3-way interview between the product-owner, the
   architect, and the user, places the requirement in the guild's direction (or
   deliberately leaves it unaffiliated), then writes the requirement doc, the
-  implementation plan, and the developer/test-planner/reviewer tickets — all
-  before this skill returns.
-version: 3.2.0
+  implementation plan and its slices, the developer/test-planner/reviewer tickets,
+  and the requirement's execution graph — and ends at `gate-plan`, where the guild
+  master approves the plan before anything is built.
+version: 4.0.0
 user-invocable: true
 arguments:
   - name: title
@@ -23,10 +24,29 @@ arguments:
 # New Requirement — Add Work to the Guild
 
 Run the product-owner and architect through a live interview with the user, then hand the board a
-fully-planned requirement: a requirement doc, an implementation plan, and every developer/
-test-planner/reviewer ticket needed to build it. Unlike the rest of the guild's pipeline, none of
-this is ticket-dispatched — you (the orchestrator) spawn both agents directly and moderate the
-conversation until the user says it's done.
+fully-planned requirement: a requirement doc, an implementation plan and its slices, every
+developer/test-planner/reviewer ticket needed to build it, and the **execution graph** that says
+what runs when. Unlike the rest of the guild's pipeline, none of this is ticket-dispatched — you
+(the orchestrator) spawn both agents directly and moderate the conversation until the user says
+it's done.
+
+## Where this skill stops: `gate-plan`
+
+**This skill plans. It does not build.** It ends by presenting the plan at `gate-plan` — the first
+of the guild's two gates, and the whole point of the gate model:
+
+> **The plan is the cheapest place to change your mind.** Approving it costs one decision and
+> redirects everything downstream. After that, the guild runs to completion without stopping, and
+> the problems it finds are collected and judged together at the second gate, `gate-repairs`.
+
+So the last thing you do here is put the plan in front of the guild master and record their answer
+(Step 7). **Nothing is dispatched, nothing is implemented, no ticket is moved out of `todo` until
+that approval exists.** If they approve, `/guild:check-in` runs the first segment. If they don't,
+the requirement sits with a pending gate and the board is unchanged — which is exactly what a plan
+gate is for.
+
+**Only you can ask.** Subagents cannot call `AskUserQuestion`, which is why a gate can never live
+inside a dispatched workflow and why this skill — the orchestrator session — is where it happens.
 
 All deterministic state operations go through the guild CLI. Bind it once:
 
@@ -222,6 +242,15 @@ Agent(
            §5.3 vocabulary, follow your Step 3.6: file the capability-request, then raise it as
            a `NEEDS INPUT: ROSTER GAP` block and hold that slice's ticket until I answer. You
            may not create an agent file; only the guild master can.
+           Your deliverable is the FULL Step 4-6 set: the plan, its SLICES (`guild plan slice`,
+           with each slice's --files — that is the disjoint-file assertion parallel dispatch
+           depends on), the tickets, and then the EXECUTION GRAPH — `guild graph new {REQ}
+           --template standard`, any deviations via `guild graph deviate` each carrying a
+           reason, and `guild graph validate {REQ}` passing before you report. Slices and
+           tickets must exist BEFORE `graph new`, which binds nodes to them and refuses to run
+           twice. You may not add or drop a gate. Stop at `gate-plan`: do not approve it, do not
+           dispatch anything, do not move a ticket's status — the guild master approves the plan
+           and I present it to them.
            Today's date: {today}."
 )
 ```
@@ -257,9 +286,11 @@ It reports the **REQ ID it created** — record it as `$REQ`; every later step n
   `guild read {REQ}` and proceed to Design and Write the Plan." Keep relaying any further
   architect `NEEDS INPUT` rounds until it reports done.
 
-**Architect reports done:** it will report the PLAN-NNN id and the ticket IDs it created
-(developer(s), test-planner, reviewer) — no further action needed from you; it created them
-directly via the CLI.
+**Architect reports done:** it reports the PLAN-NNN id, the slices it wrote, the ticket IDs it
+created (developer(s), test-planner, reviewer), and **the graph** — which template, how many nodes,
+every deviation with its reason, and that `guild graph validate` passes. It created all of that
+directly via the CLI; you do not re-create any of it. Go to Step 6.7 and check the graph yourself
+before you take anything to the user.
 
 ### 6.5. Place the Requirement in the Direction
 
@@ -292,7 +323,7 @@ does not need a goal.
   (and the goal's priority) in that same round or one short follow-up — this is a placement
   question, not a second interview.
 - **Never create a goal or a phase the user did not ask for.** If the answer is ambiguous or the
-  user skips the question, leave the requirement unaffiliated and say so in Step 7.
+  user skips the question, leave the requirement unaffiliated and say so in Step 8.
 - **No direction on the board yet?** Still offer, but keep it to two choices — "start a goal for
   this" / "leave it unaffiliated" — and one line. A guild with no goals is not a broken guild.
 - If the requirement lands on a phase and you are in `relay` mode, send the architect a one-line
@@ -308,6 +339,12 @@ their layer, exactly like goals and phases.
 
 > **Nothing here creates an agent without the user saying so.** Not you, not the architect, not on a
 > "reasonable inference". An agent file is a permanent addition to the guild.
+
+**Why this is decided live rather than at `gate-plan`.** The request is a permanent record and it
+**also surfaces at `gate-plan`** with the plan (§5.4) — but the architect cannot write the affected
+slice's ticket until it knows the answer, and its session does not survive the gate. So the decision
+happens here, and Step 7 reports what was decided plus anything still `open`. Either way the rule is
+the same: **an agent is never created behind the guild master's back.**
 
 **1. Read the gap back before you ask.** The architect's block is a claim; this is the record:
 
@@ -399,7 +436,95 @@ re-slice. The same note about the request staying open applies.
 ticket to work around a gap; or treat "the user did not answer" as consent. If the answer is
 ambiguous, ask again rather than picking.
 
-### 7. Confirm
+### 6.7. Check the Graph Before You Take It to the User
+
+The architect says the graph validates. **Check it yourself** — it costs one command, it reads only,
+and a graph that does not validate is a run nothing can start:
+
+```bash
+"$GUILD" graph validate "$REQ"     # exit 0 and one line, or exit 1 listing every FAIL
+"$GUILD" graph "$REQ" --explain    # template vs actual, side by side, with every deviation reason
+```
+
+`--explain` is what you read at the gate: it prints the `standard` template and the actual graph next
+to each other, so a deviation is a diff against a known baseline rather than a bespoke shape you have
+to reason about from scratch.
+
+**If `validate` fails**, do not fix it by hand. `SendMessage` the architect the exact FAIL lines and
+have it correct the graph — deviations are its record and its reasoning, and a graph repaired by the
+orchestrator has a shape nobody justified. Common codes and what they mean:
+
+| Code | What happened |
+|---|---|
+| `no-graph` | the architect never ran `guild graph new` — send it back |
+| `empty-reason` | a deviation with no justification behind it |
+| `added-gate` / `dropped-gate` | the two-gate rule was broken; this one is never negotiable |
+| `dropped-required` | `implement` or `review` was dropped; they may be reshaped, never dropped |
+| `added-node-no-reason` / `dropped-node-no-reason` | the shape changed and nothing recorded why |
+| `unknown-capability` | an added node names a capability no active member has — that is a roster gap (Step 6.6), not a graph problem to paper over |
+
+**If the architect took the bug-fix short-circuit** (Step 6, no plan), there is no graph and there is
+nothing to validate — skip this step and Step 7's gate; a simple fix does not get a plan gate,
+because there is no plan to approve. Say so plainly in Step 8 and let check-in pick the tickets up.
+
+### 7. `gate-plan` — Present the Plan, and Stop
+
+**This is where the skill ends and the guild master decides.** Everything up to here is a proposal.
+
+**1. Read the gate's own prompt** — the template wrote it, so use it rather than inventing wording:
+
+```bash
+"$GUILD" graph "$REQ"      # the gate row prints with its prompt, e.g.
+                           # gate-plan  pending  "Plan for REQ-007 is ready for review. Approve implementation?"
+```
+
+The gate's node id is `{REQ}/gate-plan` — that is what `guild gate` takes.
+
+**2. Present it.** Give the user enough to decide in one pass, and keep it short — the plan itself is
+one `guild read PLAN-NNN` away if they want it:
+
+```
+REQ-007 — Session-backed authentication
+  Plan: PLAN-004 · 3 slices (auth-service, session-store, migrations) — file sets disjoint
+  Graph: standard · 9 nodes · 1 deviation
+    + research (before implement) — "the payments provider's webhook API is undocumented
+      in the repo and no .guild/docs/ file covers it"
+  Tickets: TASK-011 (implement,backend) · TASK-012, TASK-013 (wave A) ·
+           TASK-014 test-planning · TASK-015 reviewer
+  Then: implement → test-plan → test-write → review, running to completion without stopping,
+        and stopping next at gate-repairs.
+
+⚠ Roster gap: `rust` — capability request 3, still open. Assigned to `developer` for now.
+
+Approve implementation?
+```
+
+Include the roster-gap block **only** when a `capability_request` is still `open`
+(`"$GUILD" capability-requests --open`) — §5.4 puts it in front of the guild master at this gate,
+with the plan, as part of the same decision.
+
+**3. Ask with AskUserQuestion.** Three answers, and all three are real:
+
+| Answer | What you run | What happens next |
+|---|---|---|
+| **Approve** | `"$GUILD" gate "$REQ"/gate-plan --approve` | The plan is committed. `/guild:check-in` runs the first segment |
+| **Reject** | `"$GUILD" gate "$REQ"/gate-plan --reject --decision "{their reason}"` | Nothing gets built. The plan and the graph stay on the board as the record of what was proposed and refused |
+| **Not yet / let me think** | nothing | The gate stays `pending`. Check-in will present it again |
+
+Pass the user's own words through `--decision` when they give any — a bare approval is a decision
+with no reasoning attached, and six weeks later the reasoning is the part anyone wants.
+
+**4. Then stop. Do not build.** Approval is not a dispatch:
+
+- Do **not** spawn a developer, a test-planner or a reviewer.
+- Do **not** move any ticket out of `todo`.
+- Do **not** run `guild segment`, and do not compile a workflow.
+
+`/guild:check-in` is what runs the approved segment, and it will find the gate approved and the
+graph waiting. **The one thing this skill must never do is treat its own plan as permission to
+execute it** — the whole value of a plan gate is that it belongs to somebody who is not the planner.
+
+### 8. Confirm
 
 ```
 Requirement planned!
@@ -407,12 +532,25 @@ Requirement planned!
   Requirement: {REQ} — {title}
   Direction: {PHASE-NNN — phase title (GOAL-NNN — goal title)}
              (or "unaffiliated — not attached to a goal")
-  Plan: {PLAN-NNN} (or "none — simple fix, no plan needed")
+  Plan: {PLAN-NNN} — {N} slices (or "none — simple fix, no plan needed")
+  Graph: {standard · N nodes · N deviations} (or "none — simple fix, no graph")
   Tickets created: {list of TASK-NNN — title (needs: cap,cap | agent NAME)}
   Roster: {"developer-rust added on your approval — 15 members" | omit the line}
-
-Run /guild:check-in to start building.
+  gate-plan: APPROVED — run /guild:check-in to build it.
 ```
+
+**The last line is the one that changed, and it must tell the truth about what will happen next.**
+Use whichever applies:
+
+| Gate state | Line |
+|---|---|
+| Approved | `gate-plan: APPROVED — run /guild:check-in to build it.` |
+| Rejected | `gate-plan: REJECTED — nothing will be built. The plan and graph stay on the board.` |
+| Still pending | `gate-plan: PENDING your approval — nothing is built until you approve it. /guild:check-in will ask again.` |
+| No graph (bug-fix short-circuit) | `No plan gate — this was a simple fix. Run /guild:check-in to work the tickets.` |
+
+Never print "run check-in to start building" under a gate that is pending or rejected: that is the
+one sentence that would make an unapproved plan look approved.
 
 Report a new goal or phase you created on the user's instruction on its own line, so they can see
 what the answer actually produced. Do the same for a new guild member: adding to the roster is the
@@ -437,6 +575,21 @@ so it is not a surprise later:
   requirement or plan document. There is no `Edit the file`, because there is no file.
 - **This skill does not return until planning is complete** — unlike the old flow, there is no
   hand-off to a later check-in for requirement-gathering or planning. Both happen here, live.
+- **This skill PLANS; it never BUILDS.** It ends at `gate-plan`. No developer is spawned, no ticket
+  leaves `todo`, no segment is run, no workflow is compiled — regardless of how obviously good the
+  plan is, and regardless of the user saying "yes" enthusiastically. Approval records a decision; it
+  does not start work. `/guild:check-in` starts work.
+- **The graph is the architect's artifact, and only the architect edits it** — `guild graph new`,
+  `guild graph deviate` are its commands, not yours. You run the read-only ones (`guild graph`,
+  `guild graph validate`) and send failures back. A graph the orchestrator patched has a shape
+  nobody justified.
+- **Two gates, fixed** — `gate-plan` here, `gate-repairs` after review. Never ask the architect for
+  an extra approval point and never accept a graph that grew one: `guild graph validate` reports it
+  as `added-gate`. A third gate reads as caution and is what turns an unattended run into a session
+  that stops every twenty minutes.
+- **`guild gate` is yours alone** — it records a guild-master decision, so it runs only on an
+  explicit answer from the user, in Step 7, and never on inference. "They seemed happy with it" is
+  not an approval.
 - **Never let a subagent try `AskUserQuestion` itself** — team mode or not, only you can ask the
   real user. Both product-owner and architect always relay via `NEEDS INPUT`.
 - **Direction is the guild master's call** — `guild goal new`, `guild phase new` and
@@ -448,6 +601,10 @@ so it is not a surprise later:
 - **`--parallel-group`, `--plan-slice`, `--needs` and `--prefers` are the architect's to set** — it
   designs the developer ticket waves and decides what each slice requires; you only need to relay
   questions and forward context, not manage ticket frontmatter.
+- **Slices are the architect's too, and they are what the graph fans out over** — `guild plan slice`
+  writes them with their `--files` disjointness assertion, and `implement` produces one node per
+  slice. Do not write slices yourself and do not "help" by adding one; if a slice is missing or its
+  file set is wrong, that is a message to the architect.
 - **The roster is the guild master's layer, like goals and phases** — `guild sync-agents` is yours to
   run (Step 2.6, idempotent, safe); writing an `agents/*.md` file is the **user's decision alone**
   (Step 6.6). The architect proposes a member and files the gap; neither of you enlists one.

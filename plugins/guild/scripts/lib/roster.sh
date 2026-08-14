@@ -22,7 +22,12 @@
 # Depends on lib/db.sh       : die, db_fail, db_require_init, db_exec, db_query, db_now,
 #                              sql_str, sql_text
 #          on lib/journal.sh : journal_preflight, journal_append
-#          on lib/artifacts.sh: _art_actor, _art_tmpfile, _art_first_line
+#          on lib/artifacts.sh: _art_actor, _art_tmpfile, _art_first_line,
+#                              _art_json_row (THE ONE PROJECTION REGISTRY — the roster's
+#                              four tables are arms of it. Stage 3 shipped a private
+#                              `_roster_json_row` as an admitted stopgap; Stage 4 folded it
+#                              in and deleted it, because a second registry is exactly how
+#                              one goes stale and silently drops a column on replay)
 #          on lib/records.sh : _rec_check_slug (THE identifier alphabet)
 #          on lib/render.sh  : _render_flat, _render_flat_arg, _render_col, _render_tmp,
 #                              _render_query
@@ -242,47 +247,6 @@ _roster_name_ok() {
 # for a value that arrived on a FLAG (so the message can name the flag).
 _roster_check_agent_name() {
   _rec_check_slug "${1-}" 'agent name' "${2:---proposes}"
-}
-
-# ---- row projections (A STOPGAP — see below) ------------------------------------------
-
-# _roster_json_row <table> — the `json_object(...)` expression capturing a FULL row of one
-# of the four roster tables.
-#
-# THIS BELONGS IN `_art_json_row` (lib/artifacts.sh), WHICH IS "THE ONE PROJECTION
-# REGISTRY", AND IT IS HERE ONLY BECAUSE THAT FILE IS OWNED BY ANOTHER AGENT THIS PHASE.
-# lib/records.sh's header states the rule as "THERE IS NO `_rec_json_row`" and gives the
-# reason: the journal is a change log of RESULTING ROW STATE (§2.3), `guild rebuild`
-# re-inserts every column from it, and a projection that goes stale silently drops a column
-# on replay — which is precisely what a SECOND registry guarantees, because only one of the
-# two gets updated. So this function is a stopgap with a deadline, not a design:
-#
-#   FOLD THESE FOUR CASES INTO `_art_json_row` AND DELETE THIS FUNCTION.
-#
-# Column order is schema order (scripts/schema.sql), and every column is present, because
-# both of those are what replay depends on. `active`, `serial`, `required` and
-# `capability_request.id` are INTEGER columns on STRICT tables, and json_object preserves
-# their type, which is what keeps a replayed row insertable.
-_roster_json_row() {
-  case "${1-}" in
-    agent)
-      printf "json_object('name',name,'model',model,'description',description,'active',active,'serial',serial)"
-      ;;
-    agent_capability)
-      printf "json_object('agent',agent,'capability',capability)"
-      ;;
-    task_capability)
-      # NOT DUPLICATED. `task_capability` already has its case in `_art_json_row`, because
-      # lib/artifacts.sh is what writes those rows (`guild new task --needs`). Delegating
-      # rather than restating is the whole point of the registry rule; this arm exists so a
-      # caller here does not have to know which of the two functions owns which table.
-      _art_json_row task_capability
-      ;;
-    capability_request)
-      printf "json_object('id',id,'capability',capability,'requirement_id',requirement_id,'rationale',rationale,'proposed_agent',proposed_agent,'proposed_spec',proposed_spec,'status',status,'created_at',created_at)"
-      ;;
-    *) die "guild: no roster row projection for table '${1-}'" ;;
-  esac
 }
 
 # ---- the matcher, as SQL fragments (§5.2) ---------------------------------------------
@@ -832,8 +796,8 @@ _roster_sync_sql() {
   now="$(db_now)"
   nowlit="$(sql_str "$now")"
   actorlit="$(sql_text "$(_art_actor)" "\$GUILD_ACTOR")"
-  agentrow="$(_roster_json_row agent)"
-  caprow="$(_roster_json_row capability_request)"
+  agentrow="$(_art_json_row agent)"
+  caprow="$(_art_json_row capability_request)"
 
   nameslist="$(_roster_sql_list <"$namesf")"
   capsvals="$(_roster_sql_values <"$capsf")"
@@ -1538,7 +1502,7 @@ approval time, months after the plan that needed it (design 5.4)."
   now="$(db_now)"
   nowlit="$(sql_str "$now")"
   actorlit="$(sql_text "$(_art_actor)" "\$GUILD_ACTOR")"
-  rowexpr="$(_roster_json_row capability_request)"
+  rowexpr="$(_art_json_row capability_request)"
   # Validated against a closed alphabet above, so sql_str is correct for both.
   caplit="$(sql_str "$cap")"
   proplit="$(sql_str "$rq_proposes")"

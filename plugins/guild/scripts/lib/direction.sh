@@ -20,7 +20,7 @@
 #          on lib/journal.sh: journal_preflight, journal_append
 #          on lib/artifacts.sh: _art_actor, _art_created_expr, _art_defuse_body,
 #                             _art_defuse_lines, _art_create_run, _art_update_run,
-#                             _art_json_row
+#                             _art_json_row, _art_tmpfile, _art_first_line
 #          on lib/render.sh : _render_flat, _render_flat_arg, _render_col,
 #                             _render_linecount, _render_nl, _render_tmp, _render_query
 #
@@ -650,6 +650,211 @@ COMMIT;
   printf '%s\n' "$id"
 }
 
+# ---- the roll-up -------------------------------------------------------------------
+#
+# `guild goal rollup [GOAL-NNN]` — recompute goal and phase status from the requirements
+# beneath them.
+#
+# WHY THIS EXISTS. Stage 2 shipped `goal.status` and `phase.status` as columns only a
+# HUMAN could move (`guild goal move`, `guild phase move`), while the requirements under
+# them advance constantly through `guild move REQ-001 done`. Nothing connected the two, so
+# in practice nothing ever moved them: a goal whose every requirement was finished still
+# read `todo` on the brief's Direction section and on the dashboard's roadmap, forever.
+# A product reviewer called it the only element on either surface that is RELIABLY WRONG,
+# which is the worst kind of wrong — a status that is sometimes stale is read with
+# suspicion, a status that is always stale is read as truth by anyone who has not yet been
+# burned by it.
+#
+# THE RULE, in full:
+#
+#   a phase with at least one requirement
+#       done          every requirement is `done`
+#       in-progress   at least one requirement has left `todo`
+#       todo          otherwise
+#   a phase with NO requirements          UNTOUCHED
+#   a goal with at least one phase        the same three tests, over its phases
+#   a goal with NO phases                 UNTOUCHED
+#
+# CHILDLESS ROWS ARE LEFT ALONE, and that is the rule that makes this safe to run at any
+# time. An empty phase has no evidence of completion, so deriving one would be inventing
+# it — and a goal or phase that has not been decomposed yet is precisely where a human's
+# `guild goal move` is the only information there is. Deriving over it would silently
+# overwrite the guild master. The consequence is stated rather than hidden: a goal holding
+# one empty placeholder phase never reaches `done`, because one stage of it demonstrably
+# has nothing in it.
+#
+# IT MOVES BACKWARD TOO. A requirement reopened from `done` pulls its phase back to
+# `in-progress` and, through it, its goal. "Recompute from the requirements beneath" means
+# the status is a FUNCTION of the children, and a function that only ever increases is not
+# one — it is a high-water mark, and a high-water mark would report a goal as finished
+# while work under it was reopened. That is the same false-green this CLI refuses
+# elsewhere.
+#
+# IDEMPOTENT BY CONSTRUCTION: every statement carries `status <> (<computed>)`, so a
+# second run selects no rows, writes nothing, journals nothing and prints nothing.
+#
+# NO RECURSION, and this is where the temptation is strongest (§3.0: `WITH RECURSIVE`
+# FAILS on tursodb). The hierarchy is FIXED-DEPTH — requirement -> phase -> goal — so it
+# is two ordinary aggregate passes, in order, in one script. Phases are updated first and
+# the goal pass then reads the phase rows the previous statement just wrote, which is what
+# makes a single round trip enough for both levels.
+
+# cmd_goal_rollup [GOAL-NNN] — recompute status for every goal and phase, or for one goal
+# and its phases. Prints one line per CHANGE, and nothing at all when nothing moved:
+#
+#   PHASE-002 todo -> in-progress
+#   GOAL-001 todo -> in-progress
+#
+# ONE SCRIPT, ONE ROUND TRIP, SIX STATEMENTS, in this order — the order is the algorithm:
+#
+#   1. 'G'  existence probe            (scoped runs only)
+#   2. CHG  the phase changes, as text — SELECTED BEFORE THE UPDATE, because RETURNING
+#           yields the NEW row and there is no OLD.* in SQLite's RETURNING, so this is
+#           the only place the previous status still exists
+#   3.      the phase `event` rows     (payload carries both ends of each move)
+#   4.      UPDATE phase … RETURNING the resulting row, for the journal
+#   5-6.    the same three for goals, AFTER the phase update, so a goal is computed from
+#           the phase statuses this command just wrote and not from the stale ones
+#
+# THE MARKERS ARE PREFIX-STRIPPED WITH FIXED LITERALS (`CHG|`, `OK|phase|`, `OK|goal|`),
+# never with `${v%%|*}`: a row's JSON carries a title, a title can carry a pipe, and
+# `%%pat*` scans from the end and is O(n²) under bash 3.2 (rule 5). A constant-length
+# prefix compare has neither problem, and the table name is one of exactly two known
+# words, so it is matched as a literal rather than parsed out as a field.
+cmd_goal_rollup() {
+  local goal="${1-}" goallit probe pcalc gcalc pwhere gwhere
+  local now nowlit actorlit prow grow sql tmp line row out
+  [ $# -le 1 ] || die "guild: goal rollup takes at most one GOAL-ID"
+
+  goallit=""
+  probe=""
+  if [ -n "$goal" ]; then
+    [ "$(_dir_kind_of_id "$goal")" = "goal" ] || die "guild: $goal is not a goal id"
+    goallit="$(sql_text "$goal" 'the GOAL-ID argument')"
+    probe="SELECT 'G' FROM goal WHERE id = $goallit;
+"
+  fi
+
+  db_require_init
+  journal_preflight
+
+  now="$(db_now)"
+  nowlit="$(sql_str "$now")"
+  actorlit="$(sql_text "$(_art_actor)" "\$GUILD_ACTOR")"
+  prow="$(_art_json_row phase)"
+  grow="$(_art_json_row goal)"
+
+  # The computed status. Three branches, not four: the "no children" case is handled by
+  # the EXISTS guard in the WHERE below, so by the time these are evaluated the row is
+  # known to have at least one child and `no requirement is not done` means `all done`.
+  # An unrecognized child status (one replayed from a hand-edited journal) is not `done`
+  # and is not `todo`, so it reads as started — which is the safe direction: it can delay
+  # a `done`, never manufacture one.
+  pcalc="CASE
+         WHEN NOT EXISTS (SELECT 1 FROM requirement r WHERE r.phase_id = phase.id AND r.status <> 'done') THEN 'done'
+         WHEN EXISTS (SELECT 1 FROM requirement r WHERE r.phase_id = phase.id AND r.status <> 'todo') THEN 'in-progress'
+         ELSE 'todo' END"
+  gcalc="CASE
+         WHEN NOT EXISTS (SELECT 1 FROM phase p WHERE p.goal_id = goal.id AND p.status <> 'done') THEN 'done'
+         WHEN EXISTS (SELECT 1 FROM phase p WHERE p.goal_id = goal.id AND p.status <> 'todo') THEN 'in-progress'
+         ELSE 'todo' END"
+
+  pwhere="EXISTS (SELECT 1 FROM requirement r WHERE r.phase_id = phase.id)
+   AND phase.status <> ($pcalc)"
+  gwhere="EXISTS (SELECT 1 FROM phase p WHERE p.goal_id = goal.id)
+   AND goal.status <> ($gcalc)"
+  if [ -n "$goallit" ]; then
+    pwhere="$pwhere
+   AND phase.goal_id = $goallit"
+    gwhere="$gwhere
+   AND goal.id = $goallit"
+  fi
+
+  # Ids and stored statuses are `_render_col`-flattened on the CHG lines even though this
+  # CLI generates both: `guild rebuild` replays them from .guild/journal.ndjson, which
+  # lives in git, and a line somebody may `awk` must not depend on who wrote that file.
+  # The computed status needs no wrapper — it is one of three literals in this script.
+  sql="BEGIN;
+${probe}SELECT 'CHG|' || $(_render_col 'phase.id') || ' ' || $(_render_col 'phase.status') || ' -> ' || ($pcalc)
+FROM phase WHERE $pwhere;
+INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
+SELECT $nowlit, $actorlit, 'moved', 'phase', phase.id,
+       json_object('from', phase.status, 'to', ($pcalc), 'by', 'rollup')
+FROM phase WHERE $pwhere;
+UPDATE phase SET status = ($pcalc), updated_at = $nowlit
+WHERE $pwhere
+RETURNING 'OK|phase|' || $prow;
+SELECT 'CHG|' || $(_render_col 'goal.id') || ' ' || $(_render_col 'goal.status') || ' -> ' || ($gcalc)
+FROM goal WHERE $gwhere;
+INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
+SELECT $nowlit, $actorlit, 'moved', 'goal', goal.id,
+       json_object('from', goal.status, 'to', ($gcalc), 'by', 'rollup')
+FROM goal WHERE $gwhere;
+UPDATE goal SET status = ($gcalc), updated_at = $nowlit
+WHERE $gwhere
+RETURNING 'OK|goal|' || $grow;
+COMMIT;
+"
+
+  # Staged through a file, not a pipe, for `_render_query`'s reason: on the right of a
+  # pipe the loop below runs in a subshell, so a `die` inside it — and every
+  # `journal_append` failure path — would end that subshell and let the caller sail on
+  # reporting success.
+  tmp="$(_art_tmpfile)" || exit 1
+  if ! printf '%s' "$sql" | db_exec >"$tmp"; then
+    out="$(cat "$tmp" 2>/dev/null || true)"
+    rm -f "$tmp"
+    db_fail "could not roll up${goal:+ $goal}" "$out"
+  fi
+  if [ -n "$goallit" ] && [ "$(_art_first_line "$tmp")" != "G" ]; then
+    rm -f "$tmp"
+    die "guild: $goal not found"
+  fi
+
+  # A MALFORMED ROW IS FATAL, not skipped. The write has already committed by the time
+  # this loop runs, so a row this cannot journal is a mutation the journal does not carry
+  # — and `guild rebuild` would silently undo it. Saying so loudly is the only honest
+  # answer; `_art_update_run` refuses on the same shape for the same reason.
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      'CHG|'*)
+        printf '%s\n' "${line#CHG|}"
+        ;;
+      'OK|phase|'*)
+        row="${line#OK|phase|}"
+        _dir_rollup_journal phase "$row"
+        ;;
+      'OK|goal|'*)
+        row="${line#OK|goal|}"
+        _dir_rollup_journal goal "$row"
+        ;;
+    esac
+  done <"$tmp"
+  rm -f "$tmp"
+}
+
+# _dir_rollup_journal <table> <row-json> — journal one rolled-up row, or die naming what
+# the database returned instead. Split out of the loop above so the refusal is written
+# once for both tables rather than twice with room to disagree.
+_dir_rollup_journal() {
+  local table="${1-}" row="${2-}"
+  case "$row" in
+    '{'*'}') ;;
+    *)
+      die "guild: the roll-up changed a $table row the database then described unusably,
+so it could not be journaled.
+
+THE CHANGE IS COMMITTED and the journal does not carry it, which means 'guild rebuild'
+would undo it. Re-running the roll-up will NOT fix that — it recomputes, finds the status
+already correct, and writes nothing. Snapshot the live board as a new baseline instead:
+
+  guild goal list      # confirm the statuses are what you expect
+  guild journal compact"
+      ;;
+  esac
+  journal_append "$table" upsert "$row"
+}
+
 # ---- phase -------------------------------------------------------------------------
 
 # cmd_phase_new --goal GOAL-NNN --title T [--ordinal N] [--date YYYY-MM-DD]
@@ -841,6 +1046,7 @@ cmd_goal() {
     show) cmd_goal_show "$@" ;;
     move) cmd_goal_move "$@" ;;
     priority) cmd_goal_priority "$@" ;;
+    rollup) cmd_goal_rollup "$@" ;;
     '')
       die "guild: goal needs a subcommand
 
@@ -848,9 +1054,10 @@ cmd_goal() {
   guild goal list [todo|in-progress|done]
   guild goal show <GOAL-ID>
   guild goal move <GOAL-ID> todo|in-progress|done
-  guild goal priority <GOAL-ID> 1-5"
+  guild goal priority <GOAL-ID> 1-5
+  guild goal rollup [GOAL-ID]   Recompute goal/phase status from the requirements beneath"
       ;;
-    *) die "guild: unknown goal subcommand '$sub' (new|list|show|move|priority)" ;;
+    *) die "guild: unknown goal subcommand '$sub' (new|list|show|move|priority|rollup)" ;;
   esac
 }
 
