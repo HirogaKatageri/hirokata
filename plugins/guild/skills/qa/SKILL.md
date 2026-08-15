@@ -8,8 +8,9 @@ description: >
   end-to-end regression coverage. Seeds the guild's independent QA discipline:
   a qa-strategist maps the risk surface onto the board as coverage rows, then
   qa-testers run the app and author Playwright specs while filing defects as bug rows.
-version: 3.0.0
+version: 5.0.0
 user-invocable: true
+allowed-tools: Bash(tursodb *)
 arguments:
   - name: scope
     description: "What to QA — 'product' for a full pass, or a named area/flow (e.g. 'checkout')"
@@ -19,75 +20,96 @@ arguments:
     required: false
 ---
 
-# QA — Independent Quality Discipline
+# QA — independent quality discipline
 
-Seed a QA pass onto the guild board. QA is a **discipline that produces work**,
-not a step in the feature chain: the qa-strategist plans risk-based coverage, the
-qa-tester runs the actual product and authors end-to-end regression specs, and any
-defects are filed back as developer fix tasks, each paired with a re-verify
-qa-tester task that empirically confirms the fix.
+Seed a QA pass onto the guild board. QA is a **discipline that produces work**, not a step in
+the feature chain: the qa-strategist plans risk-based coverage, the qa-tester runs the actual
+product and authors end-to-end regression specs, and any defect is filed back as a developer fix
+task paired with a re-verify qa-tester task that empirically confirms the fix.
 
-**QA's two durable outputs are board rows.** The strategist writes the risk map as
-`coverage` rows (`guild coverage set`); the tester files defects as `bug` rows
-(`guild bug new`) and stamps the areas it drove (`guild coverage inspect`). That is what
-puts QA's work in `guild brief`, in the dashboard's Bugs and Coverage views, and in
-reach of a cadence. `.guild/qa/` still holds the charter, the missions, the session logs
-and the regression manifest — the thinking, not the records.
+**QA's two durable outputs are board rows.** The strategist writes the risk map as `coverage`
+rows; the tester files defects as `bug` rows and stamps the areas it drove. That is what puts
+QA's work in `v_brief`, in the dashboard's Bugs and Coverage views, and in reach of a cadence.
+`.guild/qa/` still holds the charter, the missions, the session logs and the regression
+manifest — the thinking, not the records.
 
-The discipline and artifact formats live in two reference skills the QA agents
-load automatically; consult them if you need detail while seeding:
+Three skills carry the detail; load what you need:
+- `guild:warehouse` — how to write SQL against the board at all. **Load it first.**
 - `guild:qa-mindset` — the discipline (pillars, what-if catalog, hybrid oracle)
-- `guild:qa-artifacts` — which output is a row, which is prose, and the fields for each
+- `guild:qa-artifacts` — which output is a row, which is prose, and the exact SQL for each
 
-## Step 1: Check for Guild
+## Step 1 — is there a guild
 
-Check for `.guild/config.yaml` (v5 has no `state.yaml`). If not found:
+```bash
+export PATH="$HOME/.turso:$PATH"
+DB=.guild/guild.db
+[ -f .guild/config.yaml ] || echo "no guild here"
+q() { printf '%s\n' "$1" | tursodb -q -m list "$DB"; }
+```
 
+`-m list`, always — the default `pretty` mode truncates long values with an ellipsis, and a
+clipped requirement body is a QA pass planned against the wrong oracle.
+
+Not found:
 ```
 No guild found. Run /guild:check-in to initialize first.
 ```
-
 Stop here.
 
-## Step 2: Ensure QA Workspace
-
-Create the QA artifact directories if absent (idempotent):
+## Step 2 — ensure the QA workspace
 
 ```bash
 mkdir -p .guild/qa/missions .guild/qa/sessions
 ```
 
-## Step 3: Resolve Scope and Mode
+## Step 3 — scope and mode
 
-Parse from `$ARGUMENTS` / user input:
-- **scope** — `product` (full pass) or a named area/flow. If absent, ask:
-  ```
-  What should QA cover? ("product" for a full pass, or a flow like "checkout")
-  ```
+- **scope** — `product` (a full pass) or a named area/flow. If absent, ask:
+  `What should QA cover? ("product" for a full pass, or a flow like "checkout")`
 - **mode** — `full` (default) or `cadence`.
 
-## Step 4: Ensure the QA Umbrella Requirement
+## Step 4 — the standing QA umbrella requirement
 
-Bind the CLI: `GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"`.
+QA tasks anchor to a requirement, and there is **one** evergreen umbrella reused across every
+pass. Look for it before creating it:
 
-QA tasks must anchor to a requirement. Reuse a single evergreen QA umbrella REQ
-across passes. Look for an existing one titled "Product QA & E2E Regression" by
-reading the ids from `"$GUILD" list req` and checking each with
-`"$GUILD" meta REQ-NNN title`.
+```sql
+SELECT id, status FROM requirement WHERE title = 'Product QA & E2E Regression';
+```
 
-If none exists, create it. **Write the whole document in the same call** — there is
-no requirement file to Edit afterwards, and Stage 1 has no writer for a requirement
-body after creation, so anything left out here stays out:
+If it exists, use that id and skip to Step 5. If not, create it — and **write the whole document
+in the one INSERT**. The body crosses as hex, because it contains `#`, `|` and lines that could
+end in `;`:
 
 ```bash
-REQ=$("$GUILD" new req --title "Product QA & E2E Regression" --date {today} --body "$(cat <<'DOC'
+hex=$(xxd -p < /tmp/qa-umbrella.md | tr -d '\n')       # never echo; never round-trip via $( )
+```
+
+```sql
+PRAGMA foreign_keys = ON;
+UPDATE guild_state SET value = 'orchestrator' WHERE key = 'actor';
+
+INSERT INTO requirement (id, phase_id, title, body, status, priority, created_at, updated_at)
+SELECT 'REQ-' || printf('%03d', COALESCE(MAX(CAST(substr(id, instr(id,'-')+1) AS INTEGER)), 0) + 1),
+       NULL, 'Product QA & E2E Regression', CAST(x'<hex-body>' AS TEXT), 'in-progress', 3,
+       strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')
+  FROM requirement
+RETURNING id, status;
+```
+
+It opens `in-progress` and **stays there forever** — it is standing work, not a feature, and it
+is deliberately never included in a release. `phase_id` is NULL: QA is not a stage of anything.
+
+The umbrella's body, for reference:
+
+```markdown
 # Product QA & E2E Regression
 
 ## Summary
 
-Umbrella for the guild's independent QA discipline: risk-based coverage planning,
-empirical testing of the running product, end-to-end regression specs, and bug
-findings. Standing — not tied to a single feature.
+Umbrella for the guild's independent QA discipline: risk-based coverage planning, empirical
+testing of the running product, end-to-end regression specs, and defect findings. Standing —
+not tied to a single feature.
 
 ## User Stories
 
@@ -96,8 +118,8 @@ findings. Standing — not tied to a single feature.
 **So that** a regression in something that matters is caught before release.
 
 ### US-2: Committed e2e regression
-**As a** maintainer **I want** e2e specs committed to the project's test dir and run
-in CI **So that** the suite keeps working without a QA pass.
+**As a** maintainer **I want** e2e specs committed to the project's test dir and run in CI
+**So that** the suite keeps working without a QA pass.
 
 ## Technical Considerations
 
@@ -108,122 +130,163 @@ in CI **So that** the suite keeps working without a QA pass.
 ## Out of Scope
 
 - Unit and integration tests — owned by `test-writer`, planned by `test-planner`.
-DOC
-)")
-"$GUILD" move "$REQ" in-progress   # the umbrella is standing/evergreen
 ```
 
-There is no `status` field to edit — status is a column, and only `guild move` sets it.
+## Step 5 — seed the strategist ticket
 
-## Step 5: Seed the QA Strategist Task
+One ticket, whole body in the one INSERT — there is no ticket file to edit afterwards, and
+anything you leave out stays out.
 
-Create the strategist task with the CLI, **passing the whole ticket body in the same
-call**. There is no task file to Edit afterwards:
+```sql
+INSERT INTO task (id, requirement_id, title, objective, body, status, priority, agent,
+                  created_at, updated_at)
+SELECT 'TASK-' || printf('%03d', (SELECT COALESCE(MAX(CAST(substr(id, instr(id,'-')+1) AS INTEGER)),0)+1 FROM task)),
+       r.id, CAST(x'<hex-title>' AS TEXT), CAST(x'<hex-objective>' AS TEXT),
+       CAST(x'<hex-body>' AS TEXT), 'todo', 2, NULL,
+       strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')
+  FROM requirement r WHERE r.id = 'REQ-004'
+RETURNING id, status;
+```
 
-```bash
-TASK=$("$GUILD" new task --title "QA strategy: {scope}" --agent qa-strategist \
-  --req "$REQ" --date {today} --body "$(cat <<'DOC'
+The `FROM requirement r WHERE r.id = …` **is** the referential check: a bad requirement id
+returns zero rows and writes nothing, which matters because a failing statement does not stop
+the script.
+
+Declare the capability rather than pinning the agent — that is what lets the matcher work and
+what makes a roster gap visible if the qa-strategist is ever missing:
+
+```sql
+INSERT INTO task_capability (task_id, capability, required)
+SELECT t.id, 'qa-planning', 1 FROM task t WHERE t.id = 'TASK-042'
+ON CONFLICT DO NOTHING;
+```
+
+Ticket body:
+
+```markdown
 ## Objective
 
-Plan a {mode} QA pass for: {scope}. Map the risk surface onto the board as `coverage`
-rows, write the charter, then create the qa-tester mission tickets.
+Plan a {mode} QA pass for: {scope}. Map the risk surface onto the board as `coverage` rows,
+write the charter, then create the qa-tester mission tickets.
 
 ## Context
 
 - Requirement: {REQ id}
 - Mode: {full | cadence}
 - Scope: {product | named area}
-- Existing risk surface: `guild coverage list` (upsert into it; do not fork new ids)
+- Existing risk surface: `SELECT id, area, risk, spec_path FROM coverage ORDER BY id`
+  (upsert into it — never fork a new id for an area that already has one)
 - Charter: .guild/qa/charter.md (create or update in place)
 
 ## Acceptance Criteria
 
 - [ ] Oracle sources resolved (specs / board / code+app / user)
-- [ ] One `guild coverage set` row per quality area, with risk, spec path and reasoning
+- [ ] One `coverage` row per quality area, with risk, spec path and reasoning
 - [ ] Charter written with the quality definition and the oracle ledger
-- [ ] qa-tester mission tickets created, prioritized by what `coverage list --due` returns
-DOC
-)")
+- [ ] qa-tester mission tickets created, prioritized by what `v_coverage_due` returns
 ```
 
-`--body` replaces the ticket template outright, so what you write is exactly what
-`guild read "$TASK"` renders. Do NOT include a `## Work Log` or `## Follow-up Tasks`
-heading — those are rendered from the board, and the CLI refuses a body containing
-them.
+Then check the words you used are real, because an unknown capability inserts fine and matches
+nobody, silently, forever:
 
-The task is a row with `status = 'todo'` and is discoverable by `"$GUILD" next`.
+```sql
+SELECT side, owner, capability FROM v_capability_unknown;
+```
 
-## Step 6: Confirm and Offer to Run
+## Step 6 — confirm and offer to run
 
 ```
 QA pass seeded.
 
   Requirement: REQ-NNN — Product QA & E2E Regression
-  Task: TASK-NNN — QA strategy: {scope} (qa-strategist)
+  Task: TASK-NNN — QA strategy: {scope} (qa-planning)
   Mode: {full | cadence}
 
-The strategist will map risk and declare tester missions; testers then run the
-app, author e2e specs, and file any bugs as developer fix tasks.
+The strategist will map risk and declare tester missions; testers then run the app,
+author e2e specs, and file any bugs as developer fix tasks.
 
 Run /guild:check-in to execute now, or I can start the work cycle for you.
 ```
 
-If the user wants to proceed immediately, hand off to `guild:check-in`'s work
-cycle (Step 4 of that skill) — the QA tasks dispatch like any other agent.
+If they want to proceed immediately, hand off to `guild:check-in`'s work cycle — QA tickets
+dispatch like any other.
 
-## How QA Flows Through the Existing Orchestrator
+## How QA flows through the orchestrator
 
-QA reuses all existing orchestration — no special-casing needed:
+QA reuses all existing orchestration; nothing is special-cased.
 
-1. `qa-strategist` runs → declares `qa-tester` missions as follow-ups.
-2. The orchestrator dispatches `qa-tester` tasks **sequentially — one at a time,
-   never in parallel** (each tester drives its own dev server + Playwright, so
-   concurrent testers would collide on the same port).
-3. Each `qa-tester` runs the app, authors specs, files each defect with
-   `guild bug new`, stamps the areas it drove with `guild coverage inspect`, and for
-   every bug declares a **pair** of follow-ups: a `developer` fix task, then a re-verify
-   `qa-tester` task (declared second → higher ID → the cursor runs fix, then re-verify).
-4. The re-verify qa-tester IS the verification tail for QA fixes: it empirically
-   confirms the fix, promotes the spec from `fixme` to passing, and closes the bug with
-   `guild bug close`. QA fixes do not get test-writer/reviewer tickets — a reviewer on
-   the standing QA umbrella REQ would be gated behind every other pending QA task.
+1. `qa-strategist` runs → declares `qa-tester` missions as follow-up tickets.
+2. The orchestrator dispatches `qa-tester` tickets **sequentially — one at a time, never in
+   parallel.** Each tester drives its own dev server and Playwright instance, so concurrent
+   testers collide on the same port. The schema says this too: `agent.serial = 1` on qa-tester.
+   Honor it — nothing enforces it.
+3. Each tester runs the app, authors specs, files each defect as a `bug` row, stamps the areas
+   it genuinely drove (`coverage.last_inspected_at`), and for every bug declares a **pair** of
+   follow-ups: a `developer` fix ticket, then a re-verify `qa-tester` ticket. Declared in that
+   order, so the second gets the higher id and the cursor runs fix, then re-verify. Wire the
+   order explicitly rather than trusting id order:
 
-After a pass, everything QA produced is queryable without opening a file:
-`guild bug list open`, `guild coverage list --due`, `guild brief`, `guild dashboard`.
+   ```sql
+   INSERT INTO task_dependency (task_id, depends_on)
+   SELECT 'TASK-051', 'TASK-050'
+    WHERE EXISTS (SELECT 1 FROM task WHERE id = 'TASK-051')
+      AND EXISTS (SELECT 1 FROM task WHERE id = 'TASK-050')
+   RETURNING task_id || ' after ' || depends_on;
+   ```
+4. The re-verify qa-tester **is** the verification tail for QA fixes: it empirically confirms the
+   fix, promotes the spec from `fixme` to passing, and closes the bug:
 
-## Standing Cadence (opt-in, per project)
+   ```sql
+   UPDATE bug SET status = 'fixed' WHERE id = 'BUG-014' AND status IN ('open','fixing')
+   RETURNING id, status;
+   ```
 
-QA can run on a schedule so quality is checked continuously, not just on demand.
-This is **opt-in per project** — it does not auto-arm.
+   QA fixes get no test-writer or reviewer tickets — a reviewer on the standing umbrella would
+   be gated behind every other pending QA ticket, forever.
 
-To arm it, schedule a periodic invocation of this skill in `cadence` mode using
-your scheduler of choice — e.g. the `/schedule` skill (cloud routine) or `/loop`
-for an in-session cadence:
+After a pass, everything QA produced is one query away:
+
+```sql
+SELECT id, severity, status, found_by, requirement_id, fix_task_id, title FROM v_open_bugs;
+SELECT id, risk, interval_days, days_since, spec_path, area FROM v_coverage_due;
+SELECT fact, value FROM v_brief;
+```
+
+## Standing cadence — opt-in, per project
+
+QA can run on a schedule so quality is checked continuously. **Opt-in per project**; it does not
+auto-arm, and a shift never starts one.
 
 ```
 /schedule create "weekly product QA" --cron "0 9 * * 1" --prompt "/guild:qa product cadence"
 ```
 
-A `cadence` pass differs from a full pass: the strategist skips full re-planning and
-asks the board what is due —
+A `cadence` pass skips full re-planning and asks the board what is due:
 
-```bash
-"$GUILD" coverage list --due    # never inspected, or stale for its risk level
+```sql
+SELECT id, area, risk, interval_days, days_since, spec_path FROM v_coverage_due;
 ```
 
-— then declares a single qa-tester mission that (a) runs the existing regression suite
-from `.guild/qa/regression.md`, and (b) does a focused exploratory pass on exactly those
-areas, filing anything new it finds. This keeps the suite green and extends coverage over
-time without rebuilding the charter. **If nothing is due, the pass ends there** — that is
-the cadence working, not failing.
+`days_since` is **NULL for an area nobody has ever inspected** — that is not "0 days ago", and
+reporting it as such lies about the state of the product.
+
+The strategist then declares a single qa-tester mission that (a) runs the existing regression
+suite from `.guild/qa/regression.md`, and (b) does a focused exploratory pass on exactly those
+areas, filing anything new it finds. **If nothing is due, the pass ends there** — that is the
+cadence working, not failing.
 
 ## Rules
 
 - **Never overwrite** the charter or the regression manifest — update in place.
-- **Defects are `bug` rows, not markdown.** There is no `.guild/qa/ledger.md` in v5.
-- **The risk map is `coverage` rows, not a charter table.** One id per area, upserted.
-- **IDs are derived by the CLI** — never hand-assign or maintain counters.
-- **Status is a column**, and only `guild move` sets it. There is no status field to edit.
+- **Defects are `bug` rows**, not markdown. There is no `.guild/qa/ledger.md`.
+- **The risk map is `coverage` rows**, not a charter table. One id per area, upserted.
+- **IDs are derived in the INSERT** — `MAX(n) + 1` in the same statement, never a counter you
+  keep, never a read-then-write.
+- **Status is a column.** Move it with a guarded `UPDATE … WHERE status = <expected>
+  RETURNING`; zero rows back means somebody already moved it, which is information.
 - **Committed specs live in the repo's e2e dir**, never under `.guild/`.
-- **Don't bake in bugs** — suspect behavior is filed or asked, never asserted as
-  correct (the hybrid oracle rule).
+- **Only stamp `last_inspected_at` for an area actually exercised.** The stamp is a claim, and a
+  trigger fires on that column alone so re-saving risk or notes must not make a stale area read
+  as fresh.
+- **Don't bake in bugs** — suspect behavior is filed or asked, never asserted as correct (the
+  hybrid oracle rule).

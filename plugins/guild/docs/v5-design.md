@@ -1,8 +1,52 @@
 # Guild v5 — Design Document
 
-**Status:** Proposal, for review
+> ## ⚠️ HISTORICAL DOCUMENT — read this header first
+>
+> **This document describes the v5 CLI implementation, which no longer exists.** v6 deleted
+> `scripts/` — the 31,348-line bash CLI, all 17 lib modules and the test harness — and replaced it
+> with **schema plus knowledge**: `tursodb` is the tool, guild members write their own SQL, and the
+> guild's rules live in `schema.sql` as CHECK constraints, views and triggers. See
+> [`v6-architecture.md`](./v6-architecture.md).
+>
+> **This file is kept deliberately.** It is the record of how the data model and the rules were
+> reasoned out, and that reasoning is still in force — v6 inherited the model wholesale and changed
+> only what enforces it.
+>
+> ### Still authoritative
+>
+> | Section | Why it still holds |
+> |---------|--------------------|
+> | **§3 Schema**, especially **§3.2 DDL** and **§3.3 IDs** | The tables, columns and relationships are the ones in `schema.sql` today. v6 added CHECK constraints, views and triggers on top; it removed nothing. |
+> | **§3.0 Portability rule** | The tursodb constraints (no `WITH RECURSIVE`, no FTS5, STRICT types) are engine facts, not CLI facts. |
+> | **§5 Capabilities and bounties** | The roster, the capability vocabulary and the deterministic matcher are `v_agent_match` now, with the same rules. |
+> | **§6 The execution graph** | The templates, the two gates, deviation and the segment/gate boundary are unchanged. Templates are now markdown under `skills/warehouse/references/templates/`. |
+> | **§8 Unattended operation** | The shift's policy, budget, stop conditions and git safety are the design `guild:shift` implements. |
+> | **§9 The dashboard**, **§10 Skills and agents**, **§12 Risks** | Unchanged in intent. |
+>
+> ### Historical only — describes code that is gone
+>
+> | Section | What replaced it |
+> |---------|------------------|
+> | **§2.2 The driver layer** (and §2.2.1, §2.2.2) | There is no driver. Members call `tursodb` directly. **The hex-encoding rule in §2.2.1 survives as a rule members follow themselves** — see `skills/warehouse/references/tursodb-gotchas.md`. |
+> | **§2.3 Durability: the journal and the export** | **There is no journal.** `event`, written by triggers, is the record, and `guild.db` is the durable board rather than derived state. |
+> | **§4 The CLI** | Deleted entirely. The canonical queries it encoded are now `skills/warehouse/references/queries.md` and the views in `schema.sql`. |
+> | **§11 Migration from v4** | The `guild init` migration path does not exist; `guild:check-in` handles a v4 board by offering to move it aside. |
+> | **§13 Rollout** (the five stages) | Completed under v5, then superseded. |
+>
+> ### One warning about enforcement
+>
+> Wherever this document says the CLI *refuses*, *validates* or *guards* something, **assume it no
+> longer does** unless `schema.sql` expresses it as a CHECK, a view or a trigger. Several rules —
+> most importantly "the orchestrator owns every status transition" — are conventions again. v6's
+> `schema.sql` header and `README.md` both list them explicitly. Do not read a v5 guarantee here and
+> assume it is live.
+
+---
+
+**Status:** Proposal, for review — *superseded by v6*
 **Author:** drafted with Claude, 2026-08-13
 **Supersedes:** guild v4.0.0 (directory-encoded board, hardcoded agent chain)
+**Superseded by:** [`v6-architecture.md`](./v6-architecture.md) — the CLI this document specifies was deleted
 **Breaking:** yes — v5.0.0
 
 ---

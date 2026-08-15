@@ -19,12 +19,24 @@ Orchestrates five specialized review agents in parallel to provide a complete, m
 
 ### Step 1: Identify Review Scope
 
-1. **Find requirements documents** — check the guild board first: if `.guild/` exists, read the
-   relevant requirement and plan through the CLI — the board is a database, not a directory tree:
-   `"${CLAUDE_PLUGIN_ROOT}/scripts/guild" list req`, then `guild read REQ-NNN` and
-   `guild read PLAN-NNN` for the feature being reviewed. Otherwise
-   fall back to `requirements/`, `docs/`, `planning/`, or phase plan files. If none found, ask the
-   user.
+1. **Find requirements documents** — check the guild board first. If `.guild/config.yaml` exists,
+   the board is a database, not a directory tree; read it with SQL (load `guild:warehouse` for
+   the rules, notably that a body comes back byte-exact only when it is the **one** column you
+   select):
+
+   ```bash
+   export PATH="$HOME/.turso:$PATH"
+   printf "SELECT id, status, title FROM requirement ORDER BY id;\n" | tursodb -q -m list .guild/guild.db
+   printf "SELECT body FROM requirement WHERE id = 'REQ-007';\n" | tursodb -q -m list .guild/guild.db
+   printf "SELECT body FROM plan WHERE requirement_id = 'REQ-007';\n" | tursodb -q -m list .guild/guild.db
+   ```
+
+   Keep `-m list` even for a single column: the default `pretty` mode draws a box and
+   **truncates long values with an ellipsis**, which would silently hand you a clipped
+   requirement to review against.
+
+   Otherwise fall back to `requirements/`, `docs/`, `planning/`, or phase plan files. If none
+   found, ask the user.
 2. **Identify recent changes** — use `git log` and `git diff` to understand scope
 3. **Confirm scope** — if unclear which requirements or commits to include, ask
 

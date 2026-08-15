@@ -4,123 +4,213 @@ description: >
   This skill should be used when the user asks to "clear the board", "reset the guild",
   "start fresh", "wipe the board", "clear all tasks", "reset the board", or wants to
   remove all current work from the guild board and start over.
-version: 2.0.0
+version: 5.0.0
 user-invocable: true
+allowed-tools: Bash(tursodb *)
 ---
 
-# Clear Board — Reset the Guild
+# Clear Board — reset the guild
 
-Reset the guild board to a clean state.
+Delete every unit of work from the guild board, keeping the things that outlive a board:
+the roster, the library, the quality map, and the guild's memory.
 
-> **In guild v5 this is not possible, and this skill says so instead of pretending.** The board is
-> a database and Stage 1 ships no `guild clear` / `guild delete`. The steps below inventory the
-> board, then Step 4 explains the situation and offers the options that DO work. Nothing is
-> deleted. See Step 4 for why a silent no-op would be the worse outcome.
+**This is genuinely destructive and there is no undo.** The v4 file tree and the v5 CLI's
+replayable journal are both gone; the board is one SQLite file and a `DELETE` is final. Back it
+up first — that is step 2, and it is not optional.
 
-Bind the guild CLI once and reuse it for all inventory/recreate operations:
+Load `guild:warehouse` first. Every statement here is raw SQL and the six rules apply.
+
+## Step 1 — is there a board
+
 ```bash
-GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
+export PATH="$HOME/.turso:$PATH"
+[ -f .guild/config.yaml ] || echo "no guild here"
 ```
 
-## Steps
+Run every query on this page with `-m list`. The default `pretty` mode draws a box and
+**truncates long values with an ellipsis**, which would make an inventory undercount nothing but
+would quietly clip any title or reason you show the user before they type `yes`.
 
-### 1. Check for Guild
-
-Check for `.guild/config.yaml` — that is what marks a v5 guild (there is no `state.yaml`).
-
-If not found:
+Not found:
 ```
 No guild board found. Nothing to clear.
 Run /guild:check-in to initialize a new guild.
 ```
 Stop here.
 
-### 2. Inventory the Board
+## Step 2 — inventory, and what survives
 
-Count items via the CLI — status is a column, so never scan the filesystem:
-- Requirements: `"$GUILD" list req`
-- Tasks in progress: `"$GUILD" list task in-progress`
-- Tasks in backlog: `"$GUILD" list task todo`
-- Completed tasks: `"$GUILD" list task done`
-- Plans: `"$GUILD" list plan`
+One query, and it is also the thing you show the user:
 
-Each `list` prints one `<ID> <status>` line per artifact; count the lines.
-
-### 3. Confirm with User
-
-Present the current state and ask for confirmation:
-
-```
-Current board state:
-  {N} requirement(s)
-  {N} task(s) in progress
-  {N} task(s) in backlog
-  {N} task(s) completed
-  {N} plan(s)
-
-Heads up: guild v5 has no delete command, so I cannot actually clear this.
-Shall I show you the options that do work? (yes / no)
+```sql
+SELECT 'goals',        COUNT(*) FROM goal
+UNION ALL SELECT 'phases',       COUNT(*) FROM phase
+UNION ALL SELECT 'requirements', COUNT(*) FROM requirement
+UNION ALL SELECT 'plans',        COUNT(*) FROM plan
+UNION ALL SELECT 'tasks',        COUNT(*) FROM task
+UNION ALL SELECT 'tasks_open',   COUNT(*) FROM task WHERE status IN ('todo','in-progress')
+UNION ALL SELECT 'graph_nodes',  COUNT(*) FROM graph_node
+UNION ALL SELECT 'bugs_open',    COUNT(*) FROM bug WHERE status IN ('open','fixing')
+UNION ALL SELECT 'work_log',     COUNT(*) FROM work_log
+UNION ALL SELECT 'findings',     COUNT(*) FROM review_finding
+UNION ALL SELECT 'events',       COUNT(*) FROM event
+UNION ALL SELECT 'KEEP:agents',  COUNT(*) FROM agent
+UNION ALL SELECT 'KEEP:coverage',COUNT(*) FROM coverage
+UNION ALL SELECT 'KEEP:docs',    COUNT(*) FROM doc;
 ```
 
-**Do not promise deletion here.** The v4 wording ("This will permanently delete all requirements,
-tasks, and plans") is what made the old no-op dangerous: the user consented to destruction, nothing
-happened, and the skill reported success.
+If every countable row is 0, say `The guild board is already empty — nothing to clear.` and stop.
 
-If the board is already empty (all counts are 0):
-```
-The guild board is already empty — nothing to clear.
-```
-Stop here.
+**What a clear deletes:** `goal`, `phase`, `requirement`, `plan`, `plan_slice`, `task`,
+`task_dependency`, `task_capability`, `graph_node`, `graph_edge`, `graph_deviation`, `gate`,
+`work_log`, `review_finding`, `bug`, `capability_request`, `inspection`, `inspection_coverage`,
+and the `graph-template:REQ-NNN` keys in `guild_state`.
 
-**If "no"** or anything other than an explicit confirmation: Stop without making any changes.
+**What survives, and why:**
 
-**If "yes"**: Proceed to step 4.
+| Kept | Because |
+|---|---|
+| `agent` · `agent_capability` | the roster is the guild, not the board. Retire a member with `active = 0`, never DELETE |
+| `coverage` | evergreen. It describes the **product**, and the product did not go away |
+| `doc` | the library. Knowledge the guild looked up once and should not look up again |
+| `event` | the guild's memory. Deleting it is a separate, louder decision — see Step 5 |
+| `guild_state` (except `graph-template:*`) | `actor` and `last-checkin` are board plumbing |
+| `.guild/docs/` · `.guild/qa/` on disk | evergreen for exactly the same reasons as `doc` and `coverage` |
 
-### 4. Clear the Board — NOT AVAILABLE IN v5
+## Step 3 — back up, then confirm
 
-> **STOP. There is no way to clear the board in v5, and this skill must not pretend otherwise.**
->
-> v4 stored the board as files, so clearing it was `rm -rf .guild/requirements/* ...`. In v5 the
-> board is a database and those directories do not exist: that `rm` matches nothing, `guild init`
-> is idempotent and inserts nothing, and the user — who was just told "this will permanently
-> delete all requirements, tasks, and plans" and typed yes — would be left with an untouched board
-> and a success message. Silently doing nothing after a destructive confirmation is worse than
-> refusing.
->
-> Stage 1 ships no `guild clear` and no `guild delete`. Adding one is pending a later stage.
+**Take the backup before you ask, not after they answer.** A confirmed clear against a board with
+no backup is the one outcome nobody can walk back.
 
-Tell the user exactly this, and stop:
-
-```
-I can't clear the board — the guild v5 CLI has no delete command yet.
-
-The board is a database now (.guild/guild.db), and it is rebuilt from
-.guild/journal.ndjson, which is committed to git. Nothing was changed.
-
-Your options today:
-  1. Leave it — completed requirements sit at `done` and don't block anything;
-     `guild next` only ever looks at open tasks.
-  2. Move open work out of the way instead:
-       guild move TASK-NNN failed     (user-adjudicated; stops gating the review)
-  3. Start a genuinely fresh board in a new directory:
-       GUILD_DIR=.guild-next guild init {today's date}
-     The old one stays intact, in git, for as long as you want it.
-
-A real `guild clear` is pending a later stage.
+```bash
+cp .guild/guild.db ".guild/guild.db.bak-$(date -u +%Y%m%dT%H%M%SZ)"
+ls -la .guild/guild.db.bak-*
 ```
 
-Do NOT run `rm -rf` against `.guild/`, and do NOT delete `.guild/guild.db` or
-`.guild/journal.ndjson`. The journal is the only record of the board's history that git carries;
-deleting it is unrecoverable, and deleting the database alone just means the next command has to
-`guild rebuild`.
+Then present the inventory and ask, in these words — say what is destroyed **and** what is kept,
+because a user who thinks their QA coverage map is about to go will answer the wrong question:
+
+```
+Current board:
+  {N} requirement(s), {N} plan(s), {N} task(s) ({N} still open)
+  {N} graph node(s), {N} work-log entries, {N} review finding(s), {N} open bug(s)
+
+This DELETES all of it, permanently. There is no undo.
+
+Kept: the agent roster, the coverage map, the doc library, and the event feed.
+Backed up first: .guild/guild.db.bak-{stamp}
+
+Clear the board? (yes / no)
+```
+
+Anything other than an explicit `yes` → stop, change nothing, and say the backup is still there
+to delete if they want.
+
+## Step 4 — the clear
+
+**The order is load-bearing.** With `PRAGMA foreign_keys = ON` a parent cannot go before its
+children, and two pairs of tables reference each other — `plan.task_id ↔ task.plan_id`, and
+`review_finding`/`bug` both point at a repair task. Those three references get nulled first;
+everything after that is a straight child-to-parent sweep.
+
+```sql
+PRAGMA foreign_keys = ON;
+UPDATE guild_state SET value = 'orchestrator' WHERE key = 'actor';
+
+-- break the two reference cycles first
+UPDATE plan           SET task_id     = NULL;
+UPDATE review_finding SET fix_task_id = NULL;
+UPDATE bug            SET fix_task_id = NULL;
+
+-- the execution graph
+DELETE FROM gate;
+DELETE FROM graph_edge;
+DELETE FROM graph_node;
+DELETE FROM graph_deviation;
+
+-- the records
+DELETE FROM work_log;
+DELETE FROM review_finding;
+DELETE FROM bug;
+
+-- the work
+DELETE FROM task_capability;
+DELETE FROM task_dependency;
+DELETE FROM task;
+DELETE FROM plan_slice;
+DELETE FROM plan;
+DELETE FROM capability_request;
+
+-- maintenance runs (the coverage rows they point at STAY)
+DELETE FROM inspection_coverage;
+DELETE FROM inspection;
+
+-- direction
+DELETE FROM requirement;
+DELETE FROM phase;
+DELETE FROM goal;
+
+-- the per-requirement template keys; `actor` and `last-checkin` stay
+DELETE FROM guild_state WHERE key LIKE 'graph-template:%';
+
+SELECT 'left', (SELECT COUNT(*) FROM task), (SELECT COUNT(*) FROM requirement),
+               (SELECT COUNT(*) FROM graph_node), (SELECT COUNT(*) FROM agent),
+               (SELECT COUNT(*) FROM coverage), (SELECT COUNT(*) FROM doc);
+```
+
+**Verify with that last SELECT and report what it actually says.** A failing statement does not
+stop a tursodb script and the errors arrive on *stdout*, so "no error scrolled past" proves
+nothing. The three work counts must be 0 and the three kept counts must be unchanged. If a
+`FOREIGN KEY constraint failed` line came back, some table you did not expect still points at a
+row — name it, stop, and do not start improvising deletes.
+
+The deletes each fire a trigger that writes an `event` row, so the clear is itself in the record.
+That is deliberate: a board that vanished with no trace is indistinguishable from a corrupted one.
+
+## Step 5 — the event feed, only if they ask again
+
+`event` is **not** cleared by Step 4. It is the guild's memory, its rows now name subjects that
+no longer exist, and that is fine — `v_recent_activity` resolves a missing title to `''`.
+
+If the user explicitly wants the memory gone too, ask a **second** time, in its own breath, and
+say what it costs: the shift history, every status transition the guild ever made, and the
+`last-checkin` window that `guild:brief` narrates from.
+
+```sql
+DELETE FROM event;
+UPDATE guild_state SET value = 'null' WHERE key = 'last-checkin';
+```
+
+Never fold this into Step 4's confirmation. One `yes` must not destroy two different things.
+
+## Step 6 — report
+
+```
+Board cleared.
+
+  Deleted: {N} requirement(s), {N} plan(s), {N} task(s), {N} graph node(s),
+           {N} work-log entries, {N} finding(s), {N} bug(s)
+  Kept:    {N} agent(s), {N} coverage area(s), {N} doc(s), {N} event(s)
+  Backup:  .guild/guild.db.bak-{stamp}
+
+IDs are derived as MAX(n) + 1 and are never reused, so the next requirement is
+REQ-001 again on an emptied board — but any ID in git history or in .guild/qa/
+now points at nothing. Delete the backup when you are sure.
+```
 
 ## Rules
 
-- **Never claim to have cleared anything** — Step 4 refuses; there is no delete command in v5.
-- **Never `rm -rf` inside `.guild/`** — `journal.ndjson` is the only board history git carries and
-  its loss is unrecoverable; `guild.db` is derived, but deleting it just forces a `guild rebuild`.
-- **Never clear `.guild/docs/` or `.guild/qa/`** — the knowledge base and the QA discipline's
-  artifacts are evergreen and survive everything.
-- **A fresh board is a fresh `GUILD_DIR`** — `GUILD_DIR=.guild-next guild init {today}` gives the
-  user a genuinely empty board without destroying the old one.
-- **No counters to reset** — IDs are derived in SQL as `MAX(n) + 1` and are never reused.
+- **Back up before you ask.** `cp .guild/guild.db .guild/guild.db.bak-<stamp>` is the only undo
+  there is; there is no journal to replay any more.
+- **Never `rm -rf` inside `.guild/`.** The clear is SQL. `.guild/docs/`, `.guild/qa/` and
+  `.guild/reviews/` are evergreen and a shell glob does not know that.
+- **Never `DELETE FROM agent`.** Retire with `active = 0`. A done task from months ago may still
+  name a member whose file is gone, and deleting either breaks the foreign key or orphans the
+  history that explains the board.
+- **Never delete `coverage` or `doc`.** They describe the product and the guild's knowledge, both
+  of which survive any number of boards.
+- **`event` is a separate question**, asked separately, answered separately.
+- **Verify by reading the counts back**, not by the absence of an error message.
+- **A fresh board can also be a fresh file** — `GUILD_DIR=.guild-next` with the schema applied to
+  a new `guild.db` gives a genuinely empty board and leaves the old one intact. Offer it to
+  anyone who hesitates at Step 3.

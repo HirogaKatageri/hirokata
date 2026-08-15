@@ -12,14 +12,13 @@ user-invocable: true
 # guild-status → guild:brief
 
 This skill was rebuilt as **`guild:brief`** in v5 (design §10). v4's status was "list the
-directories"; `guild brief` is one query that answers direction, what is in flight, what is
-blocked, what moved since the last check-in, open bugs, coverage due for inspection, and
-what to do next.
+directories"; the brief is one query — `SELECT fact, value FROM v_brief` — that answers
+direction, what is in flight, what is blocked, what moved since the last check-in, open bugs,
+coverage due for inspection, and what to do next.
 
-**Do this now:** load the `guild:brief` skill and follow it. Do not re-implement it here,
-and do not run `guild board` as a substitute — `board` is still a real command and still
-correct, but it shows tasks and requirements only, which is the narrower view this skill
-used to offer.
+**Do this now:** load the `guild:brief` skill and follow it. Do not re-implement it here, and do
+not substitute `SELECT * FROM v_board` — the board view is correct and is part of what the brief
+reads, but on its own it shows tasks only, which is the narrower view this skill used to offer.
 
 Mention the new name once, in passing, so the next invocation goes straight there:
 

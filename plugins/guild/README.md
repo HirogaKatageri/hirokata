@@ -1,842 +1,352 @@
 # Guild Plugin
 
-A Claude Code plugin for continuous agent orchestration through a persistent, database-backed work cycle.
+**A schema and a set of skills.** The guild runs a roster of agents against a board that lives in
+one SQLite database, and the guild's rules live *in that database* — as CHECK constraints, views and
+triggers — rather than in a program that wraps it.
 
-**Status: v5.0.0 — all five stages of the v5 design are shipped.** Storage, visibility, the
-roster, the execution graph with its two gates, and unattended shifts with git safety. Read
-[Status: what is verified, and what is not](#status-what-is-verified-and-what-is-not) before
-you rely on any of it — the five stages did **not** get equal scrutiny, and this README says
-which is which rather than presenting the whole as equally proven.
+There is no guild CLI. `tursodb` is already a tool that executes SQL, so the guild does not ship a
+second one. Every member reaches the board the same way: they load the `guild:warehouse` skill and
+write SQL.
+
+> **v6 is a fresh rewrite.** The v5 CLI it replaces had four adversarial review rounds and a
+> 2,278-check suite behind it. **None of that confidence carries over**, because none of that code
+> exists any more. Read [Status](#status-what-is-verified-and-what-is-not) before you trust this.
+
+---
 
 ## Overview
 
-The **guild** plugin manages an ongoing development workflow on a **Turso database** at
-`.guild/guild.db`. There is no `BOARD.md`, no ticket file, no `state.yaml` and no status
-subdirectory: an artifact's **status is a column**, and the "board" is a live view rendered on
-demand from SQL. A dependency-free **`scripts/guild` CLI** performs every deterministic operation —
-skills and agents shell out to it instead of hand-rolling SQL, `find`/`mv` or ID arithmetic. Each
-work session starts with a check-in: the orchestrator opens with `guild brief`, gathers input, and
-asks `guild segment REQ-NNN` what runs next — dispatching one batch at a time to specialized
-agents, recording both halves of every result, and stopping at the requirement's next gate. Or you
-leave it running: `guild shift` works the same loop unattended and stops at the same line.
+A work session starts with a check-in. The orchestrator reads the brief, asks what you want to work
+on, and drives requirements through an execution graph that stops at exactly two gates — the plan is
+approved before anything is built, and findings, bugs and failures are presented together as one
+decision after review. Between gates it runs continuously. You can also leave it running unattended
+with `guild:shift`, which works the same loop and stops at the same line.
 
-The database is **derived state**. Two committed artifacts buy back what a file board gave for
-free: an append-only `journal.ndjson` that `guild rebuild` replays into a fresh database, and a
-generated `export/*.md` snapshot that is the PR-reviewable record.
+### The pivot from v5
 
-### Key Features
+v5 shipped a 31,348-line bash CLI that owned every read and write to the board. v6 deletes it
+entirely. The reasoning, from the guild master:
 
-- **Status is a column, and one writer owns it.** No directories to move, no `status:` frontmatter
-  to reconcile, no counters. IDs are derived in SQL (`MAX(n) + 1` in the same statement as the
-  insert, so two creates cannot collide) and the cursor is derived (the "current" task is whatever
-  row is `in-progress`).
-- **Direction above the board.** Goals → phases → requirements → plans → tasks. A goal is
-  long-lived intent with a priority; a phase is an ordered stage of one goal. Attaching a
-  requirement to a phase is optional and reversible — unaffiliated work is a first-class choice.
-- **A ticket names a capability, not a member.** `guild new task --needs implement,svelte`, and
-  any agent whose declared capabilities cover it is eligible; `guild match` ranks them
-  deterministically (preferred covered, then *fewest* total capabilities so a specialist beats a
-  generalist, then name). Adding `agents/developer-rust.md` with the right tags makes it eligible
-  for work with **no skill edits and no chain rewiring** — which is the point of the whole stage.
-  A ticket that still names an agent keeps working exactly as before, so nothing on an existing
-  board changed.
-- **A roster gap is loud, and it recruits.** No eligible member means `guild match` exits 1 naming
-  the missing capabilities and the bounty board says `no-eligible-agent:rust`; the task parks in
-  `blocked`, which counts as *open* for requirement completion, so nothing ever closes over work
-  nobody attempted. The architect files the gap at **plan** time with `guild capability-request`,
-  it surfaces in the brief's *Roster Gaps*, and once you add the agent file `guild sync-agents`
-  admits it and closes the request. The roster accretes toward the shape of your projects.
-- **The chain is data.** Through v4 the order of work was compiled into the skills — check-in
-  *knew* that review follows test-write. In v5 it is a YAML template instantiated per
-  requirement into `graph_node` / `graph_edge` / `gate` rows, and `guild segment` is what says
-  what runs next. Two templates ship (`standard` for building, `maintenance` for inspecting); a
-  project overrides either by dropping its own copy at `.guild/templates/<name>.yaml`. The
-  architect may deviate — add a node, drop one, reshape the edges — but **only with a recorded
-  reason**, and `guild graph validate` checks the rules against what is stored.
-- **Two gates, always, and neither can be added or dropped.** `gate-plan` before anything is
-  built, `gate-repairs` after review. A gate is the one thing a subagent physically cannot
-  reach: subagents cannot call `AskUserQuestion`, so a generated workflow cannot ask you
-  anything. Segmenting the work at gates is not a style choice — it is the only shape that
-  keeps the guild master in control.
-- **It can work a shift while you are away.** `guild shift` runs until the next gate, then
-  stops and tells you why — because the segment boundary and the stop boundary are the same
-  line. It may claim bounties, run segments, retry a failure once, block what nobody can take,
-  and commit per completed task on `guild/REQ-NNN`. It may **never** decide a gate, proceed
-  past one, push, or commit to the default branch. Budgets (`--max-tasks`, `--max-minutes`) are
-  fixed when the shift opens, and every exit writes its reason to `event` so
-  `guild shift-report` can say what happened overnight.
-- **One allowlisted door to git.** Every git call the guild makes goes through a single
-  wrapper: an allowlist of verbs (`push`, `fetch`, `merge`, `rebase`, `reset`, `clean` and
-  friends are simply absent), a flag denylist (`--force`, `--hard`, `--amend`, `--no-verify`),
-  hooks never bypassed, and machine commits never carrying your GPG signature. A failed task's
-  partial edits are quarantined, not deleted.
-- **Bugs and quality areas are rows, not prose.** The QA discipline files defects with
-  `guild bug new` and maps risk with `guild coverage set`, so "what is still broken?" and "what has
-  nobody looked at in a month?" are queries instead of someone's memory.
-- **Two ways to read the board.** `guild:brief` narrates it — direction, what is in flight, open
-  bugs and findings, what moved since the last check-in, what to do next. `guild:dashboard` builds
-  the same state as one self-contained offline HTML page with seven views.
-- **Durable without a database file.** Every mutation is journaled as the *resulting row state*
-  (a change log replays across CLI versions; a command log does not), and a failed append is
-  quarantined and reported rather than silently dropped. Delete `guild.db` and run `guild rebuild`.
-- **Parallel development by default**: the architect designs plan slices with disjoint file sets
-  and groups them into `parallel-group` waves; the orchestrator dispatches each wave concurrently
-  in the shared working tree. Ungrouped (foundational) tickets run solo in ID order.
-- **Live requirement planning, then a graph**: `guild:new-requirement` runs a live 3-way interview
-  between the product-owner, the architect, and you — the architect writes the plan and its slices,
-  creates every downstream ticket, and instantiates the execution graph before the skill returns.
-  It ends at `gate-plan`: **nothing is built until you approve it.** From there the graph drives —
-  parallel developers → test-planner → test-writer → 4 parallel reviewers → `gate-repairs`.
-- **Crash-safe resume**: agents log a start entry and milestones through the CLI, so an interrupted
-  ticket is triaged three ways on the next check-in — never-started tickets are re-queued,
-  finished-but-unrecorded tickets are recorded without re-running the agent, and half-done tickets
-  resume from their Work Log.
+> When the turso CLI is already installed, we have a tool that can execute SQL. We don't need to
+> build another tool that does the same thing. Templates, tables, how to access things should be in
+> markdown, part of the skills, as knowledge. We're giving our guild members the tool to access the
+> library or guild warehouse, and a general guide on how to access it. It's up to them to decide how
+> best to update and retrieve the information.
 
-## Storage: local by default, cloud gated
+The CLI's guarantees did not evaporate — they moved down into the engine, where they are harder to
+skip:
 
-Chosen once at `guild init` and recorded in `.guild/config.yaml`.
+| Construct | What it now carries |
+|-----------|---------------------|
+| **CHECK constraints** | The status vocabularies and enums. A value outside its enum is rejected by the engine, on every connection, from every member, forever. |
+| **VIEWS** | The derived rules. The cursor rule, the review gate, node readiness, the agent matcher, the board, the brief — each has **one** definition. A member SELECTs from the view instead of re-deriving the logic, so two members cannot get two answers to one question. |
+| **TRIGGERS** | The record. Every meaningful mutation writes an `event` row without anyone remembering to, and stamps `updated_at`. |
 
-| Mode | Where the board lives | Binary | Status |
-|------|----------------------|--------|--------|
-| `local` **(default)** | `.guild/guild.db` | `tursodb` | The only verified mode. No account, no token, no network. |
-| `cloud` | a Turso Cloud database | `turso` | **`guild init --mode cloud` is refused** — an unverified code path, gated on purpose. |
+**A member can forget to call a command. A member cannot bypass a trigger or a CHECK.**
 
-`guild init` checks for `tursodb` and prints the install line rather than failing with "command not
-found":
+### What is convention, not guarantee
+
+This is the honest half, and it is the part that changed for the worse. The v5 CLI policed these in
+bash. Nothing polices them now — they are documented in `schema.sql` and nowhere enforced.
+
+1. **"The orchestrator owns every status transition."** SQL has no identity. Any connection can run
+   any `UPDATE`. `guild_state.actor` is a courtesy label a member sets on itself; it is not
+   authentication, and the triggers copy it into `event.actor` verbatim. A lying actor produces a
+   lying feed.
+2. **"A requirement may not close over a blocked task."** No constraint expresses it.
+   `v_requirement_progress.tasks_open` is the query that tells you; closing anyway is one `UPDATE`
+   away.
+3. **"A `failed` task is adjudicated when the orchestrator waives it."** The waiver lives in a
+   work-log line's *prefix*, matched with `LIKE`. It is a marker, not a column.
+4. **"Plan slices touch disjoint files."** `plan_slice.files` is a JSON array; the disjointness is
+   an assertion by the architect. Nothing checks it.
+5. **"A capability must be in the vocabulary."** A CHECK cannot reference another table, so an
+   unknown capability inserts fine and simply matches nobody. Read `v_capability_unknown` when the
+   matcher goes quiet.
+6. **"A gate is decided by a human."** `gate.status` is a column. Anyone can write it.
+7. **The graph is not acyclic by construction.** `graph_edge` accepts any pair. A cycle makes
+   `v_ready_nodes` return nothing for the whole loop — a silent stall, not an error. There is no
+   `WITH RECURSIVE` on tursodb to detect one, so this is a review duty.
+8. **Timestamps are UTC by convention.** The triggers use UTC; whatever a member writes by hand is
+   whatever they wrote.
+
+### Key features
+
+- **A ticket names a required capability, not an agent.** `task_capability` rows say what the work
+  needs; any roster member whose declared capabilities cover the set is eligible. Adding
+  `agents/developer-rust.md` with the right tags makes it eligible with no skill edits and no chain
+  rewiring — `v_agent_match` picks it up on the next roster sync.
+- **The chain is data.** An execution template is instantiated per requirement into `graph_node` /
+  `graph_edge` / `gate` rows. `v_ready_nodes` says what can run.
+- **Two gates, always.** `gate-plan` before anything is built; `gate-repairs` after review. Gates
+  cannot live inside a workflow, because subagents cannot ask the user a question — segmenting at
+  gates is the only shape that preserves guild-master control.
+- **It can work a shift while you are away.** `guild:shift` runs the loop unattended, retries a
+  failure once, commits per completed task on its own branch, and stops at the next gate. It never
+  pushes and never touches the default branch.
+- **An independent QA discipline** files `bug` rows and maps risk as `coverage` rows, so "what is
+  still broken?" and "what has not been looked at lately?" are queries.
+- **The board is a query, not a file.** There is no `BOARD.md`, no ticket file, no `state.yaml` and
+  no status directory. Status is a column; the board is `v_board`.
+
+---
+
+## Setup
+
+### 1. Install tursodb
 
 ```bash
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/tursodatabase/turso/releases/latest/download/turso_cli-installer.sh | sh
+brew install tursodatabase/tap/turso        # or: curl -sSfL https://get.tur.so/install.sh | bash
+export PATH="$HOME/.turso:$PATH"
+tursodb --version        # 0.7.2 is what the schema is verified against
 ```
 
-Cloud mode is refused because `turso db shell` has no machine-readable output flag (every parser in
-the CLI assumes `tursodb -q -m list`'s pipe-separated rows), because the FK preamble differs between
-the two branches, and because the URL would travel in argv where libsql URLs commonly embed
-`?authToken=`. `config.yaml` stores the **names** of environment variables, never the values, and
-that is enforced before any file is written. See `scripts/README.md` for the full rationale and what
-ungating would require.
+Put the `export` line in your shell profile. Every skill assumes `tursodb` is on `PATH`.
+
+### 2. Apply the schema
+
+```bash
+mkdir -p .guild/docs .guild/qa .guild/reviews
+tursodb .guild/guild.db < "${CLAUDE_PLUGIN_ROOT}/schema.sql"
+```
+
+**Applying `schema.sql` is idempotent, and it is how a rule change reaches a live board.** Tables are
+`CREATE TABLE IF NOT EXISTS`, so data survives. Views and triggers are dropped and recreated every
+time — they hold no data, so re-applying the file is how you upgrade a rule. Seed rows are guarded
+by `WHERE NOT EXISTS`. Run it as often as you like.
+
+One honest limit: `CREATE TABLE IF NOT EXISTS` sees an existing table and moves on. Applying this
+file over a database created by an **earlier v5 stage** lands the views and triggers but **not** the
+CHECK constraints. A board that wants them has to rebuild.
+
+### 3. Check in
+
+Say **"check in"**. The orchestrator does the rest — it creates `.guild/config.yaml` if it is
+missing, syncs the roster from the agent files, and opens with the brief.
+
+### Storage modes
+
+| Mode | Where | Binary | Status |
+|------|-------|--------|--------|
+| `local` (default) | `.guild/guild.db` | `tursodb` | The verified path. |
+| `cloud` | a Turso Cloud database | `turso` | The SQL is identical; only the binary and target change. **Not verified end to end** — treat a cloud board as unproven, not as broken. |
+
+`config.yaml` is committed to git and holds env var **names** only, never a credential.
+
+---
 
 ## The work model
 
-```
-goal ──< phase ──< requirement ──< plan ──< plan_slice
-                        │
-                        ├──< task ──< work_log, review_finding
-                        │
-                        └──< graph_node ──< graph_edge      the execution graph
-                                  └──── gate               two of them, per requirement
-
-bug        — defects, optionally linked to a requirement and to a fix task
-coverage   — quality areas with a risk level, a spec path and an inspection clock
-doc        — the evergreen, slug-keyed knowledge base
-agent      — the roster: who exists and what capabilities they declare
-event      — the activity feed behind `guild brief`, the dashboard and `guild shift-report`,
-             and the ONLY place a shift's own record lives
-```
-
-Goals and phases **organize and prioritize; they do not gate.** A requirement's `phase_id` is
-nullable by design — a bug fix or a chore filed directly needs no goal — and
-`guild req assign REQ-NNN none` detaches one again.
-
-**Gates live on the requirement, and there are exactly two.** `gate-plan` and `gate-repairs`.
-Both templates converge on them, so there is one gate concept in the system rather than one per
-discipline. `guild graph deviate --kind add-gate` is refused, always, and so is dropping one.
-
-## The Agent Chain — now a graph, cut into two segments
-
-The shape below is the `standard` template. What makes it a graph rather than a chain is that
-the order lives in `graph_edge` rows, `guild segment` computes the runnable batches between
-gates, and the architect can deviate from the template with a recorded reason.
+The hierarchy, widest to narrowest:
 
 ```
-  gate-plan  ◆ ── the guild master approves the plan (guild:new-requirement ends here)
-      │
-      ├─ implement.slice-a ─┐        parallel — the plan slices' disjoint file sets
-      ├─ implement.slice-b ─┤
-      └─ implement.slice-c ─┘
-                            └→ test-plan → test-write
-                                              └→ review.reviewer-security     ─┐
-                                                 review.reviewer-architecture ─┤ parallel
-                                                 review.reviewer-business-logic┤
-                                                 review.reviewer-edge-case    ─┘
-                                                          │
-  gate-repairs ◆ ── findings and bugs presented together; the guild master picks
-      │              which get repaired (the decision IS the fan-out)
-      └→ repair
+goal → phase → requirement → plan → plan_slice → task
 ```
 
-`maintenance` is the same machinery for inspecting what was built —
-`qa-check → qa-plan → qa-execute → qa-report → gate-repairs → repair` — and it reuses
-`gate-repairs` rather than inventing a QA gate of its own. `qa-execute` runs **one tester at a
-time**: Playwright is heavy and two testers collide on ports, so the agent declares
-`serial: true` and `guild segment` *refuses* to emit a parallel batch holding two of them
-rather than silently serializing.
+A goal is direction. A phase is a stage of that goal. A requirement is one unit of shipped value. A
+plan is how the architect intends to build it; a slice is a file-disjoint chunk of that plan; a task
+is a bounty a guild member can claim.
 
-Everything below is how a requirement is planned, before the graph exists:
+Alongside them: `graph_node` / `graph_edge` / `gate` (the execution graph), `agent` /
+`agent_capability` / `task_capability` (the roster and the matcher), `bug`, `coverage`,
+`review_finding`, `work_log`, `doc`, and `event` — the activity feed the triggers write.
 
-```
-guild:new-requirement (live interview, not ticket-dispatched)
-  ├→ product-owner: interviews you, writes the REQ record
-  ├→ orchestrator: offers a phase for the requirement (existing phase,
-  │  new phase, new goal + phase, or unaffiliated) — the user decides
-  └→ architect: explores codebase (calling guild:researcher inline as needed),
-     writes the PLAN and its slices, files a capability-request for any roster gap,
-     creates the dev / test-planner / reviewer tickets, then instantiates the graph
-     with `guild graph new REQ-NNN`
-      │
-      ▼  the skill ENDS AT gate-plan — nothing is built until you approve it
-guild:check-in reads `guild segment REQ-NNN`, dispatches one batch at a time, and
-stops at gate-repairs with the findings, the bugs and the failures in one decision.
-```
+**`event` is the record.** There is no journal any more. `guild.db` is not derived state that can be
+thrown away and rebuilt; it is the board. It is gitignored because a binary file is a bad thing to
+merge, which means the board is machine-local unless you run in cloud mode. What git carries instead
+is the human-readable residue: `config.yaml`, `.guild/docs/`, `.guild/qa/`, `.guild/reviews/`, and
+the repo's own `CHANGELOG.md`.
 
-Direction is the guild master's layer: neither the product-owner nor the architect runs
-`guild goal new`, `guild phase new` or `guild req assign`. They recommend; the orchestrator asks
-you; you decide.
+### The views are the API
+
+Read the view; do not re-derive the rule. The ones you will use most:
+
+| View | Answers |
+|------|---------|
+| `v_brief` | Where does the project stand? |
+| `v_board` | Everything in flight, by status. |
+| `v_next_task` / `v_batch` | What runs next, and what can run in parallel. |
+| `v_open_bounties` | What can be claimed — and underneath, what cannot, with a reason. |
+| `v_task_actionable` / `v_task_blockers` | Is this task workable, and if not, why not? |
+| `v_ready_nodes` | Which graph nodes have all direct predecessors done. |
+| `v_gates_pending` | What is waiting on the guild master. |
+| `v_agent_match` / `v_task_top_agent` | Who should take this. |
+| `v_requirement_progress` / `v_goal_progress` | How far along. |
+| `v_failed_tasks`, `v_open_findings`, `v_open_bugs`, `v_coverage_due` | What still needs attention. |
+| `v_roster_gaps`, `v_capability_unknown` | Why the matcher went quiet. |
+| `v_recent_activity` | What moved. |
+
+---
+
+## Working with the warehouse
+
+Load `guild:warehouse` before touching guild data. It carries the connection recipe, the six rules
+that are always true, and three references: `schema.md` (what every table is *for*, and which rules
+are enforced versus conventional), `queries.md` (the canonical verified queries — copy from it rather
+than improvising), and `tursodb-gotchas.md`.
+
+The rules that bite hardest, in short:
+
+1. **Free text crosses as hex.** The tursodb stdin splitter ends a statement at a `;` that terminates
+   a line — *even inside an open string literal* — and requirement bodies quote code. Every title,
+   body, rationale, log entry and finding goes in as `CAST(x'<hex>' AS TEXT)`, which is always one
+   line.
+2. **`PRAGMA foreign_keys = ON;` at the top of every writing script.** It is per-connection and
+   defaults to OFF, and every invocation is a fresh connection.
+3. **Never parse `-m list` output positionally.** It is pipe-separated with no quoting, and free text
+   contains pipes *and newlines* — a newline forges a whole row. Ask for `json_object(...)`, or
+   select exactly one column.
+4. **Read the view, do not re-derive the rule.**
+5. **A failing statement does not stop the script, and `COMMIT` still commits.** There is no `-bail`.
+   Put `RETURNING` on every mutation so "did it land" is answered by output.
+6. **Errors print on stdout, not stderr.** Always check the exit code.
+
+### Engine constraints, verified on tursodb 0.7.2
+
+- **No `WITH RECURSIVE`.** Readiness joins *direct* predecessors only, one hop, and propagates as the
+  work runs. Never write a traversal.
+- **No FTS5.** Text search is `LIKE`, with `%` and `_` escaped by the caller.
+- **No `lag`/`lead`/`ntile`/`percent_rank`/`cume_dist`.** Ranking is an `ORDER BY`, and the rank is
+  the row's position, assigned by the reader.
+- **STRICT tables** accept only INT, INTEGER, REAL, TEXT, BLOB, ANY. Every column is TEXT or INTEGER.
+- **Working:** STRICT, RETURNING, ON CONFLICT DO UPDATE, printf(), plain CTEs, WAL, foreign_keys,
+  JSON functions, CHECK, VIEW, TRIGGER, `UPDATE OF <col>` triggers.
+
+### Widening a vocabulary is a migration
+
+SQLite cannot `ALTER` a CHECK in place. Adding a status word means rebuilding the table — create,
+copy, drop, rename, with `foreign_keys` off for the swap. **Choose words you can live with.** This is
+the price of moving the vocabulary into the engine, and it is a real one.
+
+---
 
 ## Skills
 
-### `guild:check-in`
+| Skill | What it does |
+|-------|--------------|
+| `guild:check-in` | **The orchestrator.** Opens with the brief, gathers input, runs each requirement's execution graph, presents the two gates, and drives the continuous work cycle. Say "check in". |
+| `guild:shift` | `check-in` with the human taken out of the middle. Runs unattended to the next gate, then stops and says why. Never decides a gate — not even "the obvious ones". |
+| `guild:brief` | Where the project stands: direction, in flight, bugs, coverage due, what moved. Read-only. |
+| `guild:guild-status` | **Deprecated alias for `guild:brief`** — the v4 name. It claims **no** natural-language trigger phrases; every status phrasing routes to `guild:brief`, because two skills advertising "guild status" would make every status request a coin flip. Reachable only by typing `/guild:guild-status`. |
+| `guild:dashboard` | Renders the board as one self-contained offline HTML page. Read-only. |
+| `guild:new-requirement` | A live 3-way interview between the product-owner, the architect and you. Writes the requirement, the plan, its slices, the tickets **and the execution graph**, then ends at `gate-plan` — nothing is built until you approve. |
+| `guild:qa` | Seeds a QA pass onto the board: a qa-strategist plans risk-based coverage, then qa-testers run the app, author Playwright specs, and file bugs back to the board. |
+| `guild:comprehensive-review` | Multi-dimensional pre-PR review — requirements compliance, coverage, edge cases, architecture, security. |
+| `guild:verify-and-fix` | Diagnoses a reported error end to end, then applies a test-driven fix. |
+| `guild:release` | Stamps `CHANGELOG.md`'s Unreleased section with a version, snapshots completed requirements, and creates an annotated tag. Does not push. |
+| `guild:clear-board` | Deletes every unit of work, keeping the things that outlive a board. **There is no journal to replay any more** — a `DELETE` is final. Back the file up first. |
+| `guild:discuss` | Surfaces the subjects in the current context and drives a focused discussion. |
+| `guild:create-workflow` | Generates a CI or script workflow file. |
+| `guild:warehouse` | **The reference every member loads before touching guild data.** |
 
-The main orchestrator skill. Starts or resumes a work session, opens with the brief, gathers input,
-and drives the continuous work cycle.
+Agent-facing skills that specialists pre-load rather than users invoking: `guild:qa-mindset`,
+`guild:qa-artifacts`, and the four `guild:svelte-*` skills, plus `guild:svelte-env-vars-check`.
 
-**Trigger Phrases:**
-- "check in"
-- "clock in"
-- "standup"
-- "guild check in"
-- "let's get to work"
-- "start working"
-- "continue working"
-- "daily standup"
-- "guild standup"
-- "I'm here"
-- "reporting in"
+---
 
-A read-only status question ("what's the status", "where are we") belongs to `guild:brief`, which
-reports without starting work.
+## The roster
 
-**What it does:**
-1. Initializes `.guild/` (config, schema, journal, `spool/`, `export/`, `docs/`, `qa/`, `reviews/`)
-   on first use — and if a **v4 board** is present, moves it to `.guild/v4-archive/` untouched
-2. Opens with `guild brief` — direction, in flight, bugs, coverage due, what moved
-3. Routes the session — a work-intent trigger resumes immediately; otherwise asks
-4. Reads `guild segment REQ-NNN`, takes **the first batch only**, dispatches it, drains the
-   spool, records both halves (the ticket and the graph node), and reads the segment again
-5. Stops at `gate-repairs` and puts the findings, bugs and failures up as **one** multi-select
-   decision — the answer is the fan-out
-6. Presents a session summary when the work cycle ends
+The roster is `agent` rows, synced from these files' frontmatter. A ticket names capabilities; the
+matcher (`v_agent_match`) ranks eligible members deterministically — eligible means the member's
+capabilities are a **superset** of the required set, ranked by preferred-covered (desc), then total
+capability count (**asc**, so a specialist beats a generalist), then name.
 
-A requirement with no graph (one created before Stage 4) falls back to the v4 cursor —
-`guild next` and `guild batch` survive for exactly that.
+| Agent | Model | Capabilities | Role |
+|-------|-------|--------------|------|
+| `architect` | Opus | `architecture` | Explores the codebase, writes the implementation plan and its slices, composes the execution graph. Recommends direction; never sets it. |
+| `product-owner` | Sonnet | `requirements` | Interviews you live alongside the architect, writes the requirement record. |
+| `developer` | Sonnet | `implement`, `backend`, `frontend` | Implements code per plan and requirement. |
+| `developer-svelte` | Sonnet | `implement`, `frontend`, `svelte`, `sveltekit` | Svelte 5 / SvelteKit specialist, pre-loaded with four reference skills. |
+| `test-planner` | Sonnet | `test-planning` | Inventories the implemented diff and writes the test plan. |
+| `test-writer` | Sonnet | `test-authoring` | Writes and runs unit and integration tests. |
+| `product-reviewer` | Haiku | `review`, `requirements` | Verifies the implementation satisfies the plan. |
+| `reviewer-security` | Haiku | `review`, `security` | Vulnerabilities, OWASP Top 10. |
+| `reviewer-architecture` | Haiku | `review`, `architecture` | Plan alignment, patterns, separation of concerns. |
+| `reviewer-business-logic` | Haiku | `review`, `business-logic` | Acceptance criteria, business rules, testability. |
+| `reviewer-edge-case` | Haiku | `review`, `edge-case` | Boundary conditions, null handling, error scenarios. |
+| `researcher` | Haiku | `research` | Technology research, API investigation, documentation lookup. |
+| `qa-strategist` | Sonnet | `qa-planning` | Risk map as `coverage` rows, adversarial what-if missions. |
+| `qa-tester` | Sonnet | `qa-execution`, `test-authoring`, `e2e` | **`serial: true`** — runs the product and authors e2e specs; Playwright collides on ports, so two may never run concurrently. |
 
-### `guild:brief`
+**Hiring is adding a file.** Write `agents/<name>.md` with `name`, `model`, `capabilities` and
+`serial` in the frontmatter, then check in — the roster sync picks it up. A capability the roster
+lacks surfaces in the brief's *Roster Gaps*.
 
-The narrated read of the board, and the flagship of Stage 2. One query behind eight sections —
-Direction, In Flight, Blocked, Open Bounties, Bugs, Coverage, Since Last Check-in, Roster Gaps —
-plus a header carrying the same `Next:` answer `guild next` gives. **Read-only**: it dispatches
-nothing, moves nothing and writes nothing, not even a journal line.
+**Agents write to the board themselves now.** In v5 they reported through a spool and the
+orchestrator drained it. There is no spool and no drain; a member loads `guild:warehouse` and writes
+its own `work_log` and `review_finding` rows. "The orchestrator owns every status transition" remains
+the rule, but see [What is convention, not guarantee](#what-is-convention-not-guarantee) — nothing
+enforces it.
 
-A section with no rows is not printed; an empty guild gets a short "nothing is on the board yet"
-with three next steps rather than eight `(none)` blocks. (*Roster Gaps* became reachable in
-Stage 3 — `guild capability-request` is what writes the table it reads. *Blocked* prints tasks
-whose status is `blocked`; its `waiting on <ids>` clause reads `task_dependency`, which nothing
-writes — ordering moved to `graph_edge` in Stage 4, so the clause is inert. Seeding the roster at
-`guild init` is deliberately *not* counted as
-board activity, so a brand-new guild still reads as empty.)
+---
 
-**Where the roster shows up.** The brief is the recruiting surface: a gap the architect filed at
-plan time is in *Roster Gaps* with its rationale and the member it proposes. For "who can take
-what, and why not", `guild bounties` is the sharper tool — it prints the matched member per
-open task and, underneath, everything that cannot be worked with a one-token reason
-(`status-blocked`, `deps:<ids>`, `no-eligible-agent:<caps>`).
+## File structure
 
-**Trigger Phrases:**
-- "guild status"
-- "board status"
-- "what's the status"
-- "show the board"
-- "what's on the board"
-- "project status"
-- "show guild"
-- "guild board"
-- "what's happening"
-- "brief me"
-- "where are we"
-- "what changed" / "what moved since last time"
-- "what should I work on next"
+The plugin:
 
-### `guild:dashboard`
+```
+plugins/guild/
+├── schema.sql              # THE TOOL. 25 tables, 26 views, 43 triggers, and the guild's rules
+├── agents/                 # 14 roster members; frontmatter is the roster source
+├── skills/
+│   ├── warehouse/          # how to reach the board — the skill every member loads
+│   │   └── references/     # schema.md, queries.md, tursodb-gotchas.md, templates/
+│   └── …                   # check-in, shift, brief, dashboard, new-requirement, qa, …
+└── docs/
+    ├── v6-architecture.md  # the current design — start here
+    └── v5-design.md        # historical; the data model and rules are still in force
+```
 
-Builds `.guild/dashboard.html`: one file, all CSS and JS inline, the board data inlined as JSON. No
-server, no build step, no network — it works offline and from `file://`. Seven views: **Roadmap**
-(goals → phases → requirements with live progress), **Board** (tasks by status), **Graph** (one
-Mermaid DAG per requirement, nodes colored by status and gates called out), **Bugs**, **Findings** (what
-reviewers flagged and whether it was ever fixed), **Coverage** and **Activity**.
-
-The output is deterministic — the same state produces byte-identical bytes, so the file diffs
-cleanly if it is committed (`guild init` gitignores it by default). Nothing embeds a wall clock;
-every "3 days ago" is computed in the browser at view time.
-
-**Trigger Phrases:**
-- "the dashboard" / "guild dashboard"
-- "open the dashboard" / "show me the dashboard" / "build the dashboard"
-- "visualize the board"
-- "the roadmap" / "show the roadmap"
-- "a visual view of the guild"
-- "the coverage view"
-- "the activity feed"
-
-The page carries real requirement titles, task bodies and bug reports, so publishing it as a
-shareable Artifact is offered once and never automatic.
-
-### `guild:guild-status`
-
-**Deprecated alias.** This was v4's status skill; it is now `guild:brief`. It deliberately claims
-**no** natural-language trigger phrases — two skills advertising "guild status" would make every
-status request a coin flip — and exists only so the typed slash command `/guild:guild-status` keeps
-working. It loads `guild:brief` and follows it.
-
-### `guild:new-requirement`
-
-Runs a live 3-way interview between the product-owner, the architect, and you, then writes the
-requirement, the implementation plan, and every developer/test-planner/reviewer ticket needed to
-build it — all before the skill returns. Between the two, the orchestrator offers to place the
-requirement on a phase (an existing one, a new phase, a new goal *and* its first phase, or leave it
-unaffiliated). If Agent Teams is enabled (`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS`), the product-owner
-and architect can message each other directly; otherwise the orchestrator moderates between them.
-Either way, only the orchestrator can ask you questions directly — both agents relay through it.
-
-**Trigger Phrases:**
-- "add a requirement"
-- "new requirement"
-- "I need a feature"
-- "add to the guild"
-- "create requirement"
-- "queue a feature"
-- "I want to build"
-
-**Arguments:**
-- `title` — short title for the requirement (optional, asked if not provided)
-- `description` — brief description of what is needed (optional, asked if not provided)
-
-### `guild:shift`
-
-**Working the board while you are away.** `guild:check-in` with the human taken out of the
-middle: it runs the same dispatch protocol, adds a budget and a failure policy that never stops
-to ask, commits per completed task, and **stops at the next gate** — because a gate is the one
-decision no subagent can make.
-
-**Trigger Phrases:**
-- "work a shift"
-- "run unattended"
-- "keep working while I'm away"
-- "take the night shift"
-- "run autonomously"
-- "work overnight"
-- "run until you need me"
-
-**What it does:**
-1. Preflights with `guild shift --dry-run` (writes nothing) and refuses to start when a gate is
-   already waiting or nothing is runnable
-2. Agrees the budget **once** — defaults 10 tasks / 60 minutes — and never asks again
-3. Loops: `guild shift` → `guild git branch-for` → `guild segment` → dispatch batch 1 →
-   `guild node … done|failed` → `guild git commit-task|revert-task` → `guild shift`
-4. At the gate: presents, and **never decides**. Not "the obvious ones"
-5. Ends with `guild shift-report` — the stop reason first
-
-**What it may not do**, and the CLI enforces the ones it can: approve or reject a gate, proceed
-past one, create or drop a gate, close a requirement past one, delete anything, push, commit to
-the default branch, change goals or priorities, or create a guild member. `guild shift --policy`
-prints the table the CLI itself is guarded by.
-
-**Cadence is opt-in and per project.** `/loop 10m /guild:shift`, or a scheduled agent. So are
-notifications: the marker is a file (`.guild/shift.notify`), and a shift pushes on exactly two
-events — a gate arriving, and an abnormal stop (`infrastructure` or `collision`). Never on
-`max-tasks`, `max-minutes`, `idle` or per-task progress, because a shift that notifies for
-everything trains you to mute the one notification that mattered.
-
-### `guild:clear-board`
-
-**Refuses, and says so.** v5 ships no `guild clear` and no `guild delete`, so this skill inventories
-what is on the board, explains that it cannot remove it, and offers the honest alternatives — leave
-it (done work gates nothing), move open work to `failed`, or start a genuinely fresh board with
-`GUILD_DIR=.guild-next guild init` — instead of reporting a deletion that did not happen. A delete
-command is pending a later stage.
-
-**Trigger Phrases:**
-- "clear the board"
-- "reset the guild"
-- "start fresh"
-- "wipe the board"
-- "clear all tasks"
-- "reset the board"
-
-### `guild:qa`
-
-Seeds the guild's **independent QA discipline** — a quality function that runs beside the feature
-chain rather than inside it. The `qa-strategist` maps product risk and writes one `coverage` row per
-quality area; `qa-tester` agents run the actual app, author end-to-end (Playwright) regression
-specs, file defects as `bug` rows, and stamp the areas they actually drove with
-`guild coverage inspect`. Use it to build comprehensive e2e regression suites and to probe the
-running product with adversarial "what-if" inputs.
-
-**Trigger Phrases:**
-- "QA the product"
-- "QA the checkout flow"
-- "run a QA pass"
-- "build comprehensive e2e tests"
-- "write regression tests"
-- "test the running app"
-- "what-if testing"
-
-**What it does:**
-1. Ensures a `.guild/qa/` workspace and a standing "Product QA & E2E Regression" umbrella requirement
-2. Seeds a `qa-strategist` task for the requested scope (whole product or a named flow), in `full`
-   or `cadence` mode
-3. The strategist resolves the oracle (internal specs → external board via MCP → code + running app
-   → user), builds a risk map, writes the `coverage` rows, and declares `qa-tester` missions
-4. `qa-tester` agents run the app, apply the what-if catalog, author e2e specs (hybrid oracle: lock
-   good behavior, flag suspect behavior as a bug, ask the user when ambiguous), and file each defect
-   with `guild bug new`
-5. Each bug gets a developer fix task linked with `guild bug fix`, paired with a re-verify qa-tester
-   ticket; the re-verify confirms the fix empirically and closes the bug
-
-Bugs and quality areas live in the **database**, so they show up in `guild bug list`,
-`guild coverage list --due`, the brief and the dashboard. The prose artifacts that remain under
-`.guild/qa/` (charter, missions, session logs, regression manifest) are **evergreen** — they survive
-releases. Committed e2e specs live in the project's real e2e dir and run in CI;
-`developer`/`developer-svelte` co-maintain them. Can be armed on a **standing cadence** via
-`/schedule` or `/loop` (opt-in per project).
-
-### `guild:discuss`
-
-Analyzes the current conversation context, surfaces subjects, and facilitates a focused discussion. Two modes:
-
-- **Open mode** (`/discuss` or "discuss") — scans the full conversation, groups topics into a numbered map (3–8 subjects), lets you pick one or say "all", then drives a back-and-forth discussion loop until you're satisfied.
-- **Targeted mode** (`discuss [topic]`) — scopes to a specific topic, presents a summary with key points and open questions, then enters the loop immediately.
-
-Wraps up with a closing summary of what was covered and any decisions reached.
-
-**Trigger Phrases:**
-- "discuss"
-- "let's discuss"
-- "discuss [topic]"
-- "talk about"
-- "let's talk about"
-- "summarize the context"
-- "what are we working on"
-- "break down the topics"
-- "recap the conversation"
-
-### `guild:release`
-
-Finalizes completed requirements into a versioned release: stamps `CHANGELOG.md` Unreleased with the
-new version, regenerates `guild export` and **copies** the completed requirements' markdown into
-`.guild/releases/{version}/`, and creates an annotated git tag. Does not push.
-
-Each exported REQ file inlines that requirement's plans, tasks, work logs and review findings, so
-the snapshot carries everything v4's archive did — in one file per requirement, and reviewable in
-the PR. Nothing is moved off the board: v5 has no archive command, and a step that pretended to move
-files would report work it did not do. `.guild/docs/` and `.guild/qa/` are evergreen and are never
-snapshotted.
-
-**Trigger Phrases:**
-- "cut a release"
-- "release the guild"
-- "ship it"
-- "tag a version"
-- "guild release"
-
-**Arguments:**
-- `--dry-run` — preview the release plan without making changes
-- `--only REQ-NNN,REQ-MMM` — release only specific requirements
-
-The check-in skill appends a bullet to `CHANGELOG.md`'s `[Unreleased]` section whenever a
-requirement is marked done, so the changelog is always current between releases.
-
-### `guild:verify-and-fix`
-
-Diagnoses and fixes reported errors through a structured end-to-end workflow: gather context via your error-verification guide, investigate configured log and code sources, propose ranked solutions, then apply a test-driven fix.
-
-**Trigger Phrases:**
-- "check this error"
-- "check this bug"
-- "here's an error"
-- "here's a bug"
-- "I have an error"
-- "I have a bug"
-- "found a bug"
-- "got an error"
-- "debug this"
-- "this is broken"
-- "fix this error"
-- "verify and fix"
-
-**What it does:**
-1. Phase 0 — Guide Gate: detects or creates an error-verification guide in `CLAUDE.md` by interviewing the user about their monitoring services, issue tracker, stack, and environments
-2. Phase 1 — Error Input: collects the error artifact (inline text, stack trace, file path, or link) from the triggering message
-3. Phase 2 — Investigation: reads `references/investigation.md`, queries configured log and code sources in priority order, and gathers evidence
-4. Phase 3 — Solution Proposal: produces a findings report, then presents a ranked solution set for the user to choose from
-5. Phase 4 — TDD Fix: reads `references/tdd-fix.md`, writes a failing test for the selected solution, applies the fix, runs the test, and delivers a final summary
-
-### Also included
-
-`guild:comprehensive-review` (multi-dimensional pre-PR review), `guild:create-workflow` (generate a
-CI/script workflow), `guild:svelte-env-vars-check`, and the agent-facing reference skills
-(`guild:qa-mindset`, `guild:qa-artifacts`, and the four `guild:svelte-*` skills) that specialist
-agents pre-load rather than users invoking directly.
-
-## Agents
-
-| Agent | Model | Role |
-|-------|-------|------|
-| `guild:product-owner` | Sonnet | Interviews user (live, alongside the architect, inside `new-requirement`), writes the REQ record; can delegate quick lookups to `guild:researcher`. Never sets direction |
-| `guild:architect` | Opus | Explores codebase, calls `guild:researcher` inline as needed, writes the implementation PLAN, creates dev/test-planner/reviewer tickets directly; reads `guild goal show` when the requirement sits on a phase; routes Svelte tasks to `developer-svelte` |
-| `guild:developer` | Sonnet | Implements code per plan and requirement |
-| `guild:developer-svelte` | Sonnet | Svelte 5 / SvelteKit specialist — pre-loaded with four reference skills; used when tasks touch `.svelte`, `+page.*`, `+layout.*`, `+server.*`, hooks, or `svelte.config.js` |
-| `guild:test-planner` | Sonnet | Inventories the implemented diff, writes the test plan, declares the test-writer tickets |
-| `guild:test-writer` | Sonnet | Implements the test plan — writes and runs unit & integration tests |
-| `guild:product-reviewer` | Haiku | Verifies implementation satisfies plan requirements |
-| `guild:reviewer-security` | Haiku | Security vulnerabilities, OWASP Top 10 |
-| `guild:reviewer-architecture` | Haiku | Plan alignment, patterns, separation of concerns |
-| `guild:reviewer-business-logic` | Haiku | Acceptance criteria, business rules, testability |
-| `guild:reviewer-edge-case` | Haiku | Boundary conditions, null handling, error scenarios |
-| `guild:researcher` | Haiku | Technology research, API investigation, documentation lookup |
-| `guild:qa-strategist` | Sonnet | QA planning — risk map as `coverage` rows, adversarial what-if missions (independent QA discipline) |
-| `guild:qa-tester` | Sonnet | Empirically runs the product, authors e2e/Playwright regression specs, files `bug` rows, stamps the inspection clock |
-
-Agents never open a database connection. They read with `guild read` / `guild meta` / `guild slice`,
-report with `guild log` / `guild finding` (a plain append to a per-task spool file), and the
-orchestrator folds the spool in with `guild spool drain`. **The orchestrator owns every status
-transition** — agents never move their own work.
-
-## State Structure
-
-The guild maintains a `.guild/` directory in your project:
+The board, in your project:
 
 ```
 .guild/
-├── config.yaml            # committed — storage mode; env var NAMES only, never a credential
-├── journal.ndjson         # committed — append-only change log; `guild rebuild` replays it
-├── export/REQ-NNN.md      # committed — GENERATED snapshot; `guild export` rewrites it wholesale
-├── releases/{version}/    # committed — release snapshots taken from the export
-├── guild.db               # gitignored — DERIVED state; the board itself (local mode)
-├── spool/TASK-NNN.ndjson  # gitignored — agents' un-drained log/finding lines
-├── spool/rejected/        # COMMITTED — spool lines a drain could not import
-├── journal.pending        # gitignored — quarantined journal lines (`guild journal recover`)
-├── dashboard.html         # gitignored by default — regenerated by `guild dashboard`
-├── backup-*/              # gitignored — pre-rebuild db copies, pre-compaction journal copies
-├── docs/                  # evergreen researcher notes carried into the `doc` table at init
-├── qa/                    # evergreen QA prose (charter, missions, sessions, regression manifest)
-├── reviews/REQ-NNN.md     # per-requirement review reports
-└── v4-archive/            # a v4 board `guild init` moved aside — never parsed, never deleted
+├── config.yaml         # committed. version + storage mode; env var NAMES only, never a credential
+├── guild.db            # gitignored. THE BOARD
+├── docs/               # evergreen researcher knowledge (the `doc` table is the primary copy)
+├── qa/                 # evergreen QA artifacts — charter, missions, bug ledger, session logs
+├── reviews/REQ-NNN.md  # per-requirement review records, appended per round
+├── dashboard.html      # gitignored. regenerated wholesale
+└── templates/*.yaml    # optional. a project's override of the shipped execution templates
 ```
 
-**`journal.ndjson` is the durable board.** `guild.db` can be deleted at any time and rebuilt from
-it; the reverse is not true. Each line records the *resulting row state*, so it replays across CLI
-versions:
-
-```json
-{"seq":3,"ts":"2026-08-13T09:14:02Z","actor":"orchestrator","op":"upsert","table":"task","row":{"id":"TASK-014","status":"done"}}
-```
-
-A `journal_preflight` runs *before* the SQL in every mutating command, so an unwritable or
-conflict-marked journal becomes a refusal that says plainly nothing was written — never a board
-change the next rebuild silently undoes. `guild journal compact` refuses to lose a row unless
-forced, and `guild journal sync` reconciles the append-only record tables. This is not atomicity
-between a SQLite file and a text file; what is guaranteed is that divergence is prevented, or
-recorded, or reported — never silent.
-
-### Upgrading from v4
-
-`guild init` on a directory holding a v4 board **moves the whole tree to `.guild/v4-archive/`** —
-never deletes, never parses. **There is no history import**, and `guild migrate` is retired. Two
-things carry over because they are evergreen rather than historical: `.guild/docs/*.md` into the
-`doc` table, and `.guild/qa/` into the `coverage` table (with `last_inspected_at` left null, so
-everything reads as due on day one). Unfinished v4 work is re-entered by hand through
-`guild:new-requirement`, reading the archived plan for the details.
-
-### `guild path` and `state.yaml` are gone
-
-`guild path` was **removed, not renamed** — it still exits 1 with a message naming its replacements,
-because thirteen v4 call sites used to *Edit* the file it returned. In v4 the path was the storage;
-in v5 only requirements get an export file, that file is generated, and `guild export` rebuilds the
-whole directory on every run, so an edit there is silently lost. `state.yaml` is gone too:
-`last-checkin` is a row in `guild_state`, written only by `guild checkin`.
-
-| You want to… | v4 | v5 |
-|---|---|---|
-| read a ticket | `cat "$(guild path TASK-1)"` | `guild read TASK-1` |
-| read one field | `fm "$(guild path TASK-1)" agent` | `guild meta TASK-1 agent` |
-| append to the Work Log | Edit the ticket file | `guild log TASK-1 --agent developer --entry '…'` |
-| record a review finding | Edit the ticket file | `guild finding TASK-1 --reviewer r --severity major --summary '…'` |
-| rename a ticket | Edit the `title:` line | `guild retitle TASK-1 'New title'` |
-| stamp the check-in | Edit `state.yaml` | `guild checkin 2026-08-13` |
-
-## The CLI
-
-Every deterministic operation goes through `scripts/guild` (invoked as
-`${CLAUDE_PLUGIN_ROOT}/scripts/guild`). Requires Bash 3.2+, standard Unix tools and one Turso
-binary — no Python, no Node, no `jq`. Full reference: **`scripts/README.md`**.
-
-| Group | Commands |
-|-------|----------|
-| Setup | `init`, `rebuild`, `journal compact\|recover\|sync` |
-| Direction | `goal new\|list\|show\|move\|priority\|rollup`, `phase new\|list\|move`, `req assign` |
-| Board | `new req\|task\|plan`, `read`, `meta`, `status`, `slice`, `plan slice\|slices`, `next-id`, `move`, `retitle`, `list`, `next`, `batch`, `checkin` |
-| Agent writes | `log`, `finding`, `spool drain` |
-| Records | `bug new\|list\|show\|fix\|close`, `coverage set\|inspect\|list\|show`, `doc put\|get\|list\|search` |
-| Roster | `sync-agents`, `match`, `bounties`, `capability-request`, `capability-requests` |
-| Graph | `templates`, `template`, `graph new\|<REQ>\|validate\|deviate`, `segment`, `node`, `gate`, `gates` |
-| Unattended | `shift`, `shift --end`, `shift --policy`, `shift-report`, `git branch-for\|commit-task\|revert-task\|shift-status` |
-| Views | `board`, `brief`, `dashboard`, `export` |
-
-Environment: `GUILD_DIR` (guild root, default `.guild`), `GUILD_ACTOR` (who mutations are attributed
-to, default `orchestrator`), `GUILD_SCHEMA`, `GUILD_AGENTS_DIR`, `GUILD_TEMPLATES_DIR`,
-`GUILD_ASSUME_YES`.
-
-Two rules run through the whole CLI and are worth knowing before you extend it: **all free text
-travels into SQL as hex** (`CAST(x'…' AS TEXT)`), because tursodb's script splitter ends a statement
-at a `;` that terminates a line even inside an open string literal; and **free text must never be
-able to impersonate a structural token on the way out** — the board flattens it, the export uses a
-length-prefixed header, the JSON surfaces go through `json_object()`, and the dashboard escapes
-every `<` before it reaches the page.
+---
 
 ## Status: what is verified, and what is not
 
-All five stages are implemented. **They were not held to the same standard, and that matters
-more than the version number.**
+**Read this before trusting anything above.**
 
-| Stages | What they are | How much scrutiny they got |
-|---|---|---|
-| **1–3** — storage, visibility, the roster | the database, the journal, `brief`, `dashboard`, goals/phases, bugs/coverage/docs, capabilities and matching | **Adversarially reviewed**, over several rounds, behind a **2278-check harness** (`scripts/test-guild.sh`) that also enforces the portability rules statically over `schema.sql` and the SQL embedded in `lib/` |
-| **4–5** — the graph, gates, the shift, git safety | templates, `graph`/`segment`/`node`/`gate`/`gates`, `shift`, `shift-report`, `guild git` | **Implemented without tests and without an adversarial review round, at the guild master's explicit direction.** They parse, they lint clean (`bash -n` + `shellcheck -S style`, no suppressions), their embedded awk programs parse, and Stage 5 shipped after a reconciliation pass over both stages — but **no behaviour was executed against a real board** |
+v6 is a **fresh rewrite**. The v5 CLI went through four adversarial review rounds and shipped behind
+a 2,278-check harness that also enforced the portability rules statically over `schema.sql` and the
+SQL embedded in `lib/`. **That code is deleted, and none of its assurance transfers to code that
+replaced it.** Saying otherwise would imply a continuity of confidence that does not exist.
 
-So: treat Stages 1–3 as proven and **Stages 4–5 as unproven**. Concretely, before you leave a
-shift running overnight on work you care about, run one attended `guild:check-in` through a full
-requirement and one `guild shift --dry-run` on a real board, and read `guild git shift-status`
-before you push anything a shift committed. The design's safety properties are argued in
-`docs/v5-design.md` and enforced in the code; what is missing is evidence.
+What *is* verified:
 
-The reconciliation pass that closed Stage 5 found and fixed four cross-module inconsistencies
-(a duplicated journal write path, a module header contradicting its sibling, two writers of the
-same `event` disagreeing by one key, and a stale marker-channel spec). `scripts/README.md`
-records them. Four rounds of that on Stages 1–3 found considerably more, which is the honest
-prior for what an untested Stage 4–5 still contains.
+- The engine constraints above were each established by running the construct against tursodb 0.7.2.
+  "No `WITH RECURSIVE`" and "no FTS5" are observed failures, not guesses.
+- `schema.sql` applies cleanly and is idempotent across repeated runs.
+- Individual SQL snippets in `references/queries.md` were run against a real database as they were
+  authored.
 
-### Known gaps in Stages 4–5 — decisions and honest omissions
+What is **not**:
 
-- **`guild:qa` was not reduced to a trigger.** It still runs the v4 QA flow directly rather than
-  instantiating a `maintenance` graph and returning. The template ships, parses and
-  instantiates — `guild graph new REQ-NNN --template maintenance` works today — but nothing
-  calls it. The conversion is small; the flow the skill owns is already the template's nodes.
-- **An inspection has no id of its own.** `graph_node.requirement_id` references
-  `requirement(id)`, so a maintenance cycle has to borrow a requirement row to carry its graph.
-  That is a schema decision to settle (widen `graph_node` to a subject pair, or accept that an
-  inspection *is* a requirement of a kind), not something to paper over in the CLI — and it
-  should be settled before the `qa` skill is converted, because the conversion is what makes it
-  load-bearing.
-- **`task_dependency` has no writer.** Ordering moved to `graph_edge`. `guild bounties`'
-  dependency filter is therefore vacuously satisfied: `bounties` and `match` answer *who* can
-  take a ticket, and only the graph answers *whether it may run yet*.
-- **`guild next` / `guild batch` were not retired** as the design intended. They survive as the
-  cursor for boards with no graph, and `guild brief`'s `Next:` line is built on the same rule.
-- **A shift never starts an inspection**, and there is no auto-trigger for `maintenance`. That
-  is a decision (§6.2): a full inspection is among the most expensive things the guild does, and
-  firing it automatically would hide that cost. An idle shift ends idle.
-- **Half the shift policy cannot be enforced by a shell script.** Nothing stops the orchestrator
-  session running bare `git push` or writing an `agents/*.md` file. `guild git` has no push verb
-  and refuses the default branch; beyond the CLI's own doors, the denial list travelling with
-  every directive is the whole of the mechanism.
+- **No test suite exists**, by explicit direction. Nothing runs the guild end to end.
+- No skill or agent has been exercised against a live board in this form.
+- Cloud mode is unverified end to end.
+- The conventions listed above are unenforced by construction, and a rewrite is exactly when
+  unenforced conventions get quietly violated.
 
-Shipped-but-honest gaps in Stage 1–3 (`scripts/README.md` lists these in full):
+Treat v6 as a well-reasoned design that has not yet met its first real requirement. The data model
+and the rules beneath it are inherited from a design that *was* scrutinized heavily — see
+`docs/v5-design.md` — but the expression of them here is new.
 
-- **No body writer after creation.** A requirement, plan or task document is written once, at
-  `guild new … --body`. `guild doc put` (an upsert) and `guild bug fix`/`close` are the exceptions.
-- **No `guild clear` / `guild delete` / `guild archive`.** `guild:clear-board` refuses rather than
-  no-op'ing, and `guild:release` copies the export instead of moving files.
-- **The `doc` table has CLI writers but no agent producer yet.** `guild doc put|get|list|search`
-  work, and `guild init` carries a v4 `.guild/docs/` tree into the table — but the researcher still
-  writes markdown files to `.guild/docs/` and the architect still reads that directory, so the
-  directory is the live knowledge base today.
-- **Cloud mode is refused at `guild init`** (see above).
-
-## Quick Start
-
-```
-# Initialize and start your first work session
-check in
-
-# The guild will:
-# - Create .guild/ (config, schema, journal, spool, export, docs, qa, reviews)
-# - Open with the brief
-# - Ask what you want to work on
-# - Create a requirement and start the agent chain
-# - Continue until you say "no" or the backlog is empty
-
-# Read the board without starting work
-guild status          # → guild:brief
-
-# See it as a page
-show me the dashboard
-
-# Add a new requirement directly
-new requirement
-```
-
-Or drive the CLI directly:
-
-```bash
-GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
-
-"$GUILD" init 2026-08-13
-"$GUILD" goal new --title "Ship checkout v2" --priority 2      # → GOAL-001
-"$GUILD" phase new --goal GOAL-001 --title "Foundations"       # → PHASE-001
-REQ=$("$GUILD" new req --title "User Authentication" --desc "Login & signup")
-"$GUILD" req assign "$REQ" PHASE-001
-
-# A ticket describes the WORK; the roster answers who takes it (init already seeded it)
-"$GUILD" new task --title "Login form" --req "$REQ" --needs implement,frontend --prefers svelte
-"$GUILD" match TASK-001                      # ranked candidates; rank 1 is the dispatch target
-"$GUILD" bounties                            # what can be worked now — and what cannot, and why
-
-# The chain is data: instantiate the graph, then ask what runs next
-"$GUILD" graph new "$REQ"                    # from templates/standard.yaml
-"$GUILD" gates --pending                     # gate-plan is waiting on you
-"$GUILD" gate "$REQ/gate-plan" --approve     # nothing is built until this
-"$GUILD" segment "$REQ" --json               # the batches, in order, to the next gate
-
-"$GUILD" move TASK-001 in-progress                     # dispatch the ticket
-"$GUILD" node "$REQ/implement.login-form" running --task TASK-001
-"$GUILD" spool drain TASK-001                          # fold in the agent's reports
-"$GUILD" move TASK-001 done
-"$GUILD" node "$REQ/implement.login-form" done         # THIS is what propagates readiness
-
-# Or let it work while you are away — it stops at the next gate, and says why
-"$GUILD" shift --dry-run                     # what a shift would pick up. Writes nothing
-"$GUILD" shift --policy                      # what it may and may not do
-"$GUILD" shift --max-tasks 10 --max-minutes 60
-"$GUILD" shift-report                        # the morning read
-
-"$GUILD" checkin 2026-08-13
-"$GUILD" brief                               # the narrated read
-"$GUILD" dashboard --open                    # the same, as one offline page
-"$GUILD" export                              # refresh the committed snapshot
-
-rm -f .guild/guild.db && "$GUILD" rebuild    # the database is derived; the journal is the truth
-```
-
-## File Structure
-
-```
-guild/
-├── .claude-plugin/
-│   └── plugin.json                     # Plugin manifest
-├── docs/
-│   └── v5-design.md                    # The v5 architecture design doc (5 stages)
-├── templates/
-│   ├── standard.yaml                   # Building a requirement — the default chain, as data
-│   └── maintenance.yaml                # Inspecting what was built — the QA cycle
-├── scripts/
-│   ├── guild                           # Deterministic board CLI (dispatcher only)
-│   ├── schema.sql                      # The DDL — idempotent
-│   ├── dashboard.tmpl.html             # Generated-page template for `guild dashboard`
-│   ├── test-guild.sh                   # CLI harness
-│   ├── lib/
-│   │   ├── db.sh                       # Driver: config, db_exec/db_query, sql_str/sql_text, spool
-│   │   ├── journal.sh                  # preflight, append, recover, sync, rebuild, compact
-│   │   ├── artifacts.sh                # new/read/meta/move/list/next/batch/log/finding/spool drain
-│   │   ├── direction.sh                # goal, phase, req assign
-│   │   ├── records.sh                  # bug, doc
-│   │   ├── quality.sh                  # coverage and the inspection clock
-│   │   ├── brief.sh                    # the structured briefing
-│   │   ├── dashboard.sh                # the seven-view HTML page
-│   │   ├── roster.sh                   # sync-agents, match, bounties, capability requests
-│   │   ├── graph.sh                    # graph new/show/validate/deviate — and THE YAML scanner
-│   │   ├── template.sh                 # templates, template — the readable template surface
-│   │   ├── segment.sh                  # segment, node, gate, gates
-│   │   ├── shift.sh                    # shift — the unattended loop's controller
-│   │   ├── gitsafe.sh                  # git branch-for/commit-task/revert-task/shift-status
-│   │   ├── report.sh                   # shift-report — what happened while you were away
-│   │   ├── render.sh                   # board, markdown export, JSON dump, escaping helpers
-│   │   └── init.sh                     # init, v4 archival, rebuild, journal subcommands
-│   └── README.md                       # CLI reference
-├── agents/
-│   ├── architect.md
-│   ├── developer.md
-│   ├── developer-svelte.md             # Svelte 5 / SvelteKit specialist
-│   ├── product-owner.md
-│   ├── product-reviewer.md
-│   ├── qa-strategist.md                # QA discipline — risk map & coverage planning
-│   ├── qa-tester.md                    # QA discipline — runs app, authors e2e specs, files bugs
-│   ├── researcher.md
-│   ├── reviewer-architecture.md
-│   ├── reviewer-business-logic.md
-│   ├── reviewer-edge-case.md
-│   ├── reviewer-security.md
-│   ├── test-planner.md
-│   └── test-writer.md
-└── skills/
-    ├── check-in/
-    │   ├── SKILL.md
-    │   └── references/
-    │       ├── agent-chains.md         # Agent chain patterns
-    │       ├── state-format.md         # The database model, .guild/ layout, the cursor rule
-    │       ├── task-lifecycle.md       # Task record format and status transitions
-    │       └── workflow-compilation.md # Compiling a segment to a workflow, and resuming a crash
-    ├── shift/
-    │   └── SKILL.md                    # The unattended shift — run until the next gate
-    ├── brief/
-    │   └── SKILL.md                    # The narrated read of the board
-    ├── dashboard/
-    │   └── SKILL.md                    # The self-contained HTML page
-    ├── guild-status/
-    │   └── SKILL.md                    # Deprecated alias → guild:brief
-    ├── clear-board/
-    │   └── SKILL.md
-    ├── comprehensive-review/
-    │   ├── SKILL.md
-    │   └── references/
-    │       ├── agent-capabilities.md
-    │       └── review-interpretation.md
-    ├── create-workflow/
-    │   └── SKILL.md
-    ├── discuss/
-    │   └── SKILL.md
-    ├── new-requirement/
-    │   └── SKILL.md
-    ├── qa/
-    │   └── SKILL.md                    # Independent QA discipline entry point
-    ├── qa-mindset/
-    │   └── SKILL.md                    # QA pillars, what-if catalog, hybrid oracle (agent reference)
-    ├── qa-artifacts/
-    │   └── SKILL.md                    # Which QA output is a row and which stays prose
-    ├── release/
-    │   └── SKILL.md
-    ├── svelte-core/
-    │   └── SKILL.md                    # Svelte 5 core concepts reference
-    ├── svelte-build-deploy/
-    │   └── SKILL.md                    # SvelteKit build and deployment reference
-    ├── svelte-advanced/
-    │   └── SKILL.md                    # Svelte 5 advanced patterns reference
-    ├── svelte-best-practices/
-    │   └── SKILL.md                    # Svelte development best practices reference
-    ├── svelte-env-vars-check/
-    │   └── SKILL.md                    # SvelteKit env-var usage audit
-    └── verify-and-fix/
-        ├── SKILL.md                    # End-to-end error diagnosis and fix workflow
-        └── references/
-            ├── investigation.md        # Investigation steps, source-query order, findings format
-            └── tdd-fix.md              # TDD fix flow, test requirements, and final summary format
-```
+---
 
 ## License
 
-MIT License - See LICENSE file for details.
+MIT
 
 ## Author
 
-**Gian Patrick Quintana**
-- Email: gian.quintana@hirokata.dev
-- GitHub: [@hirogakatageri](https://github.com/hirogakatageri)
+Gian Patrick Quintana — <gian.quintana@hirokata.dev>

@@ -88,18 +88,20 @@ your-project/
 guild status
 ```
 
-> **Guild prerequisite:** the guild board is a local Turso database, so it needs the `tursodb` binary. No account, token or network is required. `guild init` checks for it and prints this line rather than failing:
+> **Guild prerequisite:** the guild board is a local Turso database, and `tursodb` is the tool the guild uses to reach it — there is no guild CLI. No account, token or network is required. Install it and put it on `PATH`:
 >
 > ```bash
-> curl --proto '=https' --tlsv1.2 -LsSf \
->   https://github.com/tursodatabase/turso/releases/latest/download/turso_cli-installer.sh | sh
+> brew install tursodatabase/tap/turso   # or: curl -sSfL https://get.tur.so/install.sh | bash
+> export PATH="$HOME/.turso:$PATH"
 > ```
 
 ---
 
 ## How to Use the Guild Plugin
 
-The Guild plugin (v5.0.0-beta) provides continuous agent orchestration through a persistent, database-backed work cycle. The guild tracks direction, requirements, tasks, bugs and quality coverage across sessions — no per-session setup required.
+The Guild plugin (v6.0.0) provides continuous agent orchestration through a persistent, database-backed work cycle. The guild tracks direction, requirements, tasks, bugs and quality coverage across sessions — no per-session setup required.
+
+**The plugin is a schema and a set of skills — not a program.** `tursodb` already executes SQL, so the guild ships no second tool that does the same thing: members write their own SQL, and the guild's rules live *in the database* as CHECK constraints (the status vocabularies), views (the derived rules — the cursor, the review gate, readiness, the matcher, the board, each with one definition) and triggers (the `event` record, written on every mutation). A member can forget to call a command; a member cannot bypass a trigger or a CHECK.
 
 ```
 guild:new-requirement — live 3-way interview (product-owner + architect + you)
@@ -108,7 +110,7 @@ guild:new-requirement — live 3-way interview (product-owner + architect + you)
     → 4 reviewers in parallel → a review report you act on
 ```
 
-**Stages 1 and 2 of the five-stage v5 design are shipped.** The capability roster, the execution graph and gates, and unattended operation are Stages 3–5 and are **not** built yet — the surfaces that will show them render as empty sections today, and say so.
+**v6 is a fresh rewrite, and its status is worth reading before you trust it.** The v5 CLI it replaces had four adversarial review rounds and a 2,278-check suite; that code is deleted and none of that assurance carries over. v6 ships with no tests, by design. See the *Status* section in `plugins/guild/README.md`.
 
 ### Setting Up
 
@@ -117,16 +119,15 @@ The guild requires no manual initialization. On your first check-in it creates a
 ```
 .guild/
 ├── config.yaml       # committed — storage mode; env var NAMES only, never a credential
-├── journal.ndjson    # committed — append-only change log; `guild rebuild` replays it
-├── export/           # committed — GENERATED markdown snapshot, one file per requirement
-├── guild.db          # gitignored — the board itself (Turso/SQLite), DERIVED state
+├── guild.db          # gitignored — THE BOARD
 ├── docs/  qa/        # evergreen knowledge base and QA artifacts
-└── reviews/          # per-requirement review reports
+├── reviews/          # per-requirement review reports
+└── dashboard.html    # gitignored — regenerated wholesale
 ```
 
-The board is a **database**: there is no `BOARD.md`, no ticket file and no status directory — an artifact's status is a **column**, and the "board" is a live view rendered from SQL. Local mode needs no account, token or network; it does need the `tursodb` binary, and `guild init` prints the one-line installer if it is missing. Cloud mode is deliberately refused for now.
+The board is a **database**: there is no `BOARD.md`, no ticket file, no `state.yaml` and no status directory — an artifact's status is a **column**, and the "board" is a live view rendered from SQL. Local mode needs no account, token or network; it does need the `tursodb` binary. Cloud mode is unverified end to end.
 
-Delete `guild.db` at any time and run `guild rebuild` — the committed journal is the durable record.
+**There is no journal, so `guild.db` is not disposable.** `event` rows written by triggers are the record, and they live in the same database as everything else. What git carries is the human-readable residue: `config.yaml`, `docs/`, `qa/`, `reviews/` and the repo's own `CHANGELOG.md`. Back the file up before clearing the board — a `DELETE` is final.
 
 Open a Claude Code session in your project and say:
 
@@ -136,7 +137,7 @@ check in
 
 The guild will greet you, create the board, and ask what you want to work on.
 
-> **Upgrading from a v4 guild?** `guild init` **moves** the old directory board to `.guild/v4-archive/` — never deletes, never parses — and there is no history import. `.guild/docs/` and `.guild/qa/` carry over because they are evergreen. Unfinished v4 work is re-entered through `new requirement`, reading the archived plan.
+> **Upgrading from a v4 guild?** The check-in offers to **move** the old directory board to `.guild/v4-archive/` — never deletes, never parses — and there is no history import. `.guild/docs/` and `.guild/qa/` carry over because they are evergreen. Unfinished v4 work is re-entered through `new requirement`, reading the archived plan.
 
 ### Creating Requirements
 
@@ -215,7 +216,7 @@ guild status          # → the guild:brief skill; narrates the same brief, read
 show me the dashboard # → .guild/dashboard.html: six views, offline, no server
 ```
 
-The dashboard is one self-contained file — all CSS and JS inline, deterministic bytes — with Roadmap, Board, Graph, Bugs, Coverage and Activity views. (The Graph view is Stage 4 and says so rather than drawing an empty chart.)
+The dashboard is one self-contained file — all CSS and JS inline, deterministic bytes — with Roadmap, Board, Graph, Bugs, Coverage and Activity views.
 
 ### Skills Reference
 
@@ -227,7 +228,7 @@ The dashboard is one self-contained file — all CSS and JS inline, deterministi
 | `guild:new-requirement` | Live 3-way interview (product-owner + architect + you) that leaves a planned, ticketed requirement on the board | "new requirement", "I need a feature", "I want to build" |
 | `guild:qa` | Seed the independent QA discipline — risk-mapped coverage, e2e regression specs, bugs filed as rows | "QA the product", "run a QA pass", "build comprehensive e2e tests" |
 | `guild:comprehensive-review` | Run all 4 reviewers in parallel against recent changes | "review my changes", "run comprehensive review", "check all my code" |
-| `guild:clear-board` | Inventories the board and explains that v5 has no delete command yet (it refuses rather than pretending) | "clear the board", "reset the guild", "start fresh" |
+| `guild:clear-board` | Deletes every unit of work, keeping what outlives a board — there is no journal to replay, so a `DELETE` is final | "clear the board", "reset the guild", "start fresh" |
 | `guild:create-workflow` | Interactively design and generate automation workflows (GitHub Actions, scripts, Makefiles) | "create a workflow", "generate a workflow", "add a GitHub Actions workflow", "set up automation" |
 | `guild:discuss` | Summarize conversation context and facilitate focused topic discussions | "discuss", "let's discuss", "discuss [topic]", "summarize the context", "what are we working on" |
 | `guild:release` | Stamp CHANGELOG, snapshot completed requirements from the export, create git tag | "cut a release", "ship it", "tag a version" |
