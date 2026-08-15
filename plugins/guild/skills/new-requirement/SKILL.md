@@ -570,6 +570,15 @@ is not a surprise later:
   under roster gaps until a member declares it.
 ```
 
+### 9. Verify against §4
+
+Run `guild:validate new-requirement` before you report. §4 of `docs/expectations.md` asserts
+what this skill is for: §4.a that nothing moved and nothing was claimed, §4.b that
+`v_ready_nodes` offers **exactly one** row and it is `gate-plan`, §4.c the node/edge/gate
+arithmetic (`N+9`, `2N+10`, `2`), §4.d the plan, its slices and the four-way review fan-out.
+**Report every failure with its rows.** A silently torn INSERT exits `1` and looks like
+success — §4.b is the strongest single statement that nothing can be built yet.
+
 ## Rules
 
 - **IDs are derived inside the INSERT** — `'REQ-' || printf('%03d', COALESCE(MAX(…),0)+1)` in

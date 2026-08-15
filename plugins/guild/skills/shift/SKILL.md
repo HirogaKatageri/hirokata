@@ -544,6 +544,17 @@ Narrate stop reason first, then what got done, then the decisions waiting, then 
 next. **Name things** — "TASK-013 failed twice and was given up on; its edits are quarantined in
 `.guild/backup-revert-TASK-013-…`" is a briefing. "1 failure" is not.
 
+## Step 6 — verify against §12, and put it in the report
+
+Run `guild:validate shift` before the morning report goes out, and fold the result into it.
+§12 of `docs/expectations.md` matters more than any other section: **in v5 the CLI locked
+four of these doors in code, and that CLI is gone.** §12.a asserts you stopped at a gate and
+never past one, §12.b what you never touched, §12.c the failure policy, §12.d that a blocked
+ticket became a roster gap rather than a silent skip, §12.e that every stop said why, and
+§12.f the git safety checks — never pushed, never on the default branch. The assertions run
+*after* the night, not during it, so a failure here is something the user reads at breakfast.
+**Report every one with its rows, before the summary.**
+
 ## Arming it on a cadence — opt-in, per project
 
 A shift is one loop; a cadence is what makes it a night's work. Both of these arm **this skill**.

@@ -698,6 +698,14 @@ UPDATE guild_state SET value = strftime('%Y-%m-%dT%H:%M:%SZ','now')
 
 ---
 
+## Step 5: Verify against expectations
+
+Before you hand the session back, run `guild:validate check-in` — the global invariants plus
+§7 of `docs/expectations.md`, which asserts the four ways an orchestrator goes wrong:
+dispatching by a hardcoded name, letting somebody else move a status, building past a gate,
+and re-deriving a rule instead of reading the view. **Report every failure with its rows.**
+Your own account of what you wrote is not evidence; the board is.
+
 ## Key Rules
 
 1. **The graph is the chain, and you do not know it.** What runs and what runs together comes

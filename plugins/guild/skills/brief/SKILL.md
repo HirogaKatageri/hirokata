@@ -211,6 +211,13 @@ End by offering the obvious follow-ups, once, without doing them:
 
 > Say **check in** to start working, or **dashboard** for the visual view.
 
+## Step 5 — check the briefing against §5
+
+Two things have to hold: the board is byte-for-byte as you found it, and the narration named
+every fact §5.b's roll call obliges it to. Run `guild:validate brief` — it runs the global
+invariants and §5 of `docs/expectations.md` against the live board. **Report anything that
+does not hold** in one line at the end of the briefing; never repair it silently.
+
 ## Rules
 
 - **Read-only.** Every statement is a `SELECT`. Never `UPDATE`, `INSERT`, `DELETE`, never sync

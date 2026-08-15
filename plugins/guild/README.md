@@ -237,6 +237,7 @@ the price of moving the vocabulary into the engine, and it is a real one.
 | `guild:clear-board` | Deletes every unit of work, keeping the things that outlive a board. **There is no journal to replay any more** — a `DELETE` is final. Back the file up first. |
 | `guild:discuss` | Surfaces the subjects in the current context and drives a focused discussion. |
 | `guild:create-workflow` | Generates a CI or script workflow file. |
+| `guild:validate` | **Runs `docs/expectations.md` against the live board** — the nine global invariants by default, a named process's postconditions on request. Reports each failure with the offending rows. Read-only unless you ask it to load a fixture. |
 | `guild:warehouse` | **The reference every member loads before touching guild data.** |
 
 Agent-facing skills that specialists pre-load rather than users invoking: `guild:qa-mindset`,
@@ -291,10 +292,13 @@ plugins/guild/
 ├── skills/
 │   ├── warehouse/          # how to reach the board — the skill every member loads
 │   │   └── references/     # schema.md, queries.md, tursodb-gotchas.md, templates/
+│   ├── validate/           # runs the expectations against the live board
 │   └── …                   # check-in, shift, brief, dashboard, new-requirement, qa, …
 └── docs/
-    ├── v6-architecture.md  # the current design — start here
-    └── v5-design.md        # historical; the data model and rules are still in force
+    ├── v6-architecture.md        # the current design — start here
+    ├── expectations.md           # THE SPEC a member's work is checked against
+    ├── expectations-fixtures.md  # the six known board states it is checked on
+    └── v5-design.md              # historical; the data model and rules are still in force
 ```
 
 The board, in your project:
@@ -309,6 +313,47 @@ The board, in your project:
 ├── dashboard.html      # gitignored. regenerated wholesale
 └── templates/*.yaml    # optional. a project's override of the shipped execution templates
 ```
+
+---
+
+## Validation: from testing code to validating behavior
+
+v6 deleted a 31,348-line CLI, and its 8,918-line test harness went with it. Nothing replaced the
+harness in kind, and nothing should have — **there is no code left to unit-test.** Every function
+became a CHECK, a view, a trigger, or a paragraph a member is expected to read and act on.
+
+So the thing that can fail changed. It is no longer *"the function returned the wrong value"*:
+
+> An AI member read the schema and the process, understood some of it, and did something **adjacent**
+> to what was needed.
+
+`docs/expectations.md` is the specification that catches that. It asks one question — **did the
+member understand the schema and the process, and do what was needed?** — and because the data model
+is a database, it never answers in prose. Every expectation is a **SQL assertion with a stated
+expected result**:
+
+| | |
+|---|---|
+| **§3 — nine global invariants** | Hold at all times, whatever just ran: referential health, vocabulary, id shape, gate integrity, roster integrity, closure, event coverage, graph structure, concurrency. |
+| **§4–§12 — one section per process** | Trigger, preconditions, expected sequence, postconditions, anti-expectations, and *cannot be asserted* — for `new-requirement`, `brief`, `dashboard`, `check-in`, `clear-board`, `release`, `guild-status`, `qa` and `shift`. |
+| **`expectations-fixtures.md`** | Six known board states — `empty`, `planned`, `in-flight`, `review-ready`, `messy`, `maintenance` — because an assertion run against an unknown state answers differently every time. |
+
+Assertions return **zero rows when healthy and the offending rows when not**, so a failure names its
+own cause. `finding-open-past-gate-repairs|1|REQ-001` tells you the row, the requirement and the
+rule; a boolean `FAIL` only tells you to go looking.
+
+Say **"validate the guild"**, or run `guild:validate <process>`. Each process skill also closes by
+running its own section, because a member's account of what it wrote is not evidence — the board is.
+(The tursodb splitter can tear a script apart mid-string and still exit having committed half of it.
+That is why postconditions are queried rather than assumed.)
+
+**What this deliberately does not do.** It does not assert that the code works, that a feature is
+correct, or that a test passes — the guild has reviewers, testers and a QA discipline for that, and
+they operate on the product, not on the board. It also leaves the largest questions open on purpose:
+whether a plan is any *good*, whether the code was actually written, whether a human genuinely made
+the decision a gate records, who really wrote a row. Each section names those under *Cannot be
+asserted* rather than inventing a proxy check, because a weak assertion turns an open question into
+a green check.
 
 ---
 
@@ -328,14 +373,24 @@ What *is* verified:
 - `schema.sql` applies cleanly and is idempotent across repeated runs.
 - Individual SQL snippets in `references/queries.md` were run against a real database as they were
   authored.
+- **Every assertion in `docs/expectations.md` and every fixture in `docs/expectations-fixtures.md`
+  was executed** against a real tursodb 0.7.2 database — confirmed to pass on a healthy board, and,
+  for the nine invariants, confirmed to *fire* on a deliberately injected breach. An assertion that
+  has never been seen to fail is not an assertion, it is a wish.
 
 What is **not**:
 
-- **No test suite exists**, by explicit direction. Nothing runs the guild end to end.
+- **No test suite exists**, and the expectations are not one. They replace the deleted harness at a
+  **different level**: the harness proved a program's functions behaved, and this proves a board is
+  coherent after an agent touched it. Different surface, not a smaller version of the same one.
+- **The expectations have never been exercised against a real run.** They have only been run against
+  fixtures written alongside them — which shares an author with what it checks, and is a weaker thing
+  than meeting an actual member's output. Nothing runs the guild end to end.
 - No skill or agent has been exercised against a live board in this form.
 - Cloud mode is unverified end to end.
 - The conventions listed above are unenforced by construction, and a rewrite is exactly when
-  unenforced conventions get quietly violated.
+  unenforced conventions get quietly violated. The expectations are aimed squarely at those eight —
+  but aiming at a failure is not the same as having caught one.
 
 Treat v6 as a well-reasoned design that has not yet met its first real requirement. The data model
 and the rules beneath it are inherited from a design that *was* scrutinized heavily — see

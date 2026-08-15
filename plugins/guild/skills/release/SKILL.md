@@ -294,6 +294,14 @@ Not pushed. Push with:
   git push && git push --tags
 ```
 
+## Step 10 — verify against §9
+
+Run `guild:validate release`. §9 of `docs/expectations.md` follows from one sentence — a
+release *records*, it does not retire: §9.a fingerprints the board before and after and the
+**only** difference permitted is the one `guild_state` row, §9.b that the release record is
+well-formed and no requirement was released twice or released while not done. **Report every
+failure with its rows.** Under `--dry-run`, §9.a's diff must be empty.
+
 ## Dry-run mode
 
 With `--dry-run`, run steps 1–5 to build the plan and print it: the version, the requirements in

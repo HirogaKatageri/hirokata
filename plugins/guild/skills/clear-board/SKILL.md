@@ -198,6 +198,14 @@ REQ-001 again on an emptied board — but any ID in git history or in .guild/qa/
 now points at nothing. Delete the backup when you are sure.
 ```
 
+## Step 7 — verify against §8
+
+Run `guild:validate clear-board`. §8 of `docs/expectations.md` is symmetrical and the second
+half is the one that matters: §8.a asserts every board table is empty, §8.b diffs the *keep*
+fingerprint — Step 2's counts — to prove the roster, the coverage map, the library and the
+event feed came through untouched. **Report any line that moved.** A clear that took an
+evergreen row destroyed something a board reset was never allowed to reach.
+
 ## Rules
 
 - **Back up before you ask.** `cp .guild/guild.db .guild/guild.db.bak-<stamp>` is the only undo

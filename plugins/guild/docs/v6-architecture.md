@@ -103,6 +103,14 @@ the `schema.sql` header, in `README.md`, and here, and nowhere else.
 
 Where this document or any skill says a rule holds, check which list it is on.
 
+**These eight are exactly what `docs/expectations.md` asserts.** A rule the engine enforces needs
+no assertion — a bad status word is rejected by a CHECK on every connection, forever, and spending
+an expectation on it buys nothing. The eight above are the ones nothing enforces at all, so each is
+carried instead by a SQL assertion with a stated expected result: G6 catches the requirement closed
+over an open task, G5 the capability outside the vocabulary, G4 the gate approved without the node
+moved, G7 the mutation that wrote around the triggers. Items 1 and 7 — the lying actor and the long
+cycle — cannot be asserted by anyone in SQL, and both are named as such rather than papered over.
+
 ## 5. Engine constraints
 
 Verified against tursodb 0.7.2. Each of these shaped the schema.
@@ -150,6 +158,7 @@ plugins/guild/
 ├── agents/                 # 14 members; frontmatter (name, model, capabilities, serial) IS the roster
 ├── skills/
 │   ├── warehouse/          # the guide to the board — every member loads this first
+│   ├── validate/           # runs docs/expectations.md against the live board
 │   ├── check-in/           # the orchestrator; references/ holds state-format & task-lifecycle
 │   ├── shift/              # the unattended loop
 │   ├── brief/ dashboard/ guild-status/
@@ -157,8 +166,10 @@ plugins/guild/
 │   ├── release/ clear-board/ comprehensive-review/ discuss/ verify-and-fix/ create-workflow/
 │   └── svelte-*/           # specialist reference skills
 └── docs/
-    ├── v6-architecture.md  # this file
-    └── v5-design.md        # historical; the model and rules it reasons out are still in force
+    ├── v6-architecture.md        # this file
+    ├── expectations.md           # THE SPEC a member's work is checked against — SQL assertions
+    ├── expectations-fixtures.md  # the six known board states those assertions are run against
+    └── v5-design.md              # historical; the model and rules it reasons out are still in force
 ```
 
 The board, in a project:
@@ -188,8 +199,42 @@ them and who writes the SQL** — not what they are.
 ## 9. Status
 
 v6 is a fresh rewrite and should be treated as one. The v5 CLI had four adversarial review rounds and
-a 2,278-check suite; **that code is deleted and none of its assurance transfers.** No test suite
-exists for v6, by explicit direction. `schema.sql` applies cleanly and idempotently, the engine
-constraints above are observed facts, and individual queries were run as they were authored — but
-nothing has exercised the guild end to end, and the conventions in §4 are precisely the kind of thing
-a rewrite violates quietly.
+an 8,918-line, 2,278-check harness; **that code is deleted and none of its assurance transfers.**
+
+### Validation moved down a level: from testing code to validating behavior
+
+Deleting 31,348 lines of bash deleted its test harness with it, and nothing should have replaced it
+in kind — **there is no code left to unit-test.** Everything that used to be a function is now a
+CHECK, a view, a trigger, or a paragraph a member is expected to read and act on. So the thing that
+can fail changed. It is no longer "the function returned the wrong value". It is:
+
+> An AI member read the schema and the process, understood some of it, and did something *adjacent*
+> to what was needed.
+
+`docs/expectations.md` is the specification that catches that. It asks one question — **did the
+member understand the schema and the process, and do what was needed?** — and because the data model
+is a database, it never answers in prose. Every expectation is a **SQL assertion with a stated
+expected result**, written to return zero rows when healthy and the offending rows when not, so a
+failure names its own cause. `docs/expectations-fixtures.md` supplies the six known board states
+those assertions run against, because an assertion against an unknown state answers differently
+every time. `guild:validate` runs them; each process skill closes by running its own section.
+
+This is deliberately **not** the old harness at a lower line count. The harness proved a program's
+functions behaved; this proves a board is coherent after an agent touched it. It covers a strictly
+different surface, and it leaves the largest questions open on purpose — whether a plan is any good,
+whether the code was actually written, whether a human genuinely decided a gate, who really wrote a
+row. Each section names those under *Cannot be asserted* rather than faking a proxy check, because a
+weak assertion converts an open question into a green check.
+
+### What is and is not established
+
+Established: `schema.sql` applies cleanly and idempotently; the engine constraints in §5 are observed
+failures rather than guesses; every assertion in `expectations.md` and every fixture in
+`expectations-fixtures.md` was executed against a real tursodb 0.7.2 database, confirmed to pass on a
+healthy board and — for the invariants — confirmed to *fire* on an injected breach.
+
+Not established: **nothing has exercised the guild end to end.** The expectations have never been run
+against the output of a real member doing real work; they have only been run against fixtures written
+alongside them, which is a weaker thing and shares an author with what it checks. No skill or agent
+has met a live board in this form. The conventions in §4 are precisely what a rewrite violates
+quietly, and the first real requirement is what will say whether these assertions catch it.

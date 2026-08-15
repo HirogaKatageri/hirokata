@@ -226,6 +226,14 @@ Publish **only** if they say yes: read the generated file, publish it with the A
 passing that path, and hand back the URL. Do not publish on your own initiative, do not publish
 "so it's ready", and do not re-publish on a later rebuild unless asked again.
 
+## Step 6 — verify against §6
+
+Run `guild:validate dashboard`. §6 of `docs/expectations.md` asserts over the **artifact**,
+not the board: §6.a–§6.b are the escape and the `</script>` closer count, §6.c that every
+view key is present and empty means `[]` rather than `null`, §6.d that no banned sink and no
+external request survived. Three of those are security, not cosmetics. **Report any failure
+with its rows and do not open a page that failed one.**
+
 ## Rules
 
 - **Read-only.** Every statement is a `SELECT`. Never `UPDATE`, `INSERT` or `DELETE` from here,
