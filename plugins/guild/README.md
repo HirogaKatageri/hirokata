@@ -58,8 +58,8 @@ bash. Nothing polices them now — they are documented in `schema.sql` and nowhe
    away.
 3. **"A `failed` task is adjudicated when the orchestrator waives it."** The waiver lives in a
    work-log line's *prefix*, matched with `LIKE`. It is a marker, not a column.
-4. **"Plan slices touch disjoint files."** `plan_slice.files` is a JSON array; the disjointness is
-   an assertion by the architect. Nothing checks it.
+4. **"Concurrently dispatched tickets touch disjoint files."** `task.files` is a JSON array; the
+   disjointness across a `parallel_group` is an assertion by the architect. Nothing checks it.
 5. **"A capability must be in the vocabulary."** A CHECK cannot reference another table, so an
    unknown capability inserts fine and simply matches nobody. Read `v_capability_unknown` when the
    matcher goes quiet.
@@ -140,12 +140,12 @@ missing, syncs the roster from the agent files, and opens with the brief.
 The hierarchy, widest to narrowest:
 
 ```
-goal → phase → requirement → plan → plan_slice → task
+goal → phase → requirement → plan → task
 ```
 
 A goal is direction. A phase is a stage of that goal. A requirement is one unit of shipped value. A
-plan is how the architect intends to build it; a slice is a file-disjoint chunk of that plan; a task
-is a bounty a guild member can claim.
+plan is how the architect intends to build it; a task is a bounty a guild member can claim, carrying
+the file set it owns in `files`.
 
 Alongside them: `graph_node` / `graph_edge` / `gate` (the execution graph), `agent` /
 `agent_capability` / `task_capability` (the roster and the matcher), `bug`, `coverage`,
@@ -229,7 +229,7 @@ the price of moving the vocabulary into the engine, and it is a real one.
 | `guild:brief` | Where the project stands: direction, in flight, bugs, coverage due, what moved. Read-only. |
 | `guild:guild-status` | **Deprecated alias for `guild:brief`** — the v4 name. It claims **no** natural-language trigger phrases; every status phrasing routes to `guild:brief`, because two skills advertising "guild status" would make every status request a coin flip. Reachable only by typing `/guild:guild-status`. |
 | `guild:dashboard` | Renders the board as one self-contained offline HTML page. Read-only. |
-| `guild:new-requirement` | A live 3-way interview between the product-owner, the architect and you. Writes the requirement, the plan, its slices, the tickets **and the execution graph**, then ends at `gate-plan` — nothing is built until you approve. |
+| `guild:new-requirement` | A live 3-way interview between the product-owner, the architect and you. Writes the requirement, the plan, the tickets **and the execution graph**, then ends at `gate-plan` — nothing is built until you approve. |
 | `guild:qa` | Seeds a QA pass onto the board: a qa-strategist plans risk-based coverage, then qa-testers run the app, author Playwright specs, and file bugs back to the board. |
 | `guild:comprehensive-review` | Multi-dimensional pre-PR review — requirements compliance, coverage, edge cases, architecture, security. |
 | `guild:verify-and-fix` | Diagnoses a reported error end to end, then applies a test-driven fix. |
@@ -254,7 +254,7 @@ capability count (**asc**, so a specialist beats a generalist), then name.
 
 | Agent | Model | Capabilities | Role |
 |-------|-------|--------------|------|
-| `architect` | Opus | `architecture` | Explores the codebase, writes the implementation plan and its slices, composes the execution graph. Recommends direction; never sets it. |
+| `architect` | Opus | `architecture` | Explores the codebase, writes the implementation plan and its tickets, composes the execution graph. Recommends direction; never sets it. |
 | `product-owner` | Sonnet | `requirements` | Interviews you live alongside the architect, writes the requirement record. |
 | `developer` | Sonnet | `implement`, `backend`, `frontend` | Implements code per plan and requirement. |
 | `developer-svelte` | Sonnet | `implement`, `frontend`, `svelte`, `sveltekit` | Svelte 5 / SvelteKit specialist, pre-loaded with four reference skills. |
@@ -287,7 +287,7 @@ The plugin:
 
 ```
 plugins/guild/
-├── schema.sql              # THE TOOL. 25 tables, 26 views, 43 triggers, and the guild's rules
+├── schema.sql              # THE TOOL. 24 tables, 26 views, 43 triggers, and the guild's rules
 ├── agents/                 # 14 roster members; frontmatter is the roster source
 ├── skills/
 │   ├── warehouse/          # how to reach the board — the skill every member loads

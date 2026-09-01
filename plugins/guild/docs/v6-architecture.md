@@ -49,7 +49,7 @@ skills/warehouse/
 
 ## 3. What the database now enforces
 
-`schema.sql` is 25 tables, 26 views and 43 triggers.
+`schema.sql` is 24 tables, 26 views and 43 triggers.
 
 **CHECK constraints are the vocabularies.** Every status and enum column carries its word list. A
 value outside it is rejected by the engine, on every connection, from every member, forever. v5's
@@ -89,8 +89,8 @@ the `schema.sql` header, in `README.md`, and here, and nowhere else.
    query that tells you. Closing anyway is one `UPDATE` away.
 3. **"A `failed` task is adjudicated when it is waived."** The waiver is a *prefix* on a work-log
    line, matched with `LIKE`. A marker, not a column. A stray log line can look like one.
-4. **"Plan slices touch disjoint files."** `plan_slice.files` is a JSON array. The disjointness is an
-   assertion by the architect; nothing checks it.
+4. **"Concurrently dispatched tickets touch disjoint files."** `task.files` is a JSON array. The
+   disjointness across a `parallel_group` is an assertion by the architect; nothing checks it.
 5. **"A capability must be in the vocabulary."** A CHECK cannot reference another table, so an
    unknown capability inserts fine and matches nobody. `v_capability_unknown` reports them — read it
    when the matcher goes quiet.

@@ -57,7 +57,7 @@ You will be given a TASK ID. There is no ticket file and no `guild read` — the
 ```bash
 # the scalar fields, as one safely-escaped line
 printf "SELECT json_object('id',id,'status',status,'req',requirement_id,
-        'plan',COALESCE(plan_id,''),'slice',COALESCE(plan_slice,''),
+        'plan',COALESCE(plan_id,''),'files',json(files),
         'group',COALESCE(parallel_group,''),'title',title)
    FROM task WHERE id='$T';\n" | tursodb -q -m list "$DB"
 
@@ -71,7 +71,7 @@ printf "SELECT json_object('ts',ts,'agent',agent,'entry',entry)
 
 Read them to understand:
 - **objective**: what to implement — this is your scoped brief
-- **slice**: the `plan_slice` slug, the label the graph's `implement.<slug>` node binds to
+- **files**: the file set this ticket owns; the graph's `implement.<TASK-ID>` node binds to it by id
 - **plan** / **req**: the ids to read only if the objective leaves you short (below)
 - **work log**: any prior progress (in case of resume — continue from the last entry, don't redo
   logged work)
@@ -79,7 +79,7 @@ Read them to understand:
 Before writing any code, log a start entry:
 
 ```bash
-hex=$(printf '%s' "Started — {slice slug or one-line plan}" | xxd -p | tr -d '\n')
+hex=$(printf '%s' "Started — {one-line plan}" | xxd -p | tr -d '\n')
 { printf "PRAGMA foreign_keys = ON;\n"
   printf "INSERT INTO work_log (task_id, ts, agent, entry)
           SELECT t.id, strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now'), 'developer',
@@ -92,27 +92,23 @@ The `FROM task t WHERE t.id='$T'` **is** the referential check — a bad id yiel
 partial write. Log a line as each file lands. An interrupted task with an empty work log gets
 reset and redone from scratch; your entries are what make it resumable.
 
-### 2. Read the Plan Slice and Requirement
+### 2. Read the Plan and Requirement
 
 - **Your ticket is your primary brief.** `SELECT objective FROM task WHERE id='$T';` carries the
-  slice brief — objective, files to touch, approach, interface contract with sibling tasks, and
+  task brief — objective, files to touch, approach, interface contract with sibling tasks, and
   acceptance criteria. In most cases it is all the plan context you need.
-- **The slice row is the same text**, hexed by the architect from the same file:
-  ```bash
-  printf "SELECT body FROM plan_slice WHERE id='PLAN-NNN/{slug}';\n" | tursodb -q -m list "$DB"
-  printf "SELECT files FROM plan_slice WHERE id='PLAN-NNN/{slug}';\n" | tursodb -q -m list "$DB"
-  ```
-  `files` is the JSON array of files this slice owns — and the architect's assertion that no
-  sibling slice touches any of them. **Nothing verifies it.** If your work needs a file outside
-  that set, you are about to collide with a concurrent sibling: say so in a log entry and in your
-  final message rather than editing it quietly.
-- **Full plan**: `SELECT body FROM plan WHERE id='PLAN-NNN';` — ONLY if your slice references a
-  cross-cutting decision or sibling task you can't resolve from the slice alone. Skipping it when
-  the slice suffices saves significant tokens.
+- **Your file set is on the ticket**: `SELECT files FROM task WHERE id='$T';` — the JSON array
+  of files this ticket owns, and the architect's assertion that no sibling in your
+  `parallel_group` touches any of them. **Nothing verifies it.** If your work needs a file
+  outside that set, you are about to collide with a concurrent sibling: say so in a log entry
+  and in your final message rather than editing it quietly.
+- **Full plan**: `SELECT body FROM plan WHERE id='PLAN-NNN';` — ONLY if your ticket references a
+  cross-cutting decision or sibling task you can't resolve from the objective alone. Skipping it
+  when the objective suffices saves significant tokens.
 - **Requirement**: `SELECT body FROM requirement WHERE id='REQ-NNN';` — ONLY if your acceptance
-  criteria reference user stories or constraints the slice does not restate.
+  criteria reference user stories or constraints the objective does not restate.
 
-If the ticket has no `plan_slice` (non-architect-spawned work), fall back to the full PLAN-NNN.
+If the ticket's `objective` is empty (non-architect-spawned work), fall back to the full PLAN-NNN.
 
 ### 3. Explore the Codebase
 
@@ -238,7 +234,7 @@ hold the review gate — a `failed` you set yourself is one nobody has seen.
 - Don't create documentation files (*.md, README)
 - Don't refactor code outside your task's scope
 - Don't add unnecessary abstractions or utilities
-- Don't modify `plan`, `plan_slice` or `requirement` rows — they are the architect's record, and
+- Don't modify `plan` or `requirement` rows — they are the architect's record, and
   an UPDATE against them would succeed, silently, with nothing to undo it
 - **Don't write to `event` by hand.** The triggers write it. It is the guild's memory, and a
   memory you can edit is not one.

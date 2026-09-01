@@ -49,7 +49,7 @@ codebase or the per-developer briefs. The test-planner puts the plan in its test
 printf "SELECT json_object('id',t.id,'status',t.status,'title',t.title)
    FROM task t
   WHERE t.requirement_id='REQ-NNN'
-    AND (t.plan_slice = 'test-plan'
+    AND (t.node_key = 'test-plan'
          OR EXISTS (SELECT 1 FROM task_capability c
                      WHERE c.task_id = t.id AND c.capability = 'test-authoring'))
   ORDER BY t.id;\n" | tursodb -q -m list "$DB"
@@ -61,10 +61,11 @@ It comes back as JSON for a reason: `-m list` is pipe-separated with no quoting,
 containing a newline forges an entire row that reads as completely legitimate. **Never split a
 listing that carries free text on `|` yourself.**
 
-The plan may also be a slice row, if one was written for it:
+The test plan is also a `plan` row written FOR that ticket, if one exists:
 
 ```bash
-printf "SELECT body FROM plan_slice WHERE id='PLAN-NNN/test-plan';\n" | tursodb -q -m list "$DB"
+printf "SELECT body FROM plan WHERE requirement_id='REQ-NNN' AND task_id='TASK-MMM';\n" \
+  | tursodb -q -m list "$DB"
 ```
 
 If there is no test plan at all (bug-fix flow), fall back to the completed developer tickets' work

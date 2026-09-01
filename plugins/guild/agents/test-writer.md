@@ -54,7 +54,7 @@ You will be given a TASK ID. There is no ticket file and no `guild read` — the
 printf "SELECT objective FROM task WHERE id='$T';\n" | tursodb -q -m list "$DB"
 
 printf "SELECT json_object('id',id,'req',requirement_id,'plan',COALESCE(plan_id,''),
-        'slice',COALESCE(plan_slice,''),'title',title)
+        'files',json(files),'title',title)
    FROM task WHERE id='$T';\n" | tursodb -q -m list "$DB"
 
 printf "SELECT json_object('ts',ts,'agent',agent,'entry',entry)

@@ -98,7 +98,7 @@ SELECT id, status, tasks_total, tasks_done, tasks_open, tasks_blocked, tasks_fai
   ```
 
 - `tasks_open > 0` — still `todo`, `in-progress`, **or `blocked`**. A blocked one is the loud
-  case: it means nobody on the roster could take it, so the requirement is shipping a slice
+  case: it means nobody on the roster could take it, so the requirement is shipping work
   nobody ever attempted. Name it as such:
 
   ```
@@ -163,11 +163,11 @@ q "SELECT body FROM requirement WHERE id = '$REQ';" >> "$OUT"
 printf '\n## Plans\n\n' >> "$OUT"
 q "SELECT body FROM plan WHERE requirement_id = '$REQ' ORDER BY id;" >> "$OUT"
 
-printf '\n## Slices\n\n' >> "$OUT"
-q "SELECT '- ' || s.id || ' — ' || replace(replace(s.title, char(10),' '), '|','!')
-        || '  files: ' || s.files
-     FROM plan_slice s JOIN plan p ON p.id = s.plan_id
-    WHERE p.requirement_id = '$REQ' ORDER BY s.id;" >> "$OUT"
+printf '\n## Ticket file sets\n\n' >> "$OUT"
+q "SELECT '- ' || t.id || ' — ' || replace(replace(t.title, char(10),' '), '|','!')
+        || '  files: ' || t.files
+     FROM task t
+    WHERE t.requirement_id = '$REQ' AND t.node_key = 'implement' ORDER BY t.id;" >> "$OUT"
 
 printf '\n## Tasks\n\n' >> "$OUT"
 q "SELECT '- ' || id || '  [' || status || ']  ' || COALESCE(claimed_by, agent, '-') || '  '
@@ -231,7 +231,7 @@ requirements:
 # Release {version}
 
 Each requirement in this release is captured beside this file as `REQ-NNN.md`, rendered from the
-board at release time — plans, slices, tasks, work logs, findings and bugs inlined.
+board at release time — plans, tasks, work logs, findings and bugs inlined.
 
 The requirements themselves stay on the live board as `done`. Nothing was deleted: the board is
 the record, and `guild_state['release:{version}']` is what marks these as shipped.

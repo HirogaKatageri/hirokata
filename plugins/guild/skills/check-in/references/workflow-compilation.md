@@ -47,7 +47,7 @@ export const meta = {
   phases: [{ title: 'Implement' }],
 }
 
-// Independent slice chains PIPELINE. A fast slice is not held behind a slow one.
+// Independent ticket chains PIPELINE. A fast ticket is not held behind a slow one.
 await pipeline([
   () => agent(dispatch('REQ-007/implement.auth-service'), { phase: 'Implement' }),
   () => agent(dispatch('REQ-007/implement.session-store'), { phase: 'Implement' }),

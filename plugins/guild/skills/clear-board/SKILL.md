@@ -61,7 +61,7 @@ UNION ALL SELECT 'KEEP:docs',    COUNT(*) FROM doc;
 
 If every countable row is 0, say `The guild board is already empty — nothing to clear.` and stop.
 
-**What a clear deletes:** `goal`, `phase`, `requirement`, `plan`, `plan_slice`, `task`,
+**What a clear deletes:** `goal`, `phase`, `requirement`, `plan`, `task`,
 `task_dependency`, `task_capability`, `graph_node`, `graph_edge`, `graph_deviation`, `gate`,
 `work_log`, `review_finding`, `bug`, `capability_request`, `inspection`, `inspection_coverage`,
 and the `graph-template:REQ-NNN` keys in `guild_state`.
@@ -137,7 +137,6 @@ DELETE FROM bug;
 DELETE FROM task_capability;
 DELETE FROM task_dependency;
 DELETE FROM task;
-DELETE FROM plan_slice;
 DELETE FROM plan;
 DELETE FROM capability_request;
 

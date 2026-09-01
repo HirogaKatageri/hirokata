@@ -145,7 +145,7 @@ healthy.
 
 The judgment calls, named honestly. Anything this section's process depends on that SQL cannot
 see: prose quality, whether a plan is *good*, whether a human actually made the decision the
-gate records, whether a slice's file list is truly disjoint. **Do not fake these.** A weak proxy
+gate records, whether a ticket's file list is truly disjoint. **Do not fake these.** A weak proxy
 assertion in the postconditions is worse than an honest sentence here, because it converts an
 open question into a green check. If the section has no such items, write "None." rather than
 deleting the heading.
@@ -174,12 +174,10 @@ Every foreign key, checked as data rather than as a constraint.
 ```sql
 SELECT 'task.requirement_id' AS ref, t.id AS row_id, t.requirement_id AS missing FROM task t WHERE NOT EXISTS (SELECT 1 FROM requirement r WHERE r.id = t.requirement_id)
 UNION ALL SELECT 'task.plan_id', t.id, t.plan_id FROM task t WHERE t.plan_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM plan p WHERE p.id = t.plan_id)
-UNION ALL SELECT 'task.plan_slice_id', t.id, t.plan_slice_id FROM task t WHERE t.plan_slice_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM plan_slice s WHERE s.id = t.plan_slice_id)
 UNION ALL SELECT 'task.claimed_by', t.id, t.claimed_by FROM task t WHERE COALESCE(t.claimed_by,'') <> '' AND NOT EXISTS (SELECT 1 FROM agent a WHERE a.name = t.claimed_by)
 UNION ALL SELECT 'phase.goal_id', p.id, p.goal_id FROM phase p WHERE NOT EXISTS (SELECT 1 FROM goal g WHERE g.id = p.goal_id)
 UNION ALL SELECT 'requirement.phase_id', r.id, r.phase_id FROM requirement r WHERE r.phase_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM phase p WHERE p.id = r.phase_id)
 UNION ALL SELECT 'plan.requirement_id', p.id, p.requirement_id FROM plan p WHERE NOT EXISTS (SELECT 1 FROM requirement r WHERE r.id = p.requirement_id)
-UNION ALL SELECT 'plan_slice.plan_id', s.id, s.plan_id FROM plan_slice s WHERE NOT EXISTS (SELECT 1 FROM plan p WHERE p.id = s.plan_id)
 UNION ALL SELECT 'graph_node.requirement_id', n.id, n.requirement_id FROM graph_node n WHERE NOT EXISTS (SELECT 1 FROM requirement r WHERE r.id = n.requirement_id)
 UNION ALL SELECT 'graph_node.task_id', n.id, n.task_id FROM graph_node n WHERE n.task_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM task t WHERE t.id = n.task_id)
 UNION ALL SELECT 'graph_edge.from_node', e.from_node || ' -> ' || e.to_node, e.from_node FROM graph_edge e WHERE NOT EXISTS (SELECT 1 FROM graph_node n WHERE n.id = e.from_node)
@@ -235,7 +233,7 @@ UNION ALL SELECT 'goal.priority', id, CAST(priority AS TEXT) FROM goal WHERE pri
 UNION ALL SELECT 'requirement.priority', id, CAST(priority AS TEXT) FROM requirement WHERE priority NOT BETWEEN 1 AND 5
 UNION ALL SELECT 'task.priority', id, CAST(priority AS TEXT) FROM task WHERE priority NOT BETWEEN 1 AND 5
 UNION ALL SELECT 'event.payload', CAST(id AS TEXT), payload FROM event WHERE NOT json_valid(payload)
-UNION ALL SELECT 'plan_slice.files', id, files FROM plan_slice WHERE NOT json_valid(files) OR json_type(files) <> 'array'
+UNION ALL SELECT 'task.files', id, files FROM task WHERE NOT json_valid(files) OR json_type(files) <> 'array'
 ORDER BY col, row_id;
 ```
 
@@ -260,7 +258,6 @@ UNION ALL SELECT 'plan', id FROM plan WHERE NOT (id GLOB 'PLAN-[0-9][0-9][0-9]' 
 UNION ALL SELECT 'task', id FROM task WHERE NOT (id GLOB 'TASK-[0-9][0-9][0-9]' OR id GLOB 'TASK-[0-9][0-9][0-9][0-9]')
 UNION ALL SELECT 'bug', id FROM bug WHERE NOT (id GLOB 'BUG-[0-9][0-9][0-9]' OR id GLOB 'BUG-[0-9][0-9][0-9][0-9]')
 UNION ALL SELECT 'inspection', id FROM inspection WHERE NOT (id GLOB 'INSP-[0-9][0-9][0-9]' OR id GLOB 'INSP-[0-9][0-9][0-9][0-9]')
-UNION ALL SELECT 'plan_slice', id FROM plan_slice WHERE id <> plan_id || '/' || slug
 UNION ALL SELECT 'graph_node', id FROM graph_node WHERE substr(id, 1, instr(id, '/') - 1) <> requirement_id
 UNION ALL SELECT 'graph_node.node_key', id FROM graph_node WHERE instr(id, '/') = 0
 ORDER BY tbl, id;
@@ -270,7 +267,7 @@ ORDER BY tbl, id;
 duplicate id is rejected by the engine and cannot be asserted into existence. There is nothing
 for a query to catch. What G3 *does* catch is the shape — a hand-assigned `REQ-7` instead of
 `REQ-007`, which sorts wrongly and breaks the `ORDER BY id LIMIT 1` that `v_next_task` depends
-on — and the composite-id disagreements, where `plan_slice.id` or `graph_node.id` was built from
+on — and the composite-id disagreements, where `graph_node.id` was built from
 something other than the columns it claims to encode. Both are real and both have been produced
 by hand-written SQL. Gaps in the numeric sequence are not errors and are not asserted.
 
@@ -591,9 +588,9 @@ Named honestly, because a proxy assertion here would convert an open question in
   signal is indirect and not an assertion: an in-flight requirement whose `v_ready_nodes` is empty
   and whose gates are all decided is either finished or looping. Distinguishing the two is a
   review duty.
-- **Whether plan slices touch disjoint files.** `plan_slice.files` is the architect's assertion.
+- **Whether concurrent tickets touch disjoint files.** `task.files` is the architect's assertion.
   §4 checks the declared sets against each other, which catches a *stated* overlap — it cannot
-  catch a slice whose file list is simply wrong or incomplete.
+  catch a ticket whose file list is simply wrong or incomplete.
 - **Whether a `failed` task was genuinely adjudicated.** The waiver is a work-log line beginning
   `Skipped by user`, read back by `v_failed_tasks.waived`. It is a marker, not a column, and a
   stray log line can look like one.
@@ -642,13 +639,14 @@ P4.c must be a **separate round trip.** A failing statement does not stop a turs
    the INSERT with `printf('%03d', COALESCE(MAX(…),0)+1)`, never hand-assigned.
 3. **Place it in the direction** — `phase_id`, on the user's explicit answer. Nullable by design;
    an unaffiliated requirement is finished, not deficient.
-4. **Create the plan and its slices.** Each slice carries `files` as a JSON array — the
-   disjointness assertion that parallel dispatch depends on.
+4. **Create the plan.** One plan per requirement; the decomposition lands on the tickets, not
+   on an intermediate row.
 5. **Create the tickets**, all at `todo`, each with its `task_capability` rows or a pinned
-   `agent`, and `plan_slice_id` / `parallel_group` set from the slice.
+   `agent`, `files` as a JSON array — the disjointness assertion that parallel dispatch depends
+   on — and `parallel_group` where the architect declared a wave.
 6. **Instantiate the graph** from `templates/standard.md`: nodes, edges, two gate rows, and the
-   `guild_state` key `graph-template:REQ-NNN`. With *N* slices this is **N + 9 nodes and 2N + 10
-   edges** — for two slices, 11 and 14.
+   `guild_state` key `graph-template:REQ-NNN`. With *N* implement tickets this is **N + 9 nodes
+   and 2N + 10 edges** — for two tickets, 11 and 14.
 7. **Validate the graph read-only** and send failures back to the architect. Do not patch a graph
    by hand: deviations are its record, and a graph the orchestrator patched has a shape nobody
    justified.
@@ -691,7 +689,7 @@ This is the strongest single statement that nothing can be built yet. `v_ready_n
 schema's one definition of readiness, and at plan time it offers a human decision and nothing
 else.
 
-**§4.c — node, edge and gate counts.** For a plan with *N* slices, expect `N + 9`, `2N + 10`, and
+**§4.c — node, edge and gate counts.** For a plan with *N* implement tickets, expect `N + 9`, `2N + 10`, and
 **exactly 2**:
 
 ```sql
@@ -700,37 +698,35 @@ SELECT (SELECT COUNT(*) FROM graph_node WHERE requirement_id = 'REQ-NNN') AS nod
        (SELECT COUNT(*) FROM graph_node WHERE requirement_id = 'REQ-NNN' AND kind = 'gate') AS gates;
 ```
 
-**§4.d — the plan, its slices, and the review fan-out.** Expect **zero rows**:
+**§4.d — the plan, its tickets, and the review fan-out.** Expect **zero rows**:
 
 ```sql
 SELECT 'no-plan' AS breach, r.id AS row_id, '' AS detail FROM requirement r
  WHERE r.id='REQ-NNN' AND NOT EXISTS (SELECT 1 FROM plan p WHERE p.requirement_id=r.id)
 UNION ALL
-SELECT 'plan-without-slices', p.id, '' FROM plan p
- WHERE p.requirement_id='REQ-NNN' AND NOT EXISTS (SELECT 1 FROM plan_slice s WHERE s.plan_id=p.id)
+SELECT 'plan-without-tasks', p.id, '' FROM plan p
+ WHERE p.requirement_id='REQ-NNN' AND NOT EXISTS (SELECT 1 FROM task t WHERE t.plan_id=p.id)
 UNION ALL
-SELECT 'slice-names-no-files', s.id, s.files FROM plan_slice s JOIN plan p ON p.id=s.plan_id
- WHERE p.requirement_id='REQ-NNN' AND json_array_length(s.files) = 0
+SELECT 'implement-task-names-no-files', t.id, t.files FROM task t
+ WHERE t.requirement_id='REQ-NNN' AND t.node_key='implement' AND json_array_length(t.files) = 0
 UNION ALL
-SELECT 'slice-file-not-a-string', s.id, j.value FROM plan_slice s JOIN plan p ON p.id=s.plan_id
- JOIN json_each(s.files) j ON 1=1
- WHERE p.requirement_id='REQ-NNN' AND j.type <> 'text'
+SELECT 'task-file-not-a-string', t.id, j.value FROM task t
+ JOIN json_each(t.files) j ON 1=1
+ WHERE t.requirement_id='REQ-NNN' AND j.type <> 'text'
 UNION ALL
--- two slices claiming the same file AND dispatched in the same wave
-SELECT 'slices-share-a-file-in-one-parallel-group', s1.id || ' & ' || s2.id, j1.value
-  FROM plan_slice s1 JOIN plan p1 ON p1.id=s1.plan_id
-  JOIN plan_slice s2 ON s2.plan_id=s1.plan_id AND s2.id > s1.id
-  JOIN json_each(s1.files) j1 ON 1=1
-  JOIN json_each(s2.files) j2 ON j2.value = j1.value
-  JOIN task t1 ON t1.plan_slice_id = s1.id
-  JOIN task t2 ON t2.plan_slice_id = s2.id
- WHERE p1.requirement_id='REQ-NNN'
+-- two tickets claiming the same file AND dispatched in the same wave
+SELECT 'tasks-share-a-file-in-one-parallel-group', t1.id || ' & ' || t2.id, j1.value
+  FROM task t1
+  JOIN task t2 ON t2.requirement_id = t1.requirement_id AND t2.id > t1.id
+  JOIN json_each(t1.files) j1 ON 1=1
+  JOIN json_each(t2.files) j2 ON j2.value = j1.value
+ WHERE t1.requirement_id='REQ-NNN'
    AND COALESCE(t1.parallel_group,'') <> '' AND t1.parallel_group = t2.parallel_group
 UNION ALL
-SELECT 'slice-without-implement-node', s.id, '' FROM plan_slice s JOIN plan p ON p.id=s.plan_id
- WHERE p.requirement_id='REQ-NNN'
-   AND NOT EXISTS (SELECT 1 FROM graph_node n WHERE n.requirement_id=p.requirement_id
-                    AND n.node_key='implement' AND n.id = p.requirement_id || '/implement.' || s.slug)
+SELECT 'implement-task-without-node', t.id, '' FROM task t
+ WHERE t.requirement_id='REQ-NNN' AND t.node_key='implement'
+   AND NOT EXISTS (SELECT 1 FROM graph_node n WHERE n.requirement_id=t.requirement_id
+                    AND n.node_key='implement' AND n.task_id = t.id)
 UNION ALL
 SELECT 'reviewer-count-not-four', 'REQ-NNN', CAST((SELECT COUNT(*) FROM graph_node WHERE requirement_id='REQ-NNN' AND node_key='review') AS TEXT)
  WHERE (SELECT COUNT(*) FROM graph_node WHERE requirement_id='REQ-NNN' AND node_key='review') <> 4
@@ -805,8 +801,8 @@ specific ways *this* flow goes wrong:
 
 ### Cannot be asserted
 
-- **Whether the plan is a good plan.** §4.d asserts slices exist and name files. Nothing asserts
-  the decomposition is sensible, that the slices are the right slices, or that the file lists are
+- **Whether the plan is a good plan.** §4.d asserts tickets exist and name files. Nothing asserts
+  the decomposition is sensible, that the tickets are the right tickets, or that the file lists are
   complete. This is the single largest unasserted thing in the build flow, and it is exactly what
   `gate-plan` exists to put in front of a human.
 - **Whether the code was actually written.** The board records that a ticket moved to `done`. It
@@ -1603,7 +1599,6 @@ SELECT 'not-cleared' AS breach, t.tbl AS row_id, CAST(t.n AS TEXT) AS detail FRO
   UNION ALL SELECT 'phase', COUNT(*) FROM phase
   UNION ALL SELECT 'requirement', COUNT(*) FROM requirement
   UNION ALL SELECT 'plan', COUNT(*) FROM plan
-  UNION ALL SELECT 'plan_slice', COUNT(*) FROM plan_slice
   UNION ALL SELECT 'task', COUNT(*) FROM task
   UNION ALL SELECT 'task_dependency', COUNT(*) FROM task_dependency
   UNION ALL SELECT 'task_capability', COUNT(*) FROM task_capability
@@ -1762,7 +1757,6 @@ three preconditions and they are shell, not SQL.
 SELECT 'requirement'    AS part, COUNT(*) || '/' || COALESCE(SUM(length(id)+length(status)),0) AS v FROM requirement
 UNION ALL SELECT 'task',           COUNT(*) || '/' || COALESCE(SUM(length(id)+length(status)),0) FROM task
 UNION ALL SELECT 'plan',           COUNT(*) FROM plan
-UNION ALL SELECT 'plan_slice',     COUNT(*) FROM plan_slice
 UNION ALL SELECT 'graph_node',     COUNT(*) || '/' || COALESCE(SUM(length(status)),0) FROM graph_node
 UNION ALL SELECT 'gate',           COUNT(*) || '/' || COALESCE(SUM(length(status)),0) FROM gate
 UNION ALL SELECT 'work_log',       COUNT(*) FROM work_log
@@ -1855,7 +1849,7 @@ release that restatused a requirement is caught twice, from two directions.
 **§9.c — the advisory clause is a report, not a stop.** `released-over-open-task` fires on a
 legitimate board — the pre-release gate *warns* and the guild master may say yes. Wire it to
 print rather than to exit non-zero, and read it: `blocked=1` in that row means the release shipped
-a slice nobody on the roster could take, and that is the loud case the skill spells out by name.
+a ticket nobody on the roster could take, and that is the loud case the skill spells out by name.
 
 ### Anti-expectations
 
@@ -1961,7 +1955,7 @@ belongs to `guild:brief`."*
 
 The `maintenance` template, end to end: `qa-check` → `qa-plan` → `qa-execute` → `qa-report` →
 `gate-repairs` → `repair`. Six nodes, five edges, **one** gate — invariant, whatever the
-inspection covers, because nothing here fans out per slice.
+inspection covers, because nothing here fans out per implement ticket.
 
 ### Trigger
 
@@ -2471,7 +2465,7 @@ rows** and `v_ready_nodes` offer `REQ-001/test-plan` — the first genuinely sta
    `v_ready_nodes` for the batch; never widen it, never merge two, never queue a segment blind.
 6. **Record both halves, in order**: the ticket, then the node. A node left `running` stalls
    everything behind it and at 3am nobody notices.
-7. **Commit per completed task**, staging that task's declared slice files, with `Guild-Task:` in
+7. **Commit per completed task**, staging that task's declared `files`, with `Guild-Task:` in
    the trailer. Nothing is committed for a failed task; its partial edits are quarantined into
    `.guild/backup-revert-<TASK>-<ts>/` before the next bounty starts.
 8. **On failure**: retry once with a fresh agent instance — the marker is a `work_log` line
@@ -2864,7 +2858,7 @@ list is longer than the others' and every item on it is load-bearing.
   shift creates by convention. Nothing checks that the partial edits went into it rather than
   being discarded, and `git checkout --` destroys what it reverts.
 - **Whether a file collision actually occurred.** It is invisible to the board by construction —
-  two slices writing one file is a fact about the tree. Only the orchestrator can see it, which is
+  two tickets writing one file is a fact about the tree. Only the orchestrator can see it, which is
   why `collision` is one of the two stop reasons SQL cannot compute.
 - **Whether the notification was sent,** or arrived, or was read. `.guild/shift.notify` records
   consent, not delivery.

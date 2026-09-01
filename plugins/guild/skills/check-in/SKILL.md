@@ -116,7 +116,7 @@ printf 'guild.db\nguild.db-*\nguild.db.*\ndashboard.html\n' > .guild/.gitignore
 
 Then greet them, say the board is empty, and ask what they want to work on. On an answer,
 invoke `guild:new-requirement` — it runs the product-owner + architect interview, writes the
-plan, its slices, the tickets **and the execution graph**, and ends by presenting
+plan, the tickets **and the execution graph**, and ends by presenting
 `gate-plan`. Then go to **Step 3**.
 
 A **v4 board** (`.guild/state.yaml`, `.guild/requirements/`) is not migrated. Say so, offer
@@ -296,7 +296,7 @@ whole graph blind.**
    node's `node_key`.
 2. `parallel: by-group` or `parallel: all` → nodes sharing a **non-empty** `parallel_group`
    run **concurrently**. The architect asserted their file sets are disjoint
-   (`plan_slice.files`). Nodes with no group are not concurrent with anything.
+   (`task.files`). Nodes with no group are not concurrent with anything.
 3. `parallel: never`, no `parallel:` line, or a key in **neither** template → **one node, one
    batch.** This is an invariant, not a tuning knob: `qa-execute` drives a real app and a real
    dev server, and two at once collide.
@@ -583,7 +583,7 @@ a bullet to `CHANGELOG.md` (3.9).
 
 **`tasks_open` counts `blocked`, and that is the point.** `failed` was adjudicated at the
 gate; `blocked` is a machine verdict nobody has looked at, and closing a requirement over one
-ships an un-attempted slice silently. **Nothing in the schema stops you** — this is a
+ships un-attempted work silently. **Nothing in the schema stops you** — this is a
 convention you honor. If a blocked task is holding a requirement open, say so by name; the
 fix is recruiting (3.8), not a status edit.
 

@@ -123,7 +123,7 @@ RETURNING id;
 
 `phase_id` is nullable — pass `NULL` for unaffiliated work.
 
-### Plan and plan slice
+### Plan
 
 ```sql
 INSERT INTO plan (id, requirement_id, title, body, created_at, updated_at)
@@ -132,31 +132,29 @@ SELECT 'PLAN-' || printf('%03d', (SELECT COALESCE(MAX(CAST(substr(id, instr(id,'
        strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')
   FROM requirement r WHERE r.id = 'REQ-001'
 RETURNING id;
-
-INSERT INTO plan_slice (id, plan_id, slug, title, body, files)
-SELECT p.id || '/auth-service', p.id, 'auth-service',
-       CAST(x'<hex>' AS TEXT), CAST(x'<hex>' AS TEXT),
-       json_array('src/lib/auth.ts', 'src/routes/login/+page.server.ts')
-  FROM plan p WHERE p.id = 'PLAN-001'
-RETURNING id;
 ```
 
-The slice id convention is `<plan-id>/<slug>`. `files` is the architect's disjointness
-assertion — nothing verifies it.
+`task_id` is optional and means "a plan written FOR one ticket" — the test-planner uses it for
+the test plan. Leave it NULL for the requirement's own implementation plan.
 
 ### Task, with its capabilities and dependencies
 
 ```sql
-INSERT INTO task (id, requirement_id, plan_id, plan_slice_id, plan_slice, parallel_group,
+INSERT INTO task (id, requirement_id, plan_id, files, parallel_group,
                   title, objective, body, priority, agent, created_at, updated_at)
 SELECT 'TASK-' || printf('%03d', (SELECT COALESCE(MAX(CAST(substr(id, instr(id,'-')+1) AS INTEGER)),0)+1 FROM task)),
-       r.id, 'PLAN-001', 'PLAN-001/auth-service', 'auth-service', 'wave-1',
+       r.id, 'PLAN-001',
+       json_array('src/lib/auth.ts', 'src/routes/login/+page.server.ts'), 'wave-1',
        CAST(x'<hex-title>' AS TEXT), CAST(x'<hex-objective>' AS TEXT), CAST(x'<hex-body>' AS TEXT),
        2, NULL,
        strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')
   FROM requirement r WHERE r.id = 'REQ-001'
 RETURNING id;
 ```
+
+`files` is the JSON array of paths this ticket owns — the architect's disjointness assertion
+for everything sharing its `parallel_group`. Nothing verifies it. Pass `'[]'` for tickets that
+touch no bounded file set (test-plan, review).
 
 Leave `agent` NULL and declare capabilities instead — that is what lets the matcher work and
 what makes a roster gap visible. Set `agent` only when you mean to **pin** a specific member;
@@ -266,7 +264,7 @@ Do not set `updated_at` — a trigger stamps it when you leave it alone. The sta
 the claim each write their own `event` row automatically.
 
 **Before closing a requirement**, look at what is still open. Nothing in the schema stops you
-from closing over a blocked task, and doing it ships a slice nobody ever attempted:
+from closing over a blocked task, and doing it ships work nobody ever attempted:
 
 ```sql
 SELECT id, status, tasks_total, tasks_done, tasks_open, tasks_blocked, tasks_failed, title
@@ -436,13 +434,13 @@ RETURNING node_id;
 `from_node`. That is the only cycle protection there is: with no `WITH RECURSIVE`, a cycle is
 undetectable and shows up as `v_ready_nodes` silently returning nothing for the whole loop.
 
-Fanning a node out per plan slice (id becomes `REQ-001/implement.<slug>`):
+Fanning a node out per implement ticket (id becomes `REQ-001/implement.<TASK-ID>`):
 
 ```sql
 INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
-SELECT 'REQ-001/implement.' || s.slug, 'REQ-001', 'implement', 'work', NULL, 'wave-1', 'pending'
-  FROM plan_slice s
-  JOIN plan p ON p.id = s.plan_id AND p.requirement_id = 'REQ-001'
+SELECT 'REQ-001/implement.' || t.id, 'REQ-001', 'implement', 'work', t.id, t.parallel_group, 'pending'
+  FROM task t
+ WHERE t.requirement_id = 'REQ-001' AND t.node_key = 'implement'
 RETURNING id;
 
 INSERT INTO graph_edge (from_node, to_node)

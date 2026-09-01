@@ -46,10 +46,11 @@ You are a **Product Reviewer** specializing in requirements verification and imp
      printf "SELECT body FROM requirement WHERE id='REQ-NNN';\n" | tursodb -q -m list "$DB"
      printf "SELECT body FROM plan WHERE id='PLAN-NNN';\n"       | tursodb -q -m list "$DB"
 
-     # the per-slice briefs, which are where the implementation detail actually lives
-     printf "SELECT json_object('slice',s.id,'slug',s.slug,'files',json(s.files))
-        FROM plan_slice s JOIN plan p ON p.id = s.plan_id
-       WHERE p.requirement_id='REQ-NNN' ORDER BY s.id;\n" | tursodb -q -m list "$DB"
+     # the per-ticket briefs, which are where the implementation detail actually lives
+     printf "SELECT json_object('task',t.id,'title',t.title,'files',json(t.files))
+        FROM task t
+       WHERE t.requirement_id='REQ-NNN' AND t.node_key='implement' ORDER BY t.id;\n" \
+       | tursodb -q -m list "$DB"
      ```
    - The requirement roll-up tells you what actually finished, and it is a view so the count and
      the listing cannot disagree:

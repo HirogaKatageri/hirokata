@@ -56,7 +56,7 @@ authorizes the expensive thing, and the guild then runs it to completion without
 | 5 | `gate-repairs` | gate | `qa-report` | — | none, always one | n/a | **yes** |
 | 6 | `repair` | work | `gate-repairs` | `implement` | one **anchor**, tickets underneath | tickets sharing a `parallel_group` | no |
 
-Always **6 nodes, 5 edges, 1 gate row**, whatever the inspection covers. There is no per-slice
+Always **6 nodes, 5 edges, 1 gate row**, whatever the inspection covers. There is no per-ticket
 fan-out here, so the counts do not vary. That is the number to check your INSERT against.
 
 ---
@@ -397,9 +397,9 @@ WHERE n.requirement_id = 'REQ-041' AND n.status = 'pending'
 ORDER BY n.id;
 ```
 
-`done` and `skipped` both count as finished. If the warehouse schema ships a `v_ready_node`
-view, **select from it instead of re-typing this** — two spellings of readiness is two answers
-to "what runs next".
+`done` and `skipped` both count as finished. The warehouse schema ships `v_ready_nodes` —
+**select from it instead of re-typing this**; two spellings of readiness is two answers to
+"what runs next".
 
 Validation — each of these returns **zero rows when the graph is sound**:
 
@@ -437,7 +437,7 @@ Before an `add-node` deviation, confirm the capability exists on an active membe
 ```sql
 SELECT 'NO MEMBER FOR: ' || 'perf-probing'
 WHERE NOT EXISTS (SELECT 1 FROM agent_capability ac JOIN agent a ON a.name = ac.agent
-                   WHERE ac.capability = 'perf-probing' AND a.status = 'active');
+                   WHERE ac.capability = 'perf-probing' AND a.active = 1);
 ```
 
 Counts, against §2:
