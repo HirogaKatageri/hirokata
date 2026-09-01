@@ -25,11 +25,9 @@ Loading is therefore ordered, and the order is short:
 ```
 schema.sql ──▶ empty
                  │
-                 ├─ 00-roster ──▶ 02-planned ──▶ 03-in-flight ──┬──▶ 04-review-ready
-                 │                                              │
-                 │                                              └──▶ 05-messy
-                 │
-                 └─ 00-roster ──▶ 06-maintenance
+                 └─ 00-roster ──▶ 02-planned ──▶ 03-in-flight ──┬──▶ 04-review-ready
+                                                                │
+                                                                └──▶ 05-messy
 ```
 
 `empty` is `schema.sql` and nothing else — not even the roster. Every other fixture starts with
@@ -78,29 +76,26 @@ would make them meaningless:
 
 | value | fixture | why it must be relative |
 |---|---|---|
-| `task.claimed_at` on the in-flight ticket | in-flight, maintenance | `v_in_flight.minutes` |
-| `coverage.last_inspected_at` | messy, maintenance | `v_coverage_due` thresholds |
-| `work_log.ts` on the in-flight ticket | in-flight, maintenance | ordering against `claimed_at` |
+| `task.claimed_at` on the in-flight ticket | in-flight | `v_in_flight.minutes` |
+| `work_log.ts` on the in-flight ticket | in-flight | ordering against `claimed_at` |
 
 Consequences, stated so nobody asserts on the wrong column:
 
-- **Never assert on `v_in_flight.minutes`, `v_coverage_due.days_since`, `v_brief.generated_at`,
+- **Never assert on `v_in_flight.minutes`, `v_brief.generated_at`,
   or any `event.ts`.** They change between two reads of the same database. Assert on
   *membership and counts* instead — `COUNT(*) FROM v_in_flight`, which id is in it.
 - `v_brief.events_since_checkin` counts every event while `last-checkin` is `'null'`, so it is
   a function of how many rows the fixture wrote. It is stable per fixture but brittle to any
   edit of the seed. Do not assert on it.
-- **A fixture database has a shelf life.** `admin-panel` is seeded at 10 days since inspection
-  against a 90-day low-risk interval, so a *kept* messy database starts reporting three areas
-  due instead of two after 80 days. Load fixtures fresh.
+- **Load fixtures fresh.** A kept database drifts against every relative timestamp in it.
 
 `task` and `requirement` ids are zero-padded to three digits, so text order is numeric order —
 which is what makes `v_next_task`'s `ORDER BY id LIMIT 1` predictable.
 
 ### 0.5 The roster block — `00-roster.sql`
 
-The 14 members from `agents/*.md` with their declared capabilities, verbatim. `qa-tester`
-carries `serial = 1`; nobody else does. There is no free text in this block at all —
+The 12 members from `agents/*.md` with their declared capabilities, verbatim. No member carries
+`serial = 1` today. There is no free text in this block at all —
 every value is a key from a closed alphabet (a name, a model, a capability token) and
 descriptions are `''`, so nothing here needs the hex transport.
 
@@ -117,8 +112,6 @@ INSERT INTO agent (name, model, description, active, serial) VALUES
   ('developer-svelte',        'sonnet', '', 1, 0),
   ('product-owner',           'sonnet', '', 1, 0),
   ('product-reviewer',        'haiku',  '', 1, 0),
-  ('qa-strategist',           'sonnet', '', 1, 0),
-  ('qa-tester',               'sonnet', '', 1, 1),
   ('researcher',              'haiku',  '', 1, 0),
   ('reviewer-architecture',   'haiku',  '', 1, 0),
   ('reviewer-business-logic', 'haiku',  '', 1, 0),
@@ -135,8 +128,6 @@ INSERT INTO agent_capability (agent, capability) VALUES
   ('developer-svelte','svelte'), ('developer-svelte','sveltekit'),
   ('product-owner','requirements'),
   ('product-reviewer','review'), ('product-reviewer','requirements'),
-  ('qa-strategist','qa-planning'),
-  ('qa-tester','qa-execution'), ('qa-tester','test-authoring'), ('qa-tester','e2e'),
   ('researcher','research'),
   ('reviewer-architecture','review'), ('reviewer-architecture','architecture'),
   ('reviewer-business-logic','review'), ('reviewer-business-logic','business-logic'),
@@ -181,7 +172,7 @@ SELECT (SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table')   AS tables,
 25|26|43|5|17|0
 ```
 
-24 tables, 26 views, 43 triggers, schema version 5, the 17 seed capability words, zero events.
+21 tables, 25 views, 39 triggers, schema version 5, the 14 seed capability words, zero events.
 A vocabulary of 17 on an empty board is the point: the words exist before any member does.
 
 **The traps this fixture sets.**
@@ -312,6 +303,18 @@ SELECT 'REQ-001/gate-repairs', r.id, 'gate-repairs', 'gate', NULL, NULL, 'pendin
 FROM requirement r WHERE r.id = 'REQ-001';
 
 INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
+SELECT 'REQ-001/repair-spec', r.id, 'repair-spec', 'work', NULL, NULL, 'pending'
+FROM requirement r WHERE r.id = 'REQ-001';
+
+INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
+SELECT 'REQ-001/repair-plan', r.id, 'repair-plan', 'work', NULL, NULL, 'pending'
+FROM requirement r WHERE r.id = 'REQ-001';
+
+INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
+SELECT 'REQ-001/gate-repair-plan', r.id, 'gate-repair-plan', 'gate', NULL, NULL, 'pending'
+FROM requirement r WHERE r.id = 'REQ-001';
+
+INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
 SELECT 'REQ-001/repair', r.id, 'repair', 'work', NULL, NULL, 'pending'
 FROM requirement r WHERE r.id = 'REQ-001';
 
@@ -338,7 +341,22 @@ WHERE f.requirement_id = 'REQ-001' AND t.requirement_id = 'REQ-001'
 INSERT INTO graph_edge (from_node, to_node)
 SELECT f.id, t.id FROM graph_node f, graph_node t
 WHERE f.requirement_id = 'REQ-001' AND t.requirement_id = 'REQ-001'
-  AND f.node_key = 'gate-repairs' AND t.node_key = 'repair' AND f.id <> t.id;
+  AND f.node_key = 'gate-repairs' AND t.node_key = 'repair-spec' AND f.id <> t.id;
+
+INSERT INTO graph_edge (from_node, to_node)
+SELECT f.id, t.id FROM graph_node f, graph_node t
+WHERE f.requirement_id = 'REQ-001' AND t.requirement_id = 'REQ-001'
+  AND f.node_key = 'repair-spec' AND t.node_key = 'repair-plan' AND f.id <> t.id;
+
+INSERT INTO graph_edge (from_node, to_node)
+SELECT f.id, t.id FROM graph_node f, graph_node t
+WHERE f.requirement_id = 'REQ-001' AND t.requirement_id = 'REQ-001'
+  AND f.node_key = 'repair-plan' AND t.node_key = 'gate-repair-plan' AND f.id <> t.id;
+
+INSERT INTO graph_edge (from_node, to_node)
+SELECT f.id, t.id FROM graph_node f, graph_node t
+WHERE f.requirement_id = 'REQ-001' AND t.requirement_id = 'REQ-001'
+  AND f.node_key = 'gate-repair-plan' AND t.node_key = 'repair' AND f.id <> t.id;
 
 INSERT INTO gate (node_id, prompt, kind, status, decision, decided_at)
 SELECT n.id, CAST(x'506c616e20666f72205245512d30303120697320726561647920666f72207265766965772e20417070726f766520696d706c656d656e746174696f6e3f' AS TEXT), 'approve', 'pending', NULL, NULL
@@ -347,6 +365,11 @@ FROM graph_node n WHERE n.requirement_id = 'REQ-001' AND n.node_key = 'gate-plan
 INSERT INTO gate (node_id, prompt, kind, status, decision, decided_at)
 SELECT n.id, CAST(x'46696e64696e677320616e6420627567732066726f6d205245512d30303120e2809420617070726f7665207768696368206765742072657061697265642e' AS TEXT), 'select-findings', 'pending', NULL, NULL
 FROM graph_node n WHERE n.requirement_id = 'REQ-001' AND n.node_key = 'gate-repairs';
+
+INSERT INTO gate (node_id, prompt, kind, status, decision, decided_at)
+SELECT n.id, CAST(x'52657061697220706c616e20666f72205245512d3030312069732072656164792e20417070726f766520696d706c656d656e746174696f6e3f' AS TEXT),
+       'approve', 'pending', NULL, NULL
+FROM graph_node n WHERE n.requirement_id = 'REQ-001' AND n.node_key = 'gate-repair-plan';
 
 INSERT INTO guild_state (key, value) VALUES ('graph-template:REQ-001', 'standard')
 ON CONFLICT(key) DO UPDATE SET value = excluded.value;
@@ -371,7 +394,7 @@ SELECT (SELECT COUNT(*) FROM graph_node WHERE requirement_id = 'REQ-001')  AS no
 12|16|2|1|0
 ```
 
-Three implement tickets, so `standard`'s arithmetic is N+9 nodes and 2N+10 edges: **12 and 16**, exactly
+Three implement tickets, so `standard`'s arithmetic is N+12 nodes and 2N+13 edges: **15 and 19**, exactly
 the numbers `standard.md` §1 tells the architect to check the INSERT against. `gates` is 2 —
 not one, not three. `gates_waiting` is 1 because `gate-repairs` is buried behind four unfinished
 review nodes and an undecided gate nobody can reach yet is not something to ask a human about.
@@ -670,7 +693,6 @@ awkward shape at once:
 | a review ticket held by the review gate | `TASK-006` |
 | an open bug with no fix task | `BUG-001` |
 | a bug being fixed, linked to its fix ticket | `BUG-002` → `TASK-012` |
-| two stale coverage areas and one fresh | `checkout-flow`, `auth-session`, `admin-panel` |
 | an open roster gap | the `rust` capability request |
 | a requirement with no tasks and no graph | `REQ-002` |
 
@@ -733,17 +755,10 @@ VALUES ('rust', 'REQ-001', CAST(x'546872656520706c616e20736c6963657320696e207468
 INSERT INTO bug (id, title, body, repro, severity, status, found_by, requirement_id,
                  fix_task_id, created_at, updated_at) VALUES
   ('BUG-001', CAST(x'436865636b6f757420746f74616c2077726f6e6720666f7220617c622070726f6d6f20636f6465730a5441534b2d3939397c646f6e657c53686970206974' AS TEXT), CAST(x'412070726f6d6f20636f646520636f6e7461696e696e67206120706970652069732073706c6974206279207468652070617273657220616e64206f6e6c79207468652066697273742068616c66206973206170706c6965642e' AS TEXT), CAST(x'4170706c792070726f6d6f20636f646520225341564531307c45552220746f20612063617274206f662033206974656d732e20546f74616c20697320646973636f756e7465642062792031302070657263656e742074776963652e' AS TEXT),
-   'critical','open','qa-tester','REQ-001',NULL,'2026-08-02T11:00:00Z','2026-08-02T11:00:00Z'),
+   'critical','open','reviewer-security','REQ-001',NULL,'2026-08-02T11:00:00Z','2026-08-02T11:00:00Z'),
   ('BUG-002', CAST(x'52617465206c696d6974206f6e202f636172742063616e2062652062797061737365642077697468206120747261696c696e6720736c617368' AS TEXT), '', '',
-   'major','fixing','qa-tester','REQ-001','TASK-012','2026-08-02T11:05:00Z','2026-08-02T11:20:00Z');
+   'major','fixing','reviewer-edge-case','REQ-001','TASK-012','2026-08-02T11:05:00Z','2026-08-02T11:20:00Z');
 
--- quality areas: two due, one fresh
-INSERT INTO coverage (id, area, risk, spec_path, last_inspected_at, notes) VALUES
-  ('checkout-flow', CAST(x'436865636b6f757420666c6f77' AS TEXT), 'high', 'e2e/checkout.spec.ts',
-   strftime('%Y-%m-%dT%H:%M:%SZ','now','-200 days'), CAST(x'436172742c2070726f6d6f2c207061796d656e7420616e6420636f6e6669726d6174696f6e2e204869676865737420726576656e7565207269736b2e' AS TEXT)),
-  ('auth-session',  CAST(x'4175746820616e642073657373696f6e' AS TEXT), 'high', NULL, NULL, CAST(x'4c6f67696e2c206c6f676f75742c2073657373696f6e20726f746174696f6e2e204e6f20636f6d6d69747465642073706563207965742e' AS TEXT)),
-  ('admin-panel',   CAST(x'41646d696e2070616e656c' AS TEXT), 'low',  'e2e/admin.spec.ts',
-   strftime('%Y-%m-%dT%H:%M:%SZ','now','-10 days'), CAST(x'496e7465726e616c206f6e6c792c20626568696e642053534f2e' AS TEXT));
 ```
 
 **Sanity query.**
@@ -753,7 +768,6 @@ SELECT (SELECT COUNT(*) FROM v_open_bounties)               AS bounties,
        (SELECT COUNT(*) FROM v_blocked_tasks)               AS stuck,
        (SELECT COUNT(*) FROM v_failed_tasks WHERE waived=0) AS unadjudicated,
        (SELECT COUNT(*) FROM v_open_bugs)                   AS bugs,
-       (SELECT COUNT(*) FROM v_coverage_due)                AS due,
        (SELECT COUNT(*) FROM v_roster_gaps)                 AS gaps;
 ```
 
@@ -857,17 +871,6 @@ task|TASK-010|embedded
 `covered_by = 0` means the gap is real. A non-zero count on an open request would mean somebody
 filled it and never closed the request.
 
-**Coverage.** `days_since` is **NULL** for an area never inspected — not zero, and a surface
-that renders it as "0 days ago" is lying about the state of the product.
-
-```sql
-SELECT id, risk, interval_days, COALESCE(CAST(days_since AS TEXT),'<null>') FROM v_coverage_due;
-```
-```
-auth-session|high|14|<null>
-checkout-flow|high|14|200
-```
-
 **The brief, in full.** Every count below is derived from the same views the detail listings
 come from, so a count and its listing cannot disagree — which is exactly what makes a
 disagreement a finding.
@@ -879,9 +882,8 @@ tasks_in_progress|1          requirements_open|2
 tasks_todo|6                 requirements_done|0
 tasks_blocked|1              bugs_open|2
 tasks_failed|2               findings_open|0
-tasks_failed_waived|1        coverage_due|2
-tasks_done|2                 roster_gaps|1
-                             capability_unknown|1
+tasks_failed_waived|1        roster_gaps|1
+tasks_done|2                 capability_unknown|1
                              nodes_ready|0
                              gates_pending|0
 ```
@@ -910,230 +912,7 @@ tasks_done|2                 roster_gaps|1
 
 ---
 
-## 6. `maintenance` — an inspection under way
-
-**Load:** `schema.sql` → `00-roster.sql` → `06-maintenance.sql`
-
-This one does **not** build on `planned`. An inspection is a separate template on a separate
-carrier requirement, and mixing it into a feature board is precisely the mistake
-`maintenance.md` §7.1 warns about.
-
-**What it represents.** A `maintenance` graph on carrier `REQ-900` — unaffiliated, `phase_id`
-NULL, titled so it is obviously not feature work. `qa-check` and `qa-plan` are `done`,
-`qa-execute` is `running` with one mission ticket claimed by `qa-tester`, and a second mission
-ticket is waiting. `INSP-001` is `in-progress` with one verdict recorded, one area still NULL
-(not yet reached) and one explicitly `not-reached`. One bug has already been filed.
-
-The graph is **6 nodes, 5 edges, 1 gate** — invariant, whatever the inspection covers, because
-`maintenance` has no per-ticket fan-out. `qa-execute.parallel_group` is NULL and must stay NULL.
-
-**Seed SQL — `06-maintenance.sql`:**
-```sql
-PRAGMA foreign_keys = ON;
-UPDATE guild_state SET value = 'architect' WHERE key = 'actor';
-
--- the carrier requirement: unaffiliated, obviously not feature work
-INSERT INTO requirement (id, phase_id, title, body, status, priority, created_at, updated_at)
-SELECT 'REQ-900', NULL, CAST(x'4d61696e74656e616e636520696e7370656374696f6e20e2809420636865636b6f757420616e642061757468' AS TEXT), '', 'todo', 3,
-       '2026-08-03T08:00:00Z', '2026-08-03T08:00:00Z'
-WHERE NOT EXISTS (SELECT 1 FROM requirement WHERE id = 'REQ-900');
-
--- MOVED, not inserted at its end state: the status trigger is what writes the `moved` event,
--- and G7 asserts every non-`todo` requirement has one. Seeding straight to 'in-progress'
--- produces a board with no history of it happening — the exact shortcut G7 exists to catch.
-UPDATE requirement SET status = 'in-progress', updated_at = '2026-08-03T08:00:00Z'
- WHERE id = 'REQ-900' AND status = 'todo';
-
-INSERT INTO coverage (id, area, risk, spec_path, last_inspected_at, notes) VALUES
-  ('checkout-flow', CAST(x'436865636b6f757420666c6f77' AS TEXT), 'high', 'e2e/checkout.spec.ts',
-   strftime('%Y-%m-%dT%H:%M:%SZ','now','-200 days'), CAST(x'436172742c2070726f6d6f2c207061796d656e7420616e6420636f6e6669726d6174696f6e2e204869676865737420726576656e7565207269736b2e' AS TEXT)),
-  ('auth-session',  CAST(x'4175746820616e642073657373696f6e' AS TEXT), 'high', NULL, NULL, CAST(x'4c6f67696e2c206c6f676f75742c2073657373696f6e20726f746174696f6e2e204e6f20636f6d6d69747465642073706563207965742e' AS TEXT)),
-  ('admin-panel',   CAST(x'41646d696e2070616e656c' AS TEXT), 'low',  'e2e/admin.spec.ts',
-   strftime('%Y-%m-%dT%H:%M:%SZ','now','-10 days'), CAST(x'496e7465726e616c206f6e6c792c20626568696e642053534f2e' AS TEXT));
-
--- 6 nodes, 5 edges, 1 gate. qa-execute carries NO parallel_group, ever.
-INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
-SELECT 'REQ-900/qa-check', r.id, 'qa-check', 'work', NULL, NULL, 'pending'
-FROM requirement r WHERE r.id = 'REQ-900';
-INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
-SELECT 'REQ-900/qa-plan', r.id, 'qa-plan', 'work', NULL, NULL, 'pending'
-FROM requirement r WHERE r.id = 'REQ-900';
-INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
-SELECT 'REQ-900/qa-execute', r.id, 'qa-execute', 'work', NULL, NULL, 'pending'
-FROM requirement r WHERE r.id = 'REQ-900';
-INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
-SELECT 'REQ-900/qa-report', r.id, 'qa-report', 'work', NULL, NULL, 'pending'
-FROM requirement r WHERE r.id = 'REQ-900';
-INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
-SELECT 'REQ-900/gate-repairs', r.id, 'gate-repairs', 'gate', NULL, NULL, 'pending'
-FROM requirement r WHERE r.id = 'REQ-900';
-INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
-SELECT 'REQ-900/repair', r.id, 'repair', 'work', NULL, NULL, 'pending'
-FROM requirement r WHERE r.id = 'REQ-900';
-
-INSERT INTO graph_edge (from_node, to_node)
-SELECT f.id, t.id FROM graph_node f, graph_node t
-WHERE f.requirement_id = 'REQ-900' AND t.requirement_id = 'REQ-900'
-  AND f.node_key = 'qa-check' AND t.node_key = 'qa-plan' AND f.id <> t.id;
-INSERT INTO graph_edge (from_node, to_node)
-SELECT f.id, t.id FROM graph_node f, graph_node t
-WHERE f.requirement_id = 'REQ-900' AND t.requirement_id = 'REQ-900'
-  AND f.node_key = 'qa-plan' AND t.node_key = 'qa-execute' AND f.id <> t.id;
-INSERT INTO graph_edge (from_node, to_node)
-SELECT f.id, t.id FROM graph_node f, graph_node t
-WHERE f.requirement_id = 'REQ-900' AND t.requirement_id = 'REQ-900'
-  AND f.node_key = 'qa-execute' AND t.node_key = 'qa-report' AND f.id <> t.id;
-INSERT INTO graph_edge (from_node, to_node)
-SELECT f.id, t.id FROM graph_node f, graph_node t
-WHERE f.requirement_id = 'REQ-900' AND t.requirement_id = 'REQ-900'
-  AND f.node_key = 'qa-report' AND t.node_key = 'gate-repairs' AND f.id <> t.id;
-INSERT INTO graph_edge (from_node, to_node)
-SELECT f.id, t.id FROM graph_node f, graph_node t
-WHERE f.requirement_id = 'REQ-900' AND t.requirement_id = 'REQ-900'
-  AND f.node_key = 'gate-repairs' AND t.node_key = 'repair' AND f.id <> t.id;
-
-INSERT INTO gate (node_id, prompt, kind, status, decision, decided_at)
-SELECT n.id, CAST(x'496e7370656374696f6e206f66205245512d39303020666f756e642069737375657320e2809420617070726f7665207768696368206765742072657061697265642e' AS TEXT), 'select-findings', 'pending', NULL, NULL
-FROM graph_node n WHERE n.requirement_id = 'REQ-900' AND n.node_key = 'gate-repairs';
-
-INSERT INTO guild_state (key, value) VALUES ('graph-template:REQ-900', 'maintenance')
-ON CONFLICT(key) DO UPDATE SET value = excluded.value;
-
-UPDATE guild_state SET value = 'orchestrator' WHERE key = 'actor';
-
-INSERT INTO task (id, requirement_id, plan_id, files, parallel_group,
-                  node_key, title, objective, body, status, priority, agent,
-                  claimed_by, claimed_at, created_at, updated_at) VALUES
-  ('TASK-901','REQ-900',NULL,'[]',NULL,'qa-check',   CAST(x'446563696465207768657468657220616e20696e7370656374696f6e20697320647565' AS TEXT),'','','todo',3,'qa-strategist',NULL,NULL,'2026-08-03T08:10:00Z','2026-08-03T08:10:00Z'),
-  ('TASK-902','REQ-900',NULL,'[]',NULL,'qa-plan',    CAST(x'5269736b206d617020616e64206d697373696f6e206c697374' AS TEXT),'','','todo',3,'qa-strategist',NULL,NULL,'2026-08-03T08:10:01Z','2026-08-03T08:10:01Z'),
-  ('TASK-903','REQ-900',NULL,'[]',NULL,'qa-execute', CAST(x'4d697373696f6e3a20636865636b6f757420666c6f77' AS TEXT),'','','todo',2,NULL,NULL,NULL,'2026-08-03T08:10:02Z','2026-08-03T08:10:02Z'),
-  ('TASK-904','REQ-900',NULL,'[]',NULL,'qa-execute', CAST(x'4d697373696f6e3a206175746820616e642073657373696f6e' AS TEXT),'','','todo',2,NULL,NULL,NULL,'2026-08-03T08:10:03Z','2026-08-03T08:10:03Z');
-
-INSERT INTO task_capability (task_id, capability, required) VALUES
-  ('TASK-903','qa-execution',1), ('TASK-903','e2e',0),
-  ('TASK-904','qa-execution',1), ('TASK-904','e2e',0);
-
-INSERT INTO inspection (id, scope, "trigger", status, started_at, finished_at)
-VALUES ('INSP-001', 'whole product', 'manual', 'in-progress', '2026-08-03T08:30:00Z', NULL);
-
-INSERT INTO inspection_coverage (inspection_id, coverage_id, verdict) VALUES
-  ('INSP-001','checkout-flow','issues'),
-  ('INSP-001','auth-session', NULL),
-  ('INSP-001','admin-panel', 'not-reached');
-
-UPDATE task SET status = 'done', claimed_by = 'qa-strategist',
-                claimed_at = '2026-08-03T08:15:00Z', updated_at = '2026-08-03T08:25:00Z'
- WHERE id = 'TASK-901';
-UPDATE task SET status = 'done', claimed_by = 'qa-strategist',
-                claimed_at = '2026-08-03T08:26:00Z', updated_at = '2026-08-03T08:45:00Z'
- WHERE id = 'TASK-902';
-UPDATE task SET status = 'in-progress', claimed_by = 'qa-tester',
-                claimed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now','-25 minutes'),
-                updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now','-25 minutes')
- WHERE id = 'TASK-903';
-
-INSERT INTO work_log (task_id, ts, agent, entry) VALUES
-  ('TASK-901','2026-08-03T08:25:00Z','qa-strategist', CAST(x'54776f206172656173207061737420746865697220696e74657276616c3a20636865636b6f75742d666c6f772061742032303020646179732c20617574682d73657373696f6e206e6576657220696e737065637465642e' AS TEXT)),
-  ('TASK-902','2026-08-03T08:45:00Z','qa-strategist', CAST(x'54776f206d697373696f6e73206465636c617265642e20436865636b6f75742066697273742c20697420636172726965732074686520726576656e7565207269736b2e' AS TEXT)),
-  ('TASK-903',strftime('%Y-%m-%dT%H:%M:%SZ','now','-20 minutes'),'qa-tester', CAST(x'44726976696e672074686520636865636b6f757420666c6f772e2050726f6d6f2070617273696e67206c6f6f6b732077726f6e67206f6e20636f64657320636f6e7461696e696e67206120706970652e' AS TEXT));
-
-UPDATE graph_node SET status = 'done'    WHERE id = 'REQ-900/qa-check';
-UPDATE graph_node SET status = 'done'    WHERE id = 'REQ-900/qa-plan';
-UPDATE graph_node SET status = 'running', task_id = 'TASK-903' WHERE id = 'REQ-900/qa-execute';
-
-INSERT INTO bug (id, title, body, repro, severity, status, found_by, requirement_id,
-                 fix_task_id, created_at, updated_at)
-VALUES ('BUG-901', CAST(x'477565737420636865636b6f7574206c6f736573207468652063617274206f6e2073657373696f6e20726f746174696f6e' AS TEXT), '', CAST(x'4164642074776f206974656d7320617320612067756573742c207761697420666f722074686520726f746174696f6e20696e74657276616c2c20726566726573682e204361727420697320656d7074792e' AS TEXT),
-        'major','open','qa-tester','REQ-900',NULL,
-        '2026-08-03T09:00:00Z','2026-08-03T09:00:00Z');
-```
-
-**Sanity query.**
-
-```sql
-SELECT (SELECT COUNT(*) FROM graph_node WHERE requirement_id = 'REQ-900')   AS nodes,
-       (SELECT COUNT(*) FROM graph_edge WHERE to_node LIKE 'REQ-900/%')     AS edges,
-       (SELECT COUNT(*) FROM graph_node
-         WHERE requirement_id = 'REQ-900' AND kind = 'gate')                AS gates,
-       (SELECT COUNT(*) FROM task
-         WHERE claimed_by = 'qa-tester' AND status = 'in-progress')         AS testers;
-```
-
-**Expected result — exactly one row:**
-
-```
-6|5|1|1
-```
-
-Six, five, one — not two gates, that is `standard`. And **one** tester, which is the invariant
-this fixture exists to test.
-
-### 6.1 The `qa-execute` invariant, both halves
-
-`maintenance.md` §5 defends "one tester at a time" in two independent places, because one missed
-check produces a mystery rather than a message. Both are asserted from the fixture, board-wide
-and not per-requirement — two inspections on two carriers still share one machine and one set of
-ports.
-
-```sql
--- must return AT MOST ONE row, ever
-SELECT 'RUNNING NODE: '   || n.id FROM graph_node n
- WHERE n.node_key = 'qa-execute' AND n.status = 'running';
-SELECT 'CLAIMED TICKET: ' || t.id FROM task t
- WHERE t.claimed_by = 'qa-tester' AND t.status = 'in-progress';
-```
-```
-RUNNING NODE: REQ-900/qa-execute
-CLAIMED TICKET: TASK-903
-```
-
-```sql
--- must return ZERO rows, always. A non-null parallel_group here is a defect, not a deviation.
-SELECT 'PARALLEL QA-EXECUTE: ' || n.id FROM graph_node n
- WHERE n.node_key = 'qa-execute' AND n.parallel_group IS NOT NULL;
-```
-```
-(no rows)
-```
-
-### 6.2 The trap this fixture sets
-
-`TASK-904` — the second mission — is **on the bounty board right now**, matched to the one member
-who can take it:
-
-```sql
-SELECT id, priority, agent, who FROM v_open_bounties;
-```
-```
-TASK-904|2|qa-tester|needs:qa-execution
-```
-
-Dispatching it starts a second Playwright run against the same dev server. The matcher hands you
-the signal and does not act on it — `v_agent_match` carries `serial` in the row:
-
-```sql
-SELECT task_id, agent, source, serial FROM v_agent_match WHERE task_id = 'TASK-904';
-```
-```
-TASK-904|qa-tester|capability|1
-```
-
-`serial = 1`. **Nothing in the database will stop the dispatch.** The guard in §6.1 is a
-convention with a check, and running it before every `qa-execute` dispatch is the expectation.
-
-Two more:
-
-- `v_ready_nodes` is **empty** and `v_gates_pending` is **0**, because `qa-report` waits on a
-  `running` `qa-execute`. The right move is to wait for the mission, not to look for other work.
-- `inspection_coverage.verdict` distinguishes three states and they are not interchangeable:
-  `'issues'` for checkout-flow, **NULL** for auth-session (not yet reached), and `'not-reached'`
-  for admin-panel (the inspection intended to cover it and ran out of road). `'not-reached'` is
-  not NULL and it is not a pass. A summariser that renders NULL as "passed" reports a product
-  as inspected that nobody looked at.
-
----
-
-## 7. Which fixture catches which failure
+## 6. Which fixture catches which failure
 
 Every row is a failure mode from `expectations.md`. The fixture named is the one where that
 failure is *visible* — where a member doing the wrong thing produces a different answer than a
@@ -1167,7 +946,7 @@ enforces at all.
 
 ---
 
-## 8. What these fixtures cannot do
+## 7. What these fixtures cannot do
 
 Honest limits, so nobody reads a passing fixture as more than it is.
 
@@ -1205,7 +984,7 @@ an expectation needs them, not before — an unused fixture rots.
 
 ---
 
-## 9. Verification log
+## 8. Verification log
 
 Everything above was run. Binary: `~/.turso/tursodb`, **Turso 0.7.2**, macOS.
 
@@ -1228,8 +1007,6 @@ Also verified, in the same session:
   emits 3 lines for 2 rows, and `cut -d'|' -f3` returns `open / Ship it / fixing`.
 - **The `test-plan` barrier releases** on the two writes in §3.1, and `v_ready_nodes` then
   returns exactly `REQ-001/test-plan`.
-- **The `qa-execute` parallel-group check returns zero rows** on `maintenance`, and the serial
-  guard returns exactly one running node and one claimed ticket.
 
 Every load was checked for a non-zero exit **and** for non-empty stdout, because tursodb writes
 errors to stdout and keeps going after one (gotchas 1a and 8). A fixture that "loaded fine"

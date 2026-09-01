@@ -68,11 +68,12 @@ await pipeline([
    crashed workflow recoverable — node status lives in `graph_node`, so re-running the
    segment query simply excludes what finished. Never carry state between batches in the
    script.
-4. **Serial agents are never batched.** `qa-tester` carries `serial = 1`: Playwright is heavy
-   and each tester drives its own dev server, so two at once collide on ports. If you find
-   yourself compiling a concurrent batch with two of them, **stop and report it — do not
-   silently serialize.** A shape that requests illegal concurrency is a bug worth surfacing at
-   compile time rather than papering over at run time.
+4. **Serial agents are never batched.** A member carrying `serial = 1` must never appear twice
+   in one concurrent batch — that flag means "never run concurrently with itself", typically
+   because the member drives a shared external resource. If you find yourself compiling a batch
+   with two of them, **stop and report it — do not silently serialize.** A shape that requests
+   illegal concurrency is a bug worth surfacing at compile time rather than papering over at run
+   time. No shipped member carries the flag today; the rule outlives the roster.
 5. **The workflow may not ask the user anything.** Subagents cannot call `AskUserQuestion`;
    only the orchestrator session can. That is *why* a run stops before a gate rather than
    containing one — the batch boundary and the "stop and ask" boundary are the same line.

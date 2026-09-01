@@ -291,14 +291,14 @@ whole graph blind.**
 **The template is the ceiling; the data is the grouping.**
 
 1. Read the template that shaped this graph — `guild:warehouse` →
-   `references/templates/standard.md` or `maintenance.md`, overridden by
+   `references/templates/standard.md`, overridden by
    `.guild/templates/*.yaml` when present — and find the entry whose `key:` matches the
    node's `node_key`.
 2. `parallel: by-group` or `parallel: all` → nodes sharing a **non-empty** `parallel_group`
    run **concurrently**. The architect asserted their file sets are disjoint
    (`task.files`). Nodes with no group are not concurrent with anything.
 3. `parallel: never`, no `parallel:` line, or a key in **neither** template → **one node, one
-   batch.** This is an invariant, not a tuning knob: `qa-execute` drives a real app and a real
+   batch.** This is an invariant, not a tuning knob: a `serial = 1` member drives a shared
    dev server, and two at once collide.
 4. **Then, independently: never two `serial = 1` members in one concurrent batch.** The
    segment query returns each node's `serial`. If a batch would hold two, **stop and report
@@ -317,7 +317,7 @@ For each node in the batch:
 
 - **Bound** → use it.
 - **Unbound** (`task` is empty) → the node is one the architect could not bind unambiguously
-  (`test-plan`, `qa-plan`, every `review.*`). Find the requirement's open ticket for that work:
+  (`test-plan`, `repair-spec`, `repair-plan`, every `review.*`). Find the requirement's open ticket for that work:
 
   ```sql
   SELECT id, priority, who, parallel_group, title FROM v_open_bounties

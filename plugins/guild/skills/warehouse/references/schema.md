@@ -14,7 +14,7 @@ Twenty-five tables. They fall into seven groups:
 | roster | `agent` · `agent_capability` · `task_capability` · `capability_request` |
 | execution graph | `graph_node` · `graph_edge` · `graph_deviation` · `gate` |
 | records | `work_log` · `review_finding` · `bug` |
-| maintenance & memory | `coverage` · `inspection` · `inspection_coverage` · `doc` · `event` |
+| memory | `doc` · `event` |
 
 The spine is one containment chain:
 
@@ -27,7 +27,7 @@ goal → phase → requirement → plan
 ```
 
 Everything else hangs off `requirement` (the graph, capability requests) or off `task`
-(the records), or stands alone and evergreen (`coverage`, `doc`, `agent`).
+(the records), or stands alone and evergreen (`doc`, `agent`).
 
 ---
 
@@ -111,7 +111,7 @@ Adding an agent file to `agents/` and INSERTing its name and capability tags is 
 process of adding a guild member. `v_agent_match` does the rest.
 
 **`agent`** — `name` is the primary key and the address. `serial = 1` means "never run
-concurrently with itself" (the qa-tester drives one app and one dev server). **Retire with
+concurrently with itself", for a member that drives a shared external resource. **Retire with
 `active = 0`, never DELETE**: a done task from months ago may name an agent whose file is
 gone, and deleting would either break the foreign key or orphan the history that explains
 the board.
@@ -137,7 +137,7 @@ recruitment. Never delete a `created` row — that un-admits the word on the nex
 ## The execution graph — `graph_node`, `graph_edge`, `graph_deviation`, `gate`
 
 A requirement is instantiated into nodes and edges from a template
-(`references/templates/{standard,maintenance}.md` in this skill), overridable per project at
+(`references/templates/standard.md` in this skill), overridable per project at
 `.guild/templates/*.yaml`.
 
 **`graph_node`** — id is conventionally `REQ-001/implement.auth-service`. `kind` is `work`
@@ -179,19 +179,7 @@ or `'user'`.
 
 ---
 
-## Maintenance and memory — `coverage`, `inspection`, `inspection_coverage`, `doc`, `event`
-
-**`coverage`** — what the product is made of, from a quality standpoint. **Evergreen**: it
-survives releases and board resets. `risk` + `last_inspected_at` is what makes "what needs
-looking at" a query (`v_coverage_due`: high stale at 14 days, medium at 30, low at 90)
-rather than a judgment call. `spec_path` points at a committed e2e spec if one exists.
-
-**`inspection`** / **`inspection_coverage`** — one turn of the maintenance cycle and its
-per-area verdicts. `verdict` is NULL until the area is actually reached; **`not-reached` is
-the honest answer for an area the inspection meant to cover and ran out of road before it
-did — it is not NULL and it is not a pass.** `inspection."trigger"` is the one enum left
-open on purpose (today only `'manual'`), so a cadence can be added later without rebuilding
-the table.
+## Memory — `doc`, `event`
 
 **`doc`** — the library. Long-lived knowledge the guild looked up once and should not look
 up again. Keyed by `slug`. **Search it with `LIKE`** — there is no FTS5 — and escape `%`
@@ -224,8 +212,7 @@ cannot be written is worse than an unfamiliar one. Payload is JSON; a status cha
 **Triggers** — every meaningful mutation writes an `event` row and `updated_at` gets
 stamped. You cannot forget to. Deliberately *not* instrumented: capability rows (a roster
 sync rewrites them all and would bury the feed), `graph_node` inserts (only status changes
-mean something moved), and pure-structure tables (`graph_edge`, `task_dependency`,
-`inspection_coverage`).
+mean something moved), and pure-structure tables (`graph_edge`, `task_dependency`).
 
 **Views** — one definition per rule. Read them instead of rewriting them.
 
@@ -276,7 +263,6 @@ convention:
 | `v_board` | The live board, one row per task, tagged with its section and print order. |
 | `v_requirement_progress` · `v_goal_progress` | The roll-ups. |
 | `v_in_flight` · `v_failed_tasks` · `v_open_findings` · `v_open_bugs` · `v_recent_activity` | The briefing's detail lists. |
-| `v_coverage_due` | Which quality areas are past their risk-weighted interval? |
 | `v_capability_vocabulary` · `v_capability_unknown` · `v_roster_gaps` | The roster audits. |
 | `v_brief` | **The standup**, one fact per row, all derived from the views above so a count and its listing cannot disagree. |
 

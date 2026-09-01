@@ -101,8 +101,7 @@ SELECT r.id, r.priority FROM requirement r
 - **A shift is already open** → you are resuming it. Its budget is the one recorded in that
   `started` payload; do not open a second one and do not re-ask the budget.
 - **No candidate has ready work** → say so and stop. An idle shift ends idle rather than
-  inventing work, and **a shift never starts an inspection** — that is `guild:qa`, deliberately
-  manual-trigger-only because a full inspection runs the real product.
+  inventing work, and a shift never starts work nobody asked for.
 
 **Agree the budget before the first turn.** Defaults are **10 tasks** and **60 minutes**. If the
 user did not name one, use **AskUserQuestion** once — how long, how many tasks — then never ask
@@ -155,7 +154,7 @@ Never queue a whole segment blind, and never run two batches on one turn.
 
 This is the candidate query, and §8.1's pick-up order is the `tier` column: **tier 1** is a
 `standard` build graph, which a shift may start cold; **tier 2** is anything else — a
-`maintenance` inspection, a project's own template — which a shift may only *continue*, never
+a project's own template — which a shift may only *continue*, never
 start. The default for an unknown template is the cautious one on purpose.
 
 ```sql

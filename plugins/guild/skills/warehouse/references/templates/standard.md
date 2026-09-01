@@ -4,16 +4,20 @@
 `_graph_parse_template` in a bash CLI. That CLI is gone. You read this page and you write the
 `graph_node` / `graph_edge` / `gate` rows yourself, with the SQL at the bottom.
 
-**Shape:** approve the plan, then run to completion.
+**Shape:** approve the plan, run to completion, decide what to repair, then plan the repair the
+same way the build was planned.
 
 ```
-gate-plan ─▶ implement (× tickets) ─▶ test-plan ─▶ test-write ─▶ review (× 4) ─▶ gate-repairs ─▶ repair
-   GATE                                                                            GATE
-   └──────────────── segment 1: runs without stopping ──────────────┘              └─ segment 2 ─┘
+gate-plan ─▶ implement (× tickets) ─▶ test-plan ─▶ test-write ─▶ review (× 4) ─▶ gate-repairs
+   GATE                                                                             GATE
+   └───────────────── segment 1: runs without stopping ─────────────────┘
+
+  ─▶ repair-spec ─▶ repair-plan ─▶ gate-repair-plan ─▶ repair
+                                        GATE
+     └──── segment 2 ────┘              └── segment 3 ──┘
 ```
 
-Use it for every requirement that produces code. For inspecting code that already exists, use
-[`maintenance.md`](maintenance.md) instead.
+Use it for every requirement that produces code.
 
 ---
 
@@ -27,10 +31,17 @@ Use it for every requirement that produces code. For inspecting code that alread
 | 4 | `test-write` | work | `test-plan` | one **anchor**, tickets underneath | no | no |
 | 5 | `review` | work | `test-write` | **fixed at 4 named reviewers** | all four together | yes |
 | 6 | `gate-repairs` | gate | `review` (all four) | none, always one | n/a | yes |
-| 7 | `repair` | work | `gate-repairs` | one **anchor**, tickets underneath | tickets sharing a `parallel_group` | no |
+| 7 | `repair-spec` | work | `gate-repairs` | none, always one | no | no |
+| 8 | `repair-plan` | work | `repair-spec` | none, always one | no | no |
+| 9 | `gate-repair-plan` | gate | `repair-plan` | none, always one | n/a | no |
+| 10 | `repair` | work | `gate-repair-plan` | one **anchor**, tickets underneath | tickets sharing a `parallel_group` | no |
 
-With *N* implement tickets that is **N + 9 nodes and 2N + 10 edges**. Two tickets → 11 nodes, 14
-edges, 2 gate rows. That is the number to check your INSERT against.
+With *N* implement tickets that is **N + 12 nodes and 2N + 13 edges**. Two tickets → 14 nodes, 17
+edges, 3 gate rows. That is the number to check your INSERT against.
+
+**Rows 7–10 are one optional group.** If `gate-repairs` approves nothing, all four are dropped
+together with a single `drop-node` deviation each, carrying the same reason. Approving nothing is
+a legitimate outcome, not a degenerate one.
 
 ---
 
@@ -113,12 +124,60 @@ security finding and a flaky test all wait here and surface together, where they
 against each other in one pass. Escalating each one the moment it appears converts agent time
 into the guild master's time, which is the resource the whole template is built to protect.
 
+### `repair-spec` — the product-owner writes the repair requirements
+
+Capability: `requirements`. Produces: **a `plan` row bound to its own ticket** (`plan.task_id`),
+carrying what the approved repairs must achieve and how anyone would know they did.
+
+**There is no interview here, and that is the whole point of its placement.** The product-owner
+normally opens a requirement by asking the user what they want. It does not need to: the issues
+were discussed item by item at `gate-repairs` and the user's own words are in `gate.decision`.
+This node reads that decision and writes it up as acceptance criteria. A node that stopped to
+re-interview would be asking the guild master the same question twice.
+
+Read the decision, not the findings table, when they disagree — the decision is what the user
+actually said.
+
+### `repair-plan` — the architect plans the repair and cuts the tickets
+
+Capability: `architecture`. Produces: **a `plan` row bound to its own ticket**, and **the repair
+tickets themselves** — one per approved item, each with its `files` JSON array and
+`parallel_group`, exactly as in Step 5 of the build.
+
+Link each ticket back to what it repairs in the same pass:
+
+```sql
+UPDATE review_finding SET disposition = 'fixing', fix_task_id = 'TASK-021'
+ WHERE id = 7 AND disposition = 'open' RETURNING id, disposition;
+UPDATE bug SET status = 'fixing', fix_task_id = 'TASK-022'
+ WHERE id = 'BUG-004' AND status = 'open' RETURNING id, status;
+```
+
+**The repair tickets belong to the SAME requirement.** `task.requirement_id` stays `REQ-NNN`.
+This is what keeps `fix_task_id` meaningful — `v_open_findings` derives its `requirement_id`
+through `task_id`, so a repair filed under a different requirement would leave the finding and
+its fix answering to different requirements, and G6's closure rules would reason about the
+wrong one.
+
+### `gate-repair-plan` — approve the repair plan
+
+Prompt: `Repair plan for {requirement} is ready. Approve implementation?`
+Gate kind: `approve`.
+
+The same decision `gate-plan` makes, about a smaller body of work. It is **not** a re-run of
+`gate-repairs`: that one chose *which problems matter*, this one approves *how they will be
+fixed*. If it were asking the same question twice it would not be worth its cost — see §4.
+
 ### `repair` — one anchor, tickets underneath
 
 Capability: `implement`. Produces: **fixes for the approved findings only.**
 
-Nominally `per-approved-finding`; same anchor rule as `test-write`. Tickets inherit the
-`parallel_group` of the ticket they repair, so disjoint repairs still run concurrently.
+Same anchor rule as `test-write`: one node, with the tickets `repair-plan` created underneath it.
+Tickets inherit the `parallel_group` of the ticket they repair, so disjoint repairs still run
+concurrently.
+
+**No automatic re-review.** If the guild master wants another pass over the repaired code, that
+is a fresh reviewer ticket they ask for.
 
 ---
 
@@ -141,20 +200,33 @@ costs a merge conflict inside an unattended shift.
 
 ---
 
-## 4. Exactly two gates, and their placement is the point
+## 4. Exactly three gates, and their placement is the point
 
-`standard` declares **two** gates and no more. That number is not a default.
+`standard` declares **three** gates and no more. That number is not a default, and the third one
+was added deliberately against the argument below — which still holds, and is the price.
 
-- **Dropping one** removes the guild master's control surface. The obvious failure mode; it
-  reads as an attack.
-- **Adding one** reads as caution — *"I'd like to check in before the migrations run"* — and is
-  the more expensive mistake. Gates are the boundary at which an unattended shift stops and
-  notifies. A third gate quietly converts a shift that runs overnight into a session that stops
-  every twenty minutes waiting for a human who is asleep. The cost is not paid at the moment of
-  the decision, which is why there is no reason good enough.
+- `gate-plan` — approve the plan before anything is built.
+- `gate-repairs` — decide **which problems matter**, once, over everything the run collected.
+- `gate-repair-plan` — approve **how the chosen problems get fixed**.
 
-Two gates means a requirement is exactly **two segments**: `implement → review`, and `repair`.
-Each compiles to one workflow.
+**Adding a gate is the expensive mistake, and this one is not free.** Gates are the boundary at
+which an unattended shift stops and notifies. Every gate is a place a shift can end with the
+guild master asleep, and a requirement that reaches `gate-repairs` overnight will now stop a
+second time before any repair is written. That cost is real and it is paid at 3am, not at the
+moment of the decision.
+
+What buys it: `repair` used to be plain tickets the orchestrator wrote at the gate — no
+requirements, no plan, no file sets, no disjointness assertion. That is thin for anything larger
+than a one-line fix, and it meant repairs were the only code the guild wrote without a plan
+anyone approved. `repair-spec` and `repair-plan` close that, and `gate-repair-plan` is what makes
+the plan mean something.
+
+**Adding a fourth reads as caution** — *"I'd like to check in before the migrations run"* — and
+there is no reason good enough. **Dropping one** removes the guild master's control surface; it
+reads as an attack.
+
+Three gates means a requirement is exactly **three segments**: `implement → review`,
+`repair-spec → repair-plan`, and `repair`. Each compiles to one workflow.
 
 **Why gates cannot live inside a workflow.** Subagents cannot call `AskUserQuestion`; only the
 orchestrator session can. A generated workflow physically cannot ask anything. Segmenting at
@@ -225,6 +297,7 @@ moment a `;` terminates a line (gotcha 1). Generate them per requirement:
 ```bash
 printf '%s' "Plan for REQ-007 is ready for review. Approve implementation?" | xxd -p | tr -d '\n'
 printf '%s' "Findings and bugs from REQ-007 — approve which get repaired." | xxd -p | tr -d '\n'
+printf '%s' "Repair plan for REQ-007 is ready. Approve implementation?"      | xxd -p | tr -d '\n'
 ```
 
 The hex literals in the script below are those two strings for `REQ-007`. **Regenerate them for
@@ -287,7 +360,22 @@ INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_gr
 SELECT 'REQ-007/gate-repairs', r.id, 'gate-repairs', 'gate', NULL, NULL, 'pending'
 FROM requirement r WHERE r.id = 'REQ-007';
 
--- 7. repair — ONE anchor ---------------------------------------------------------
+-- 7. repair-spec — the product-owner writes the repair requirements ---------------
+INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
+SELECT 'REQ-007/repair-spec', r.id, 'repair-spec', 'work', NULL, NULL, 'pending'
+FROM requirement r WHERE r.id = 'REQ-007';
+
+-- 8. repair-plan — the architect plans it and cuts the tickets --------------------
+INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
+SELECT 'REQ-007/repair-plan', r.id, 'repair-plan', 'work', NULL, NULL, 'pending'
+FROM requirement r WHERE r.id = 'REQ-007';
+
+-- 9. gate-repair-plan -------------------------------------------------------------
+INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
+SELECT 'REQ-007/gate-repair-plan', r.id, 'gate-repair-plan', 'gate', NULL, NULL, 'pending'
+FROM requirement r WHERE r.id = 'REQ-007';
+
+-- 10. repair — ONE anchor ---------------------------------------------------------
 INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
 SELECT 'REQ-007/repair', r.id, 'repair', 'work', NULL, NULL, 'pending'
 FROM requirement r WHERE r.id = 'REQ-007';
@@ -319,7 +407,22 @@ WHERE f.requirement_id = 'REQ-007' AND t.requirement_id = 'REQ-007'
 INSERT INTO graph_edge (from_node, to_node)
 SELECT f.id, t.id FROM graph_node f, graph_node t
 WHERE f.requirement_id = 'REQ-007' AND t.requirement_id = 'REQ-007'
-  AND f.node_key = 'gate-repairs' AND t.node_key = 'repair' AND f.id <> t.id;
+  AND f.node_key = 'gate-repairs' AND t.node_key = 'repair-spec' AND f.id <> t.id;
+
+INSERT INTO graph_edge (from_node, to_node)
+SELECT f.id, t.id FROM graph_node f, graph_node t
+WHERE f.requirement_id = 'REQ-007' AND t.requirement_id = 'REQ-007'
+  AND f.node_key = 'repair-spec' AND t.node_key = 'repair-plan' AND f.id <> t.id;
+
+INSERT INTO graph_edge (from_node, to_node)
+SELECT f.id, t.id FROM graph_node f, graph_node t
+WHERE f.requirement_id = 'REQ-007' AND t.requirement_id = 'REQ-007'
+  AND f.node_key = 'repair-plan' AND t.node_key = 'gate-repair-plan' AND f.id <> t.id;
+
+INSERT INTO graph_edge (from_node, to_node)
+SELECT f.id, t.id FROM graph_node f, graph_node t
+WHERE f.requirement_id = 'REQ-007' AND t.requirement_id = 'REQ-007'
+  AND f.node_key = 'gate-repair-plan' AND t.node_key = 'repair' AND f.id <> t.id;
 
 -- GATE ROWS. Prompts as hex — always single-line, so the splitter cannot tear them.
 INSERT INTO gate (node_id, prompt, kind, status, decision, decided_at)
@@ -330,6 +433,11 @@ INSERT INTO gate (node_id, prompt, kind, status, decision, decided_at)
 SELECT n.id, CAST(x'46696e64696e677320616e6420627567732066726f6d205245512d30303720e2809420617070726f7665207768696368206765742072657061697265642e' AS TEXT),
        'select-findings', 'pending', NULL, NULL
 FROM graph_node n WHERE n.requirement_id = 'REQ-007' AND n.node_key = 'gate-repairs';
+
+INSERT INTO gate (node_id, prompt, kind, status, decision, decided_at)
+SELECT n.id, CAST(x'52657061697220706c616e20666f72205245512d3030372069732072656164792e20417070726f766520696d706c656d656e746174696f6e3f' AS TEXT),
+       'approve', 'pending', NULL, NULL
+FROM graph_node n WHERE n.requirement_id = 'REQ-007' AND n.node_key = 'gate-repair-plan';
 
 -- WHICH TEMPLATE BUILT THIS GRAPH. Not a column on graph_node, and without it there is
 -- no baseline to diff a deviation against.

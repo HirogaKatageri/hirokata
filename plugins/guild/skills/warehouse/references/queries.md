@@ -194,7 +194,7 @@ INSERT INTO bug (id, title, body, repro, severity, found_by, requirement_id,
                  created_at, updated_at)
 SELECT 'BUG-' || printf('%03d', COALESCE(MAX(CAST(substr(id, instr(id,'-')+1) AS INTEGER)),0)+1),
        CAST(x'<hex-title>' AS TEXT), CAST(x'<hex-body>' AS TEXT), CAST(x'<hex-repro>' AS TEXT),
-       'major', 'qa-tester', 'REQ-001',
+       'major', 'reviewer-security', 'REQ-001',
        strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')
   FROM bug
 RETURNING id;
@@ -365,7 +365,6 @@ SELECT * FROM v_in_flight;
 SELECT id, task_id, requirement_id, reviewer, severity, disposition, file, line, summary
   FROM v_open_findings;
 SELECT id, severity, status, found_by, requirement_id, fix_task_id, title FROM v_open_bugs;
-SELECT id, risk, interval_days, days_since, spec_path, area FROM v_coverage_due;
 SELECT id, capability, requirement_id, proposed_agent, covered_by, rationale FROM v_roster_gaps;
 ```
 
@@ -551,7 +550,7 @@ Then, with the full set of names that have files:
 UPDATE agent SET active = 0
  WHERE active = 1
    AND name NOT IN (SELECT value FROM json_each(
-         json_array('developer-svelte','developer','test-writer','qa-tester')))
+         json_array('developer-svelte','developer','test-writer')))
 RETURNING name;
 
 -- admission closes the gap that asked for it, so the board stops reporting it
@@ -621,47 +620,7 @@ loud, and between a failure that hides and a failure that shouts, take the one t
 
 ---
 
-## 6. Quality and maintenance
-
-```sql
-INSERT INTO coverage (id, area, risk, spec_path, notes)
-VALUES ('checkout-flow', 'Checkout flow', 'high', 'e2e/checkout.spec.ts', CAST(x'<hex>' AS TEXT))
-ON CONFLICT(id) DO UPDATE SET
-  area = excluded.area, risk = excluded.risk, spec_path = excluded.spec_path,
-  notes = excluded.notes
-RETURNING id;
-
-INSERT INTO inspection (id, scope, "trigger", status, started_at)
-SELECT 'INSP-' || printf('%03d', COALESCE(MAX(CAST(substr(id, instr(id,'-')+1) AS INTEGER)),0)+1),
-       'whole product', 'manual', 'in-progress', strftime('%Y-%m-%dT%H:%M:%SZ','now')
-  FROM inspection
-RETURNING id;
-
-INSERT INTO inspection_coverage (inspection_id, coverage_id, verdict)
-SELECT i.id, c.id, NULL
-  FROM inspection i JOIN coverage c ON i.id = 'INSP-001'
-ON CONFLICT DO NOTHING;
-
-UPDATE inspection_coverage SET verdict = 'issues'
- WHERE inspection_id = 'INSP-001' AND coverage_id = 'checkout-flow'
-RETURNING coverage_id, verdict;
-```
-
-Stamp `last_inspected_at` **only when the area was actually inspected** — the trigger fires
-on that column alone, and re-saving risk or notes must not make a stale area read as fresh:
-
-```sql
-UPDATE coverage SET last_inspected_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
- WHERE id = 'checkout-flow'
-RETURNING id, last_inspected_at;
-```
-
-`verdict = 'not-reached'` is the honest answer for an area the inspection meant to cover and
-ran out of road before it did. It is not NULL and it is not a pass.
-
----
-
-## 7. Things not to do
+## 6. Things not to do
 
 - **Do not INSERT, UPDATE or DELETE `event` by hand.** The triggers write it. It is the
   guild's memory, and a memory you can edit is not one.

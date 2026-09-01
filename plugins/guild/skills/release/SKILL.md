@@ -198,7 +198,7 @@ Check the exit status of every `q` and do not send its output to `/dev/null` on 
 — tursodb writes errors to **stdout**, so a failed query would otherwise land in the snapshot
 looking like content.
 
-**Never snapshot the library or the QA discipline.** `doc` rows, `coverage` rows, `.guild/docs/`
+**Never snapshot the library.** `doc` rows and `.guild/docs/`
 and `.guild/qa/` are evergreen: researcher findings, the risk map and the regression manifest all
 persist across releases so the next architect can reuse them.
 
@@ -324,7 +324,7 @@ and are safe to run; step 7's upsert is not, and must not run.
   snapshot as content.
 - **IDs are derived, never counters** — nothing is reset at a release.
 - **CHANGELOG.md lives at repo root**, not inside `.guild/`.
-- **`doc`, `coverage`, `.guild/docs/` and `.guild/qa/` are evergreen** — never snapshotted, never
+- **`doc` and `.guild/docs/` are evergreen** — never snapshotted, never
   touched.
 - **`.guild/reviews/REQ-NNN.md` is COPIED into the snapshot** — it is per-requirement history,
   not cross-cutting knowledge. The original stays where it is.

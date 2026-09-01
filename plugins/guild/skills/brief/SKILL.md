@@ -65,8 +65,6 @@ SELECT '## findings';     SELECT json_object('id',id,'task',task_id,'sev',severi
                                  'disp',disposition,'by',reviewer,'at',
                                  COALESCE(file,'') || ':' || COALESCE(line,''),
                                  'what',summary) FROM v_open_findings;
-SELECT '## coverage';     SELECT json_object('id',id,'risk',risk,'due',interval_days,
-                                 'since',COALESCE(days_since,-1),'area',area) FROM v_coverage_due;
 SELECT '## gates';        SELECT json_object('node',node_id,'req',requirement_id,
                                  'kind',kind,'prompt',prompt) FROM v_gates_pending;
 SELECT '## moved';        SELECT json_object('ts',ts,'actor',actor,'verb',verb,
@@ -105,7 +103,7 @@ the user's to ask for, and Step 4's last rule tells you to **name the query** ra
 ## Step 3 — read what came back
 
 `v_brief` is the standup as one fact per row: `next`, `next_reason`, the task counts,
-`bounties_open` / `bounties_stuck`, `bugs_open`, `findings_open`, `coverage_due`,
+`bounties_open` / `bounties_stuck`, `bugs_open`, `findings_open`,
 `roster_gaps`, `capability_unknown`, `nodes_ready`, `gates_pending`, `events_since_checkin`.
 Every count comes from the same view its detail list comes from, so **a count and its listing
 cannot disagree.** Never state a number that is not in these rows.
@@ -130,11 +128,9 @@ What each block teaches:
   `detail` paragraph is not in this read; fetch it only if asked.
 - **`## moved` carries `ts · actor · verb · type · id · title` and a `phrase`** which, for a
   status change, is `from -> to`. **State the transition; it is printed.** `actor` is whoever
-  did it — `orchestrator` for board moves, but `reviewer-security`, `qa-tester`, `developer`
+  did it — `orchestrator` for board moves, but `reviewer-security`, `test-writer`, `developer`
   for the rows agents wrote themselves. Name the agent. A verb you do not recognize is data,
   not a glitch: the vocabulary is open by design.
-- **`## coverage` reports `since = -1` for an area that has never been inspected.** That is not
-  "0 days ago", and rendering it as such lies about the state of the product.
 
 **An empty block is good news stated by its absence.** No `## bugs` rows means nothing is
 open. Do not announce empty categories, and do not invent one.
@@ -189,8 +185,8 @@ them. Skip any part the data does not support.
    say nothing; there is no good news to announce here.
 3. **Risks — named, never counted.** Open bugs worst-severity first, every `critical` one by id
    and title. Then the unadjudicated failed tasks, with their reason. Then the findings, at
-   least the critical and major ones, each as severity + reviewer + what + where. Then coverage
-   areas overdue or never inspected. **End the risk beat with the roster gaps** — a gap is a
+   least the critical and major ones, each as severity + reviewer + what + where.
+   **End the risk beat with the roster gaps** — a gap is a
    risk with a known remedy, which is the most useful kind to state: "`rust` has been an open
    gap since REQ-001; the architect proposed `developer-rust`."
 4. **What moved** — summarize by subject rather than reciting timestamps: "since your last

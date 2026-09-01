@@ -3,7 +3,7 @@ name: dashboard
 description: >
   This skill should be used when the user asks for "the dashboard", "guild dashboard",
   "open the dashboard", "show me the dashboard", "build the dashboard", "visualize the
-  board", "the roadmap", "show the roadmap", "a visual view of the guild", "the coverage
+  board", "the roadmap", "show the roadmap", "a visual view of the guild", "the board
   view", "the activity feed", or wants to see the guild's state as a page rather than as
   text. Queries the warehouse and writes the self-contained .guild/dashboard.html, then
   opens it — and can optionally publish it as a shareable Artifact link.
@@ -85,10 +85,8 @@ SELECT replace(replace(replace(json_object(
               'line',COALESCE(line,0),'fix',COALESCE(fix_task_id,''),'created',created_at,
               'summary',summary,'detail',COALESCE(detail,'')))
             FROM (SELECT * FROM review_finding ORDER BY id)),
-  'coverage', (SELECT json_group_array(json_object('id',id,'area',area,'risk',risk,
               'spec',COALESCE(spec_path,''),'last',COALESCE(last_inspected_at,''),
               'notes',COALESCE(notes,'')))
-            FROM (SELECT * FROM coverage ORDER BY id)),
   'activity', (SELECT json_group_array(json_object('ts',ts,'actor',actor,'verb',verb,
               'type',subject_type,'subject',subject_id,'title',subject_title,'phrase',phrase))
             FROM (SELECT * FROM v_recent_activity LIMIT 200))
@@ -185,7 +183,6 @@ Nothing printed is the passing result.
   | **Graph** | each requirement's execution graph, node status and the gates | `nodes`, `edges`, `gates` |
   | **Bugs** | open defects by severity, linked to their fix tasks | `bugs` |
   | **Findings** | what reviewers flagged and whether it was ever fixed — grouped by severity, unresolved first, filterable to the resolved | `findings` |
-  | **Coverage** | quality areas by risk, and how long since anyone looked | `coverage` |
   | **Activity** | the event feed, newest first | `activity` |
 
 - **Every summary tile is a link to the view behind it.** `Open findings` lands on Findings,
