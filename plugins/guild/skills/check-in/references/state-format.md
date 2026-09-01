@@ -1,99 +1,71 @@
-# Guild State Format
+# Guild state format — what is on disk
 
-The guild has **no `BOARD.md`** and **no `status` frontmatter field**. An artifact's status is
-the **subdirectory it lives in**. A tiny `state.yaml` holds only `last-checkin`. The "board" is a
-**live view** rendered on demand by scanning the status directories — never a stored artifact.
+The board is a **Turso database** at `.guild/guild.db`. An artifact's status is a **column**;
+`last-checkin` is a row in `guild_state`. The "board" is a **view** (`v_board`) rendered on
+demand, never a stored artifact — there is no `BOARD.md`, no `state.yaml`, no ticket file and
+no status directory.
 
-All deterministic state operations go through the **guild CLI** at
-`${CLAUDE_PLUGIN_ROOT}/scripts/guild` (see `scripts/README.md`). Skills and agents shell out to it
-rather than hand-rolling `find`/`mv`/ID arithmetic.
-
-## Status is a directory
+**There is no guild CLI.** `tursodb` executes SQL, so the guild does not ship a second tool
+that does the same thing. Every member reaches the warehouse the same way — load
+`guild:warehouse` and write SQL.
 
 ```
 .guild/
-  state.yaml                              # only: last-checkin
-  requirements/{todo,in-progress,done}/REQ-NNN.md
-  plans/{todo,in-progress,done}/PLAN-NNN.md      # PLAN-NNN/ slice dir sits alongside the file
-  tasks/{todo,in-progress,done,failed}/TASK-NNN.md
-  docs/                                   # evergreen researcher knowledge base
-  qa/                                     # evergreen QA artifacts
-  archive/                                # evergreen released requirements
+  config.yaml         # committed. version + storage mode; env var NAMES only, never a credential
+  guild.db            # gitignored. THE BOARD
+  docs/               # evergreen researcher knowledge (the `doc` table is the primary copy)
+  qa/                 # evergreen QA artifacts — charter, missions, bug ledger, session logs
+  reviews/REQ-NNN.md  # per-requirement review records, appended per round
+  dashboard.html      # gitignored. regenerated wholesale by guild:dashboard
+  templates/*.yaml    # optional. a project's override of the shipped execution templates
+  v4-archive*/        # a v4 board moved aside — never parsed, never deleted
 ```
 
-`docs/`, `qa/`, and `archive/` are evergreen — never cleared or archived away.
-
-## Single source of truth per fact
-
-| Fact | Lives in | Changed by |
-|------|----------|------------|
-| Task status (`todo`/`in-progress`/`done`/`failed`) | which `tasks/<status>/` dir holds `TASK-NNN.md` | the **orchestrator** via `guild move` |
-| Task metadata (title, agent, requirement, plan, plan-slice) | `TASK-NNN.md` frontmatter | whoever creates the ticket (`guild new task`) |
-| Work log / progress | `TASK-NNN.md` Work Log section | the assigned agent |
-| Requirement status (`todo`/`in-progress`/`done`) | which `requirements/<status>/` dir holds `REQ-NNN.md` | the orchestrator via `guild move` |
-| Last check-in date | `.guild/state.yaml` | the orchestrator |
-
-There is no second copy of any of these. The orchestrator never reconciles two stores. **Status is
-never written into frontmatter** — moving the file is the only way to change status.
-
-## `.guild/state.yaml`
+`config.yaml` is what says a guild exists here. Minimal form:
 
 ```yaml
-last-checkin: 2026-06-23   # ISO date of last check-in (null if never)
+version: 5
+db:
+  mode: local
 ```
 
-That is the entire file. There are **no ID counters** and **no `current` cursor**:
+`mode: cloud` adds `url_env:` and `token_env:` — the **names** of environment variables, never
+their values. The file is committed to git and must never hold a credential.
 
-- **IDs are derived.** The next ID for a kind is `max(existing across all status dirs + archive)
-  + 1`, computed by `guild next-id <req|task|plan>` (and used automatically by `guild new`). IDs
-  are zero-padded to 3 digits (`001`…`999`) and continuous across releases. There is no counter to
-  maintain, increment, or reset — deletion and creation are both self-correcting.
-- **The cursor is derived.** "What am I working on" is simply whatever sits in
-  `tasks/in-progress/`. `guild next` recomputes the next actionable task every cycle from the
-  directories; there is nothing to cache or reconcile.
+## The database is the durable board
 
-## The next actionable ticket — `guild next`
+There is no journal any more. **`event` is the record**, written by triggers on every
+meaningful mutation, and it lives in the same database as everything else — so
+`guild.db` is not derived state that can be thrown away and rebuilt. It is gitignored because
+a binary file is a bad thing to merge, which means the board is **machine-local** unless the
+guild is running in cloud mode.
 
-The orchestrator never scans by hand; it runs `guild next`, which encodes:
+What git carries instead is the human-readable residue: `config.yaml`, `.guild/docs/`,
+`.guild/qa/`, `.guild/reviews/`, and the repo's own `CHANGELOG.md`.
 
-1. **Resume** — any task in `tasks/in-progress/` (lowest ID first). Interrupted work.
-2. **Otherwise** — the lowest-ID task in `tasks/todo/`.
-3. **Review gate** — a `reviewer` task is *only* actionable when every *other* task for its
-   requirement has left `todo/` and `in-progress/` (the per-REQ N/N gate). If the lowest-ID `todo`
-   is a reviewer task whose requirement still has open implementation/test/fix tasks, it is skipped
-   and the next `todo` is taken.
-4. **Nothing actionable** → `guild next` prints `none`; the board is caught up.
+## Applying the schema
 
-**Parallel-group batch.** When the task `guild next` returns is a `developer`/`developer-svelte`
-ticket carrying a `parallel-group`, the actionable unit is the **batch**, not the single ticket. The
-orchestrator expands it with `guild batch TASK-NNN` — all `todo`/`in-progress` dev tickets sharing
-that `parallel-group` and `requirement` — dispatches them concurrently, and only advances once all
-are `done`. A ticket with no `parallel-group` is a batch of one.
+```bash
+export PATH="$HOME/.turso:$PATH"
+tursodb .guild/guild.db < "${CLAUDE_PLUGIN_ROOT}/schema.sql"
+```
 
-There is no priority sort and no dependency graph. Ordering is creation order (ID order); the
-review gate is the only conditional. `parallel-group` is not ordering — it is the architect's
-assertion that grouped dev tickets touch disjoint files and may run together (see
-`task-lifecycle.md` "Parallel developer batching").
+**Idempotent, and it is how a rule change reaches a live board.** Tables are
+`CREATE TABLE IF NOT EXISTS` so data survives; views and triggers are dropped and recreated,
+so a corrected view or a new trigger lands on the next run. Seed rows are guarded by
+`WHERE NOT EXISTS`.
 
-## Rendering the live board view — `guild board`
+One honest limit: `CREATE TABLE IF NOT EXISTS` sees an existing table and moves on, so
+applying the file over a database created by an **earlier** v5 stage lands the views and
+triggers but **not** the CHECK constraints. A board that wants them rebuilds.
 
-`guild-status` and `check-in` build the status report by running `guild board`, which scans the
-directories — it does **not** read a board file:
+## Cloud mode
 
-1. Lists `tasks/in-progress/` (In Progress), `tasks/todo/` (Backlog), the newest ~20 of
-   `tasks/done/` (Recently Completed), and any `tasks/failed/`.
-2. Lists `requirements/*/REQ-*.md` grouped by their status dir; computes each REQ's progress as
-   `done-tasks / total-tasks` by counting tasks whose `requirement` frontmatter matches (a task's
-   doneness is read from its directory).
-3. Reads `last-checkin` from `state.yaml`.
+When `config.yaml` says `mode: cloud`, the binary and the target change and nothing else does:
 
-The output shape is unchanged from the old board view — only the source changed to a directory scan.
+```bash
+turso db shell "$(printenv TURSO_DATABASE_URL)"
+```
 
-## Stale `in-progress` recovery
-
-On check-in, each task left in `tasks/in-progress/` is triaged three ways (procedure: check-in
-skill Step 1.3):
-- **Empty Work Log** → never started → `guild move TASK-NNN todo`.
-- **Final Work Log entry reports completion/failure** → the session died before the orchestrator
-  recorded it → record the outcome now (materialize follow-ups, then move) without re-dispatching.
-- **Otherwise** → stays `in-progress`; it is resumed with the RESUMED-TASK dispatch variant.
+The SQL is the same SQL. Cloud mode has not been verified end to end — treat a cloud board as
+unproven, not as broken.

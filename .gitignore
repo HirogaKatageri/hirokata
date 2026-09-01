@@ -1,2 +1,35 @@
 .idea/*
-.guild/
+
+# ---- guild v5 board (plugins/guild) ------------------------------------------------
+#
+# The board is a Turso database, and the database is DERIVED state: `guild rebuild`
+# replays .guild/journal.ndjson into it. So git carries config.yaml, journal.ndjson and
+# export/ — and MUST carry them. A blanket `.guild/` ignore (which is what this file
+# used to have) means the journal is never committed, and then the first person to run
+# `guild journal compact` on a fresh clone snapshots an empty database over the only
+# record of the project's history.
+#
+# Derived, machine-local, or a repair artifact — never commit these:
+.guild/guild.db
+.guild/guild.db-*
+.guild/guild.db.*
+.guild/spool/
+.guild/*.tmp.*
+.guild/.export.tmp.*/
+.guild/journal.pending
+.guild/dashboard.html
+.guild/backup-*/
+
+# The v4 board that predates the v5 rewrite. Left untracked deliberately: `guild init`
+# MOVES it to .guild/v4-archive/ rather than importing it (design §11), and this
+# repository is the plugin's own source, not a project whose board history matters.
+.guild/requirements/
+.guild/tasks/
+.guild/plans/
+.guild/reviews/
+.guild/archive/
+.guild/v4-archive*/
+.guild/docs/
+.guild/qa/
+.guild/state.yaml
+.guild/BOARD.md

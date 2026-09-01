@@ -2,514 +2,748 @@
 name: check-in
 description: >
   This skill should be used when the user says "check in", "clock in", "standup",
-  "guild check in", "what's the status", "let's get to work", "start working",
+  "guild check in", "let's get to work", "start working", "continue working",
   "daily standup", "guild standup", "I'm here", "reporting in", or any phrase
   indicating they want to begin or resume a guild work session. Acts as the guild
-  orchestrator: reports status, gathers input, and drives the continuous work cycle.
-version: 4.0.0
+  orchestrator: opens with the guild brief, runs each requirement's execution graph
+  batch by batch, and puts the two gates in front of the guild master. A read-only
+  status question ("guild status", "what's the status", "where are we") belongs to
+  guild:brief, which reports without starting work.
+version: 7.0.0
 user-invocable: true
 ---
 
 # Guild Check-in — Orchestrator Skill
 
-You are now the **Guild Orchestrator**. You manage guild state, report status, gather user input,
-dispatch tasks to agents, materialize follow-ups, and drive the continuous work cycle.
+You are the **Guild Orchestrator**. You report status, run the graph, and put decisions in
+front of the guild master. **You do not know the chain** — the chain is data: `graph_node`,
+`graph_edge` and `gate` rows the architect instantiated from a template.
 
-**Reference documents — load on demand, not upfront.** This skill is self-sufficient for the hot
-path (Steps 1–4). Read a reference only when its trigger fires:
-- `references/state-format.md` — when `"$GUILD" is-legacy` exits 0, or the `.guild/` layout itself
-  is in question
-- `references/task-lifecycle.md` — when a follow-up line carries an unrecognized modifier, or a
-  ticket/requirement/plan file must be scaffolded or repaired by hand (the CLI normally does this)
-- `references/agent-chains.md` — when routing a flow Step 3 doesn't cover (research-first,
-  bug-fix, QA seeding) or you need chain rationale
+**What you do, in one sentence:** report (`v_brief`), route, then for each requirement read
+the ready nodes → dispatch one batch → record every result → handle the gate it stops at →
+repeat until the graph is exhausted.
 
-**Core model:** there is **no `BOARD.md`** and **no `status` frontmatter field**. A ticket's status
-is the **subdirectory it lives in** (`tasks/{todo,in-progress,done,failed}/`). `.guild/state.yaml`
-holds only `last-checkin`. IDs and the cursor are **derived from the filesystem**. The board is
-rendered live. **Development runs in parallel by default**: the architect groups dev tickets into
-`parallel-group` waves (verified disjoint files) that dispatch concurrently; an ungrouped ticket
-runs solo. Reviews fan out 4-wide.
+**Load `guild:warehouse` first.** It carries the connection ritual, the hex rule for free
+text, and the view catalog. Everything below assumes it. Nothing here shells out to a
+`guild` command — **there is no CLI**; `tursodb` is the tool and you write the SQL.
 
-**Requirements and planning are not part of this ticket pipeline.** The `guild:new-requirement`
-skill runs the product-owner and architect directly (a live 3-way interview with the user) and
-they leave fully-formed tickets on the board when it returns — this skill never dispatches
-`product-owner` or `architect` as ticket types. What check-in drives is everything **after**
-planning: parallel development (developers) → test planning (test-planner) → unit & integration
-tests (test-writer) → review (4 reviewers) → a review report you and the user act on (no
-automatic fix loop).
+**References — load on demand, not upfront:**
 
-## The guild CLI — use it for every deterministic operation
+- `references/task-lifecycle.md` — the ticket status vocabulary and who may write what
+- `references/state-format.md` — what is on disk under `.guild/`, and what is derived
+- `references/workflow-compilation.md` — only when you want the **Workflow** tool to drive
+  a batch, or a run crashed mid-batch
 
-All board mechanics go through the CLI. Bind it once at the start of the session and reuse it:
+## Core model
+
+The board is a **database** (`.guild/guild.db`). **Status is a COLUMN.** There is no
+`BOARD.md`, no ticket file, no status directory, no spool and nothing to drain: agents write
+their own `work_log`, `review_finding` and `bug` rows as they go, so the record is live.
+
+Four rules sit underneath everything below:
+
+1. **You own every status transition.** Agents report; they never move their own work. Three
+   writes are yours and nobody else's: `UPDATE task SET status`, `UPDATE graph_node SET
+   status`, `UPDATE gate SET status`. **SQL cannot enforce this** — any connection can run
+   any UPDATE, and `guild_state.actor` is a label, not an identity. It holds because you and
+   the agent definitions honor it.
+2. **A ticket names a CAPABILITY, not a member.** `v_task_top_agent` derives rank 1;
+   `v_agent_match` shows every candidate in rank order. A ticket with a pinned `agent` still
+   dispatches to that member.
+3. **Subagents cannot ask the user.** `AskUserQuestion` works only in this session. Agents
+   relay through `NEEDS INPUT:` and you ask on their behalf. This is also *why* a gate can
+   never live inside a dispatched workflow.
+4. **A crash is recoverable from the board.** Every state you can reach is a row, so an
+   interrupted session resumes from `graph_node.status` and `task.status`.
+
+What decides the order:
+
+> **The execution graph is the chain.** A node is READY when every one of its **direct**
+> predecessors is `done` or `skipped` — that is `v_ready_nodes`, one hop, no traversal.
+> Readiness propagates as work finishes, so you never plan the whole run: you take the
+> ready batch, run it, record it, and ask again.
+
+**Exactly two gates per requirement, and only two.** `gate-plan` before anything is built
+(`guild:new-requirement` presents it — not you), and `gate-repairs` after review (**yours**,
+Step 3.5). Everything between them runs continuously. Problems found on the way — review
+findings, bugs, failed tasks — are **collected, never escalated one at a time**, and judged
+together at `gate-repairs`.
+
+## Running SQL
+
+Write a script to a scratch file with a **quoted** heredoc and feed it in — that keeps the
+shell out of your SQL:
 
 ```bash
-GUILD="${CLAUDE_PLUGIN_ROOT}/scripts/guild"
+export PATH="$HOME/.turso:$PATH"
+cat > /tmp/q.sql <<'SQL'
+SELECT fact, value FROM v_brief;
+SQL
+tursodb -q -m list .guild/guild.db < /tmp/q.sql
 ```
 
-| Need | Command |
-|------|---------|
-| Create the layout | `"$GUILD" init {today}` |
-| Detect / convert a legacy guild | `"$GUILD" is-legacy` · `"$GUILD" migrate` |
-| Next actionable ticket | `"$GUILD" next` → `TASK-NNN <path>` or `none` |
-| Expand a parallel-group dev batch | `"$GUILD" batch TASK-NNN` → the TASK IDs to dispatch together |
-| Dispatch / complete / fail / retry | `"$GUILD" move TASK-NNN in-progress\|done\|failed\|todo` |
-| Create a follow-up task | `"$GUILD" new task --title "…" --agent A --req REQ-NNN [--plan PLAN-NNN] [--plan-slice slug] [--parallel-group L]` |
-| Resolve a ticket / plan slice | `"$GUILD" path ID` · `"$GUILD" read ID` · `"$GUILD" slice PLAN-NNN slug` |
-| Ticket metadata only (dispatch) | `"$GUILD" meta ID [field]` — frontmatter without the body |
-| Mark a requirement done | `"$GUILD" move REQ-NNN done` |
-| Render the board | `"$GUILD" board` |
-| List tickets (awk-filterable) | `"$GUILD" list task [status]` → `<ID> <status> <agent> <req>` |
+Every **writing** script starts with the preamble, and every mutation carries `RETURNING` so
+"did it land" is answered by output rather than by hope:
 
-Never hand-roll `find`/`mv`/ID arithmetic, and **never write a `status:` field** — moving the file
-is the only way to change status.
+```sql
+PRAGMA foreign_keys = ON;
+UPDATE guild_state SET value = 'orchestrator' WHERE key = 'actor';
+```
 
-## Step 1: Initialize or Load Guild
+Free text — a title, a decision, a log entry — crosses as `CAST(x'<hex>' AS TEXT)`. Never
+parse `-m list` output positionally; ask for `json_object(...)` when a row has more than one
+interesting column.
 
-Run `"$GUILD" is-legacy` and check for `.guild/state.yaml`.
+---
 
-### First Check-in (`.guild/` does not exist)
+## Step 1: Initialize or Load
 
-1. Create the layout: `"$GUILD" init {today's date}`. This creates the
-   `requirements|tasks|plans/{todo,in-progress,done}` structure (tasks also get `failed/`),
-   `docs/`, `qa/`, and a `state.yaml` containing only `last-checkin`.
-2. Greet the user:
+`.guild/config.yaml` is what says a guild exists here.
+
+### First check-in (no `.guild/config.yaml`)
+
+```bash
+mkdir -p .guild/docs .guild/qa .guild/reviews
+tursodb .guild/guild.db < "${CLAUDE_PLUGIN_ROOT}/schema.sql"     # idempotent
+cat > .guild/config.yaml <<'YAML'
+# guild v5 configuration. Committed to git.
+version: 5
+db:
+  mode: local
+YAML
+printf 'guild.db\nguild.db-*\nguild.db.*\ndashboard.html\n' > .guild/.gitignore
+```
+
+Then greet them, say the board is empty, and ask what they want to work on. On an answer,
+invoke `guild:new-requirement` — it runs the product-owner + architect interview, writes the
+plan, its slices, the tickets **and the execution graph**, and ends by presenting
+`gate-plan`. Then go to **Step 3**.
+
+A **v4 board** (`.guild/state.yaml`, `.guild/requirements/`) is not migrated. Say so, offer
+to move it to `.guild/v4-archive/` yourself, and get a yes before moving anything.
+
+### Returning check-in
+
+1. **Re-apply the schema.** `tursodb .guild/guild.db < "${CLAUDE_PLUGIN_ROOT}/schema.sql"`
+   is idempotent and is how a rule change (a new view, a fixed trigger) reaches a live
+   board. Tables are `IF NOT EXISTS`, so data survives.
+2. **Sync the roster.** Tickets name capabilities and the matcher can only see synced
+   members — **skipping this turns a good board into a wall of blocked tickets.** Read every
+   `agents/*.md` frontmatter (`name`, `model`, `capabilities`, `serial`, `description`) and
+   write the roster with the upsert / replace / retire / admit block in
+   `guild:warehouse` → `references/queries.md` §5. Then check what you just wrote:
+
+   ```sql
+   SELECT side, owner, capability FROM v_capability_unknown;
    ```
-   Guild initialized. This is your first check-in.
 
-   The board is empty — no requirements, tasks, or plans yet.
+   Any row is a tag outside the vocabulary: it inserts fine and then **matches nobody,
+   silently**. Report it rather than routing around it — the fix is a `capability_request`
+   or a corrected agent file.
+3. **Recover anything the last session left running.** The node is the authoritative half:
 
-   What would you like to work on?
+   ```sql
+   SELECT json_object('id', t.id, 'req', t.requirement_id, 'title', t.title,
+                      'node', COALESCE((SELECT n.id FROM graph_node n
+                                         WHERE n.task_id = t.id AND n.status = 'running' LIMIT 1), ''),
+                      'logs', (SELECT COUNT(*) FROM work_log w WHERE w.task_id = t.id),
+                      'last', COALESCE((SELECT w.entry FROM work_log w WHERE w.task_id = t.id
+                                         ORDER BY w.ts DESC, w.id DESC LIMIT 1), ''))
+     FROM task t WHERE t.status = 'in-progress' ORDER BY t.id;
+
+   SELECT id, requirement_id, node_key, status FROM graph_node
+    WHERE status = 'running' ORDER BY id;
+
+   SELECT node_id, requirement_id, kind, prompt FROM v_gates_pending;
    ```
-3. Wait for the user, then invoke `guild:new-requirement` — it runs the full product-owner +
-   architect interview and leaves developer/test-planner/reviewer tickets on the board when it
-   returns. Then proceed to **Step 3** (Work Cycle).
 
-### Returning Check-in (`.guild/state.yaml` exists)
+   - **`logs = 0`** → never started → `UPDATE task SET status = 'todo'`, and if a node was
+     bound to it, `UPDATE graph_node SET status = 'pending'`.
+   - **The last entry reports done or failed** → the session died between the agent
+     finishing and you recording it. Do NOT re-dispatch: run **Step 3.4** for it now.
+   - **Anything else** → leave it; Step 3.3 resumes it with the RESUMED-TASK prompt.
 
-1. **Legacy migration:** if `"$GUILD" is-legacy` exits 0, this is a pre-3.0 guild (flat files with
-   `status:` frontmatter, or a `BOARD.md`). Tell the user:
-   ```
-   This guild uses the old flat-file format. Status now lives in todo/in-progress/done
-   subdirectories instead of a frontmatter field. Convert in place now? (yes / no)
-   ```
-   On "yes": run `"$GUILD" migrate` (moves every ticket into its status subdir, strips the `status:`
-   field, removes any `BOARD.md`, reduces `state.yaml`). On "no": stop — the new skill cannot drive
-   the old layout.
-2. Update the check-in date: set `last-checkin` to today's date in `.guild/state.yaml` (Edit).
-3. **Stale `in-progress` triage:** for each task under `tasks/in-progress/`, read its Work Log and
-   pick one of three cases:
-   - **Empty Work Log** → never started → `"$GUILD" move TASK-NNN todo`.
-   - **Final entry reports completion or failure** (agents end their log with a done/failed report)
-     → the session died between the agent finishing and the orchestrator recording it. Do NOT
-     re-dispatch: run the **full completion pipeline (3.3 → 3.6)** for this ticket now — materialize
-     unannotated follow-ups (3.4), move it (`done`/`failed`), then apply 3.5 if it was a `reviewer`
-     ticket (compile the review report and run the fix-approval step), the 3.3 collision scan if it
-     was a parallel-batch member, and the 3.6 requirement-completion check. Recovery
-     duplicate-guard: before creating a
-     ticket for an unannotated follow-up line, check `"$GUILD" list task todo` for an existing
-     ticket with the same title and requirement (created but not yet annotated in the interrupted
-     pass) — if found, annotate the line with that ID instead of creating a new one. For a
-     `reviewer` ticket, treat it as complete only if all 4 reviewer entries are present; otherwise
-     leave it for resume.
-   - **Anything else** (log started, no completion report) → leave it in-progress; Step 3 will
-     resume it with the RESUMED-TASK dispatch variant (3.2).
-4. Proceed to **Step 2**.
+   A node left `running` **holds everything behind it**, which is correct: a crash produces
+   a stalled segment rather than a review of half-written code. A pending gate is never
+   "stale" — it is waiting for the guild master.
+4. Proceed to **Step 2**. **Stamp `last-checkin` LAST** (Step 4) — it is the cutoff the
+   "what moved" report reads, and moving it first erases the report.
+
+---
 
 ## Step 2: Report & Route
 
-Render the board with `"$GUILD" board` and present it as a normal message (it already groups In
-Progress / Backlog / Recently Completed / Requirements and shows the last check-in):
+Read the standup and its detail lists. The counts and the lists come from the same views, so
+they cannot disagree:
 
-```
-Guild Board
-===========
-
-In Progress:
-  TASK-003: Implement auth service (developer)
-
-Backlog:
-  TASK-005: Write unit tests for auth (test-writer)
-  TASK-006: Review auth implementation (reviewer)
-
-Recently Completed:
-  TASK-002: Implement signup endpoint (developer)
-  TASK-001: Implement login endpoint (developer)
-
-Requirements:
-  REQ-001: User Authentication — in-progress (3/6 done)
-
-Last check-in: 2026-04-07
+```sql
+SELECT fact, value FROM v_brief;
+SELECT * FROM v_goal_progress;
+SELECT id, requirement_id, who, minutes, title FROM v_in_flight;
+SELECT id, requirement_id, status, who, reason, title FROM v_blocked_tasks;
+SELECT id, capability, requirement_id, proposed_agent, covered_by, rationale FROM v_roster_gaps;
+SELECT id, severity, status, found_by, requirement_id, title FROM v_open_bugs;
+SELECT id, who, waived, reason, title FROM v_failed_tasks;
+SELECT id, task_id, reviewer, severity, disposition, file, line, summary FROM v_open_findings;
+SELECT node_id, requirement_id, kind, prompt FROM v_gates_pending;
+SELECT json_object('ts', ts, 'actor', actor, 'verb', verb, 'type', subject_type,
+                   'id', subject_id, 'title', subject_title, 'phrase', phrase)
+  FROM v_recent_activity
+ WHERE ts >= COALESCE(NULLIF((SELECT value FROM guild_state WHERE key = 'last-checkin'), 'null'), '')
+ ORDER BY ts DESC LIMIT 50;
 ```
 
-**Empty board** (board shows no tasks and no requirements): skip the route question. Tell the user
-the board is empty and that they can say "new requirement" (or run `/guild:new-requirement`) to
-start one. **Do not auto-invoke it** — the interview is a live, multi-agent session and should only
-start when the user actively engages, not silently on an empty board. If they respond right there
-with a description of work, invoke `guild:new-requirement` with it as context and proceed to
-**Step 3**; otherwise there's nothing actionable — go to **Step 4**.
+**Narrate it — do not paste the rows.** Three or four lines is right at check-in:
 
-**Work intent — resume without asking.** If the invoking phrase expresses work intent ("let's get
-to work", "start working", "continue", or the user otherwise asked to work) AND the board has any
-in-progress or todo task, do NOT ask a routing question. Print the board plus one line —
-`Resuming: {output of "$GUILD" next} — say 'stop' or give new direction anytime.` — and go
-straight to **Step 3**. This is the "continue where we left off" path: zero round-trips.
+- which goal/phase the work serves, if `v_goal_progress` has rows;
+- what is in flight and for how long — `minutes` in the **hundreds** on a task that normally
+  takes minutes is a crashed dispatch, not work in progress; say so;
+- the risks, worst first: open bugs (name every `critical` one), unresolved failed tasks with
+  the reason from `v_failed_tasks.reason`, review findings with `file:line`;
+- **anything in `v_blocked_tasks` or `v_roster_gaps`, by name.** Neither resolves on its own
+  and neither will ever be handed out. If `bounties_open` is 0 and `bounties_stuck` is not,
+  that **is** the headline;
+- **what is waiting on the guild master** — every `v_gates_pending` row is a decision that
+  cannot progress without them. Name it;
+- what moved since the last check-in, summarized by subject rather than recited by timestamp.
 
-**Otherwise** (ambiguous/status triggers like "check in", "standup", "what's the status", "I'm
-here", or nothing is actionable), call **AskUserQuestion** to route the session. Use a single
-question with these options (the tool always adds an "Other" choice for free-form input):
+**Empty guild** (`requirements_open` and `requirements_done` both 0): say the board is empty
+and that they can say "new requirement". **Do not auto-invoke it** — the interview is a live
+multi-agent session and should start only when the user engages.
 
-- **Continue working** — pick up the next ticket and run the work cycle
-- **New requirement** — add something new to build
-- **Review completed work** — walk through recently completed tickets in detail
-- **Adjust the backlog** — retitle or drop backlog tickets
+**Work intent — resume without asking.** If the invoking phrase expresses work intent ("let's
+get to work", "continue", "start working") AND anything is runnable or any gate is pending,
+do NOT ask a routing question. Give the short narration plus one line — `Resuming: {REQ-NNN}
+— say 'stop' or give new direction anytime.` — and go straight to **Step 3**.
 
-Route on the selection:
+**Otherwise** (ambiguous triggers like "check in", "standup", "I'm here"), call
+**AskUserQuestion** with one question and these options:
 
-- **Continue working** → **Step 3** (Work Cycle)
+- **Continue working** → **Step 3**
 - **New requirement** → invoke `guild:new-requirement`, then **Step 3**
-- **Review completed work** → read recently completed ticket files (`"$GUILD" read TASK-NNN`), show
-  Work Log summaries, ask if anything needs rework. If rework needed, create new tickets (Step 3.4).
-  Then **Step 3**.
-- **Adjust the backlog** → list it (`"$GUILD" list task todo`). Retitle by editing the ticket
-  file's `title` field; drop with `"$GUILD" move TASK-NNN failed` (note the reason in the ticket's
-  Work Log). Ordering is fixed ID order — to run something sooner or later, drop the ticket and
-  recreate it with `"$GUILD" new task` (new IDs sort last). Then **Step 3**.
-- **Other** (user describes work directly, e.g., "fix the login bug") → invoke
-  `guild:new-requirement` with the description as context, then **Step 3**.
+- **Review completed work** → read recent tickets and their work logs, ask if anything needs
+  rework; then **Step 3**
+- **Adjust the backlog** → `SELECT * FROM v_board WHERE section_no = 3`; retitle with an
+  `UPDATE task SET title = CAST(x'…' AS TEXT)`; then **Step 3**
+- **Other** (they describe work) → invoke `guild:new-requirement` with it as context
 
-## Step 3: Work Cycle (The Continuous Loop)
+---
 
-This is the core of the guild. Execute this loop:
+## Step 3: The Work Cycle
 
-### 3.1 Find the Current Ticket
+### 3.1 Pick a requirement, and read its ready nodes
 
-Run `"$GUILD" next`. It returns `TASK-NNN <path>` for the next actionable ticket (resume any
-`in-progress` first, else the lowest-ID `todo`, with the `reviewer` review gate applied), or `none`.
+```sql
+SELECT id, status, priority, tasks_open, tasks_blocked, tasks_failed, title
+  FROM v_requirement_progress WHERE status <> 'done';
+```
 
-If it prints `none`: report "All caught up!" and go to **Step 4**.
+Take the lowest-id `in-progress` requirement, else the lowest-id `todo` one. Then ask the
+graph what is runnable — **this is the segment query, and it mutates nothing**:
 
-### 3.2 Dispatch the Ticket (or parallel-group batch)
+```sql
+SELECT json_object('node', n.id, 'key', n.node_key, 'kind', n.kind,
+                   'group', n.parallel_group,
+                   'task', COALESCE(n.task_id, ''),
+                   'agent', COALESCE((SELECT m.agent FROM v_task_top_agent m
+                                       WHERE m.task_id = n.task_id), ''),
+                   'serial', COALESCE((SELECT a.serial FROM agent a WHERE a.name =
+                                        (SELECT m.agent FROM v_task_top_agent m
+                                          WHERE m.task_id = n.task_id)), 0),
+                   'gate', COALESCE(n.gate_status, ''), 'gate_kind', COALESCE(n.gate_kind, ''),
+                   'prompt', COALESCE(n.gate_prompt, ''))
+  FROM v_ready_nodes n
+ WHERE n.requirement_id = 'REQ-NNN'
+ ORDER BY n.node_key, n.parallel_group, n.id;
+```
 
-1. **Expand to a batch**: run `"$GUILD" batch TASK-NNN`. For an ordinary ticket this returns just
-   `TASK-NNN` (a batch of one); for a `developer`/`developer-svelte` ticket carrying a
-   `parallel-group`, it returns every `todo`/`in-progress` dev ticket sharing that group and
-   requirement — the batch dispatched together.
-2. Move every ticket in the batch to in-progress: `"$GUILD" move TASK-NNN in-progress` (one per
-   member). If the requirement is still in `requirements/todo/` (`"$GUILD" status REQ-NNN` → `todo`),
-   advance it too: `"$GUILD" move REQ-NNN in-progress`.
-3. Get each ticket's metadata with `"$GUILD" meta TASK-NNN` (frontmatter only — do NOT `guild read`
-   the full ticket at dispatch; the agent reads its own ticket). From the `agent`, `requirement`,
-   `plan`, and `plan-slice` fields, resolve the paths to pass along: `"$GUILD" path REQ-NNN`, and
-   for any `plan-slice`, `"$GUILD" slice PLAN-NNN {slug}`.
-4. Spawn with the **Agent tool** — a single call for a solo ticket; for a parallel-group batch, **one
-   Agent call per ticket in the same message** so they run concurrently. Each agent's own definition
-   carries its close-out protocol; the prompt stays minimal:
+Four outcomes, and each has one right move:
 
-   ```
-   Agent(
-     subagent_type: "guild:{agent-name}",
-     prompt: "Your task is TASK-NNN. Read it with:
-                ${CLAUDE_PLUGIN_ROOT}/scripts/guild read TASK-NNN
-              (or open the file at the path the orchestrator provides).
-              Requirement: {resolved path from `guild path REQ-NNN`}
-              Plan slice (if any): {resolved path from `guild slice PLAN-NNN slug`}
-              Today's date: {today's date}
+| What comes back | What it means | Do |
+|---|---|---|
+| rows with `kind = work` | ordinary work | **3.2** |
+| only a `kind = gate` row | the run reached the gate | **3.5** (`gate-repairs`) or hand `gate-plan` back |
+| nothing, but nodes are `running` / `failed` | something is still held | resolve it (3.4), or move to another requirement |
+| nothing, and every node is `done` / `skipped` | the graph is exhausted | **3.6** — close the requirement |
 
-              Report done or failed in your final message. Do NOT move your task file
-              or edit any status — the orchestrator owns all transitions."
-   )
-   ```
+Check the held case explicitly before believing "nothing to do":
 
-   **Resumed ticket?** If the ticket was already in `tasks/in-progress/` with a non-empty Work Log
-   before this dispatch (Step 1.3 case three, or `guild next` returned an in-progress path), prepend
-   one line to the prompt:
+```sql
+SELECT id, node_key, status FROM graph_node
+ WHERE requirement_id = 'REQ-NNN' AND status NOT IN ('done', 'skipped') ORDER BY id;
+```
 
-   ```
-   RESUMED TASK: a prior agent already worked on this ticket — read its Work Log first
-   and continue from the last entry; do not redo logged work or re-declare follow-ups
-   already listed.
-   ```
+**No `graph_node` rows at all** → this requirement predates the graph, or the architect never
+built one. Do not improvise a chain. Go to **3.7**.
 
-**Development runs in parallel-group waves — parallel is the default.** The architect groups dev
-tickets into `parallel-group` waves; when the ticket carries one, dispatch the whole group (computed
-in 3.2 via `"$GUILD" batch`) concurrently in one message. The architect guarantees grouped tickets
-touch disjoint files, so they share the working tree without a worktree or merge step. An ungrouped
-dev ticket (foundational work, or an unboundable file set) runs solo. Never group tickets yourself —
-only honor the architect's `parallel-group` labels. If two tickets in a dispatched group turn out to
-write the same file (the architect mis-scoped), treat it as a failure: finish the batch, then surface
-the collision to the user in 3.3.
+**A pending `gate-plan` is not yours.** `guild:new-requirement` presents it. Say so, offer to
+hand it back to that skill, and never approve it yourself or build past it.
 
-**Review fan-out (the other parallel case).** When the ticket's `agent` is `reviewer`, do NOT spawn a
-single reviewer. Spawn all 4 specialized reviewers in parallel (multiple Agent calls in one message),
-all reading the same ticket:
+### 3.2 Advance the requirement, and form ONE batch
 
-1. `guild:reviewer-security`
-2. `guild:reviewer-architecture`
-3. `guild:reviewer-business-logic`
-4. `guild:reviewer-edge-case`
+If the requirement is still `todo`: `UPDATE requirement SET status = 'in-progress' WHERE id =
+'REQ-NNN' AND status = 'todo' RETURNING id, status;`
 
-After all 4 return, read the ticket — each will have appended a Verdict + Findings block to the
-Work Log (never the Follow-up Tasks section — see 3.5 for how findings become fix tickets).
-Consolidate the verdict: APPROVED only if all 4 passed.
+Then cut the ready **work** nodes into one batch and run only that one. Readiness propagates
+as work finishes, so you re-run the segment query after every batch — **you never queue the
+whole graph blind.**
 
-**qa-tester sequencing.** `qa-tester` tickets dispatch strictly one at a time (each drives its own
-dev server + Playwright; concurrent testers collide on ports). Never batch them.
+**The template is the ceiling; the data is the grouping.**
 
-**Interview relay (a third outcome, alongside done/failed) — applies to every agent.** No subagent
-can reach the user directly: `AskUserQuestion` only works in this orchestrator session, never
-inside a subagent, no matter what its own `tools` list says. Within check-in's ticket-dispatched
-agents, `qa-strategist` (an oracle question that blocks planning), `qa-tester` (an ambiguous
-behavior with no oracle), and `developer`/`developer-svelte` (an unclear requirement mid-task) all
-rely on this relay instead of calling the tool themselves. (`product-owner` and `architect` use the
-identical mechanism, but they're spawned directly by the `guild:new-requirement` skill, not
-dispatched as tickets here — see that skill if you land there.)
-Any of their final messages may, instead of a done/failed report, end with:
+1. Read the template that shaped this graph — `guild:warehouse` →
+   `references/templates/standard.md` or `maintenance.md`, overridden by
+   `.guild/templates/*.yaml` when present — and find the entry whose `key:` matches the
+   node's `node_key`.
+2. `parallel: by-group` or `parallel: all` → nodes sharing a **non-empty** `parallel_group`
+   run **concurrently**. The architect asserted their file sets are disjoint
+   (`plan_slice.files`). Nodes with no group are not concurrent with anything.
+3. `parallel: never`, no `parallel:` line, or a key in **neither** template → **one node, one
+   batch.** This is an invariant, not a tuning knob: `qa-execute` drives a real app and a real
+   dev server, and two at once collide.
+4. **Then, independently: never two `serial = 1` members in one concurrent batch.** The
+   segment query returns each node's `serial`. If a batch would hold two, **stop and report
+   it** — do not silently serialize. The template rule and the serial rule cover each other's
+   blind spots (a template says nothing about an added node; a serial flag says nothing about
+   a node with no ticket yet).
+
+Take the first batch in `node_key` order and nothing else. If concurrency looks wrong, that is
+a graph problem — read `graph_deviation` for the reason somebody recorded.
+
+### 3.3 Dispatch a node
+
+For each node in the batch:
+
+**1. Find its ticket.** The segment query's `task` field is the binding.
+
+- **Bound** → use it.
+- **Unbound** (`task` is empty) → the node is one the architect could not bind unambiguously
+  (`test-plan`, `qa-plan`, every `review.*`). Find the requirement's open ticket for that work:
+
+  ```sql
+  SELECT id, priority, who, parallel_group, title FROM v_open_bounties
+   WHERE requirement_id = 'REQ-NNN' ORDER BY priority, id;
+  ```
+
+  Pick the one whose title and `who` (`needs:…`) match the node's key — `test-plan` takes the
+  `needs:test-planning` bounty, `review.*` takes the reviewer ticket — then **bind it** when
+  you move the node, so nobody has to guess again.
+- **Unbound and no bounty for it** → the node is an **anchor** for a fanout that has not
+  happened yet. See *Anchors* below.
+
+**Never dispatch straight from `v_open_bounties`.** It answers "who could take this ticket",
+not "may this run yet". **The graph is the ordering; the bounty board and the matcher only
+name the member.**
+
+**2. Resolve the member.** The segment query's `agent` is already rank 1, from the same view
+`v_agent_match` ranks with. For a ticket you just found yourself:
+
+```sql
+SELECT agent FROM v_task_top_agent WHERE task_id = 'TASK-NNN';   -- '' means nobody
+SELECT task_id, agent, source, preferred_covered, preferred_total, capabilities
+  FROM v_agent_match WHERE task_id = 'TASK-NNN'
+ ORDER BY branch, preferred_covered DESC, capabilities ASC, agent ASC;
+```
+
+`''` or no rows → nobody on the roster can take it → **3.8**. Never improvise a substitute.
+
+**There is no reviewer special case.** The `review` node **is** four nodes, one per named
+reviewer, and the node id says which: `REQ-007/review.reviewer-security` dispatches
+`guild:reviewer-security`. The suffix after the `.` is the member.
+
+**3. Move the ticket and the node, in that order.**
+
+```sql
+PRAGMA foreign_keys = ON;
+UPDATE guild_state SET value = 'orchestrator' WHERE key = 'actor';
+
+UPDATE task SET status = 'in-progress', claimed_by = 'developer',
+                claimed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+ WHERE id = 'TASK-011' AND status = 'todo'
+RETURNING id, status, claimed_by;
+
+UPDATE graph_node SET status = 'running', task_id = 'TASK-011'
+ WHERE id = 'REQ-007/implement.auth-service' AND status IN ('pending','ready')
+RETURNING id, status, task_id;
+```
+
+Zero rows back means somebody already moved it — information, not an error. Set `task_id`
+only when the node is unbound; **a fanned-out key shares one ticket at most once** — the four
+`review.*` nodes share a single reviewer ticket, so bind one and move the others by id alone.
+
+**4. Spawn with the Agent tool.** Each agent's own definition carries its close-out protocol;
+the prompt stays minimal:
+
+```
+Agent(
+  subagent_type: "guild:{member}",
+  prompt: "Your task is TASK-NNN, for REQ-NNN. There are no ticket files — load the
+           guild:warehouse skill and read your ticket, your requirement and your plan
+           from .guild/guild.db with SQL. Your brief is the ticket's `objective`.
+           Today's date: {today}
+
+           Record your progress as you go — one INSERT INTO work_log per meaningful
+           outcome, with your own name in `agent` and the entry as CAST(x'<hex>' AS TEXT).
+           That log is what makes an interrupted task resumable, and it is the only thing
+           I read back when you are done.
+
+           Anything you find that is OUT OF SCOPE for this ticket — a bug, a gap, a
+           follow-up — file it as a `bug` row and keep going. Do not stop for it. It is
+           collected and judged with everything else at the repairs gate.
+
+           Report done or failed in your final message. Do NOT update task.status,
+           graph_node.status or gate.status — the orchestrator owns all transitions."
+)
+```
+
+**Resumed ticket?** If it was already `in-progress` with a non-empty work log, prepend:
+
+```
+RESUMED TASK: a prior agent already worked on this ticket — read its work_log first and
+continue from the last entry; do not redo logged work.
+```
+
+**Anchors (`fanout: per-declaration`, `per-approved-finding`, `per-mission`).** These nodes
+exist as one node and stand in for tickets that do not exist yet — `test-write` before the
+test-planner declared any, `repair` before the gate approved anything. Dispatch **every**
+ticket the anchor covers, one at a time unless the node says otherwise, then move the anchor
+`done` **once**, when they are all finished. The anchor is the barrier; the tickets are the
+work.
+
+**Interview relay — applies to every agent.** No subagent can reach the user. Any agent's
+final message may, instead of a done/failed report, end with:
+
 ```
 NEEDS INPUT:
 1. {question}
 2. {question}
 ```
-When you see this (delivered as the background agent's completion notification — dispatch it the
-normal way, you do not need `run_in_background: false` or any special waiting):
-1. Call **AskUserQuestion** yourself with exactly those questions, addressed to the real user.
-2. **Resume the same agent instance** — `SendMessage` to that agent's ID/name (from the original
-   `Agent` call), passing the user's answers as the message body.
-3. The agent continues and will either pause again with another `NEEDS INPUT:` block or report
-   done/failed. Repeat the relay until you get a done/failed report.
-4. Only then proceed to **3.3** for that ticket.
 
-A `NEEDS INPUT:` pause is neither a completion nor a failure — don't move the ticket, don't
-process follow-ups, and never answer on the user's behalf.
+When you see it: call **AskUserQuestion** yourself with exactly those questions, then
+**`SendMessage` the same agent instance** with the answers. Repeat until it reports
+done/failed. A `NEEDS INPUT:` pause is neither a completion nor a failure — **do not move the
+ticket, do not move the node, and never answer on the user's behalf.**
 
-### 3.3 Process Completion
+### 3.4 Record the results
 
-After the agent(s) return:
+The batch is finished when every agent in it has reported. For **each** node, read what
+actually happened — the agent wrote it as it went, so there is nothing to drain:
 
-For **each** ticket in the dispatched batch:
-
-1. **Read the updated ticket** (`"$GUILD" read TASK-NNN`) — check the Work Log and Follow-up Tasks,
-   and note whether the agent reported success or failure.
-2. **Record the outcome — follow-ups FIRST, then the move.** The orchestrator is the only writer of
-   status. Materializing before moving means a crash mid-processing leaves the ticket in
-   `in-progress/`, where Step 1.3 recovers it; a ticket in `done/` is never revisited.
-   - Reported done → process follow-ups (3.4), **then** `"$GUILD" move TASK-NNN done`
-   - Reported failed → `"$GUILD" move TASK-NNN failed` (no follow-up processing), then ask the user
-     (AskUserQuestion) whether to **retry** (`"$GUILD" move TASK-NNN todo`) or **skip** (leave in
-     `failed/`). On **skip**, append a waiver line to the ticket's Work Log — `Skipped by user on
-     {date} — excluded from REQ scope` — so downstream agents and the completion summary have the
-     fact on record. A ticket in `failed/` is **user-adjudicated**: it no longer blocks the review
-     gate or requirement completion (3.6), it just gets reported.
-
-**Parallel-batch checks** (only when the batch had more than one ticket):
-- Do not move on until **every** member has reached `done` (or been resolved). A `failed` member
-  leaves the group incomplete — handle it first, since the tail (test-planner/reviewer) gates on all
-  dev work being `done`.
-- Scan the batch's Work Logs for any file written by more than one ticket. If found, the architect
-  mis-scoped the disjoint-file assertion — surface it: "Parallel tickets TASK-X and TASK-Y both
-  modified {file}; their changes may have collided. Re-run sequentially?" and let the user decide.
-
-### 3.4 Materialize Follow-up Tasks
-
-Read the completed ticket's "Follow-up Tasks" section. For each line:
-
-1. **Parse**: title, agent, and the optional modifiers `plan: PLAN-NNN`, `plan-slice: {slug}`,
-   `parallel-group: {label}`. (No `depends-on`, no magic tokens; ignore a legacy `priority:` field
-   if one appears.) The `plan:` modifier is emitted by the architect — the one agent whose own
-   ticket predates the plan; when absent, the new ticket inherits the parent ticket's `plan`
-   frontmatter.
-2. **Skip already-materialized lines**: a line ending in ` → TASK-NNN` was created in a previous
-   pass — do not create it again. (The create→annotate pair is not atomic: when running this step
-   as crash recovery, also check `"$GUILD" list task todo` for an existing same-title, same-REQ
-   ticket before creating — if found, just annotate the line with that ID.)
-3. **Create the ticket** with the CLI — it derives the next ID and writes into `tasks/todo/`:
-   ```bash
-   "$GUILD" new task --title "{title}" --agent {agent} --req {parent REQ} \
-     [--plan {plan modifier, or parent's plan}] [--plan-slice {slug}] \
-     [--parallel-group {label}] --date {today}
-   ```
-   The new task inherits the parent's requirement. Pass `--plan-slice` / `--parallel-group` only
-   when the corresponding modifier was present.
-4. **Annotate**: append ` → TASK-NNN` (the ID just printed) to the follow-up line in the parent
-   ticket (Edit). This makes materialization idempotent — if the session dies partway, the Step 1.3
-   triage re-runs 3.4 and only the unannotated lines are created.
-
-Reviewer tickets never populate this section themselves anymore — see 3.5 for how review findings
-turn into fix tickets.
-
-### 3.5 Review Report & Fix Approval (no automatic re-review)
-
-This runs **only** after a `reviewer` ticket batch completes (all 4 specialized reviewers have
-written to the shared Work Log). Reviewers no longer declare `Fix:` follow-ups or manage rounds
-themselves (no `ESCALATE`, no round cap) — you compile their findings and the user decides what
-happens next.
-
-1. **Compile the report.** Read the completed ticket (`"$GUILD" read TASK-NNN`) and pull each
-   reviewer's Verdict + Findings block. Ensure `.guild/reviews/` exists (`mkdir -p .guild/reviews`)
-   and write/append to `.guild/reviews/REQ-NNN.md` — **append a new dated section, never overwrite
-   a prior round's**:
-   ```markdown
-   ## {today's date} — TASK-NNN
-
-   ### reviewer-security — {PASS | ISSUES FOUND}
-   {findings, verbatim from the Work Log}
-
-   ### reviewer-architecture — {PASS | ISSUES FOUND}
-   {findings}
-
-   ### reviewer-business-logic — {PASS | ISSUES FOUND}
-   {findings}
-
-   ### reviewer-edge-case — {PASS | ISSUES FOUND}
-   {findings}
-   ```
-2. **All 4 PASS, no findings** → tell the user the review passed cleanly (point at the report
-   path) and go straight to **3.6** — nothing to approve.
-3. **Otherwise**, list the critical/major findings as candidates and let the user choose:
-   ```
-   Review report for REQ-NNN written to .guild/reviews/REQ-NNN.md.
-
-   {N} critical/major findings across the 4 reviewers:
-   1. [{reviewer}] {one-line finding}
-   2. [{reviewer}] {one-line finding}
-   ...
-   ```
-   Call **AskUserQuestion** with a multi-select question, one option per finding ("Create a fix
-   ticket for: {finding}") — the user can approve some, all, or none; the tool's built-in "Other"
-   covers anything they'd rather phrase differently or add.
-4. **For each approved finding**, create a plain developer ticket — no `--plan-slice`, no
-   `--parallel-group`, and critically, **no forced test-writer/re-review tail**:
-   ```bash
-   "$GUILD" new task --title "Fix: {finding}" --agent developer --req REQ-NNN [--plan PLAN-NNN] --date {today}
-   ```
-5. **There is no automatic re-review.** Once any approved fix tickets reach `done`, 3.6 finds the
-   requirement's tasks all complete and marks it done — same as if there had been no findings at
-   all. If the user wants another review pass later, that's just a fresh `reviewer` ticket like any
-   other: `"$GUILD" new task --title "Review {feature} implementation (round 2)" --agent reviewer --req REQ-NNN --date {today}`.
-
-### 3.6 Requirement Completion
-
-After materializing follow-ups (and, for a `reviewer` ticket, after 3.5's report/fix-approval step
-has run — any approved fix tickets are already created by this point), check whether any task for
-that REQ remains **open**:
-```bash
-"$GUILD" list task | awk '$4=="REQ-NNN" && $2!="done" && $2!="failed"'
-```
-(empty output = nothing open; this matches the CLI's review gate exactly). If so:
-- `"$GUILD" move REQ-NNN done`.
-- If any tasks for the REQ sit in `failed/` (`awk '$4=="REQ-NNN" && $2=="failed"'`), they were
-  **user-waived** (3.3 skip) — list them in the completion summary rather than blocking completion.
-- Append a bullet to `CHANGELOG.md` under `## [Unreleased]` (see 3.8) — with waived tasks, use
-  `- REQ-NNN: {title} (TASK-NNN skipped)`.
-
-Requirement progress is always computed live by `"$GUILD" board` (done tasks / total tasks) — never
-stored.
-
-### 3.7 Continue or Pause
-
-**Flow continuously by default.** After each completed ticket (or batch), show a one-line update and
-loop straight back to 3.1 — do NOT ask "continue?" between tickets (each pause costs a user
-round-trip and re-renders context for nothing):
-
-```
-TASK-NNN done: {title} → {N} follow-ups created
+```sql
+SELECT json_object('ts', ts, 'agent', agent, 'entry', entry)
+  FROM work_log WHERE task_id = 'TASK-011' ORDER BY ts, id;
+SELECT id, reviewer, severity, disposition, file, line, summary
+  FROM review_finding WHERE task_id = 'TASK-011' ORDER BY id;
 ```
 
-(For a parallel-group batch, one line per member.)
+Then record it. **Both halves, always** — the ticket is the record, the node is the ordering,
+and a node left `running` silently stalls everything behind it:
 
-**Pause and ask the user only at these checkpoints:**
+| The agent reported | Ticket | Node |
+|---|---|---|
+| done | `UPDATE task SET status='done' WHERE id='TASK-011' AND status='in-progress' RETURNING id,status;` | `UPDATE graph_node SET status='done' WHERE id='REQ-007/…' AND status='running' RETURNING id,status;` |
+| failed | `UPDATE task SET status='failed' WHERE id='TASK-011' RETURNING id,status;` | `UPDATE graph_node SET status='failed' WHERE id='REQ-007/…' RETURNING id,status;` |
 
-- **A ticket failed** (3.3 already asks retry/skip)
-- **A review report is ready for a fix-approval decision** (3.5 already asks)
-- **A parallel-batch file collision** (3.3 already asks)
-- **A requirement just completed** (3.6) → summarize the requirement and ask: continue with the next
-  backlog item, or wrap up?
-- **The user interrupts** at any time → go to Step 4
+Do not set `updated_at` — a trigger stamps it, and another writes the `event` row.
 
-If the user explicitly asked to be consulted per-ticket ("step through", "ask me each time"), honor
-that instead: after each ticket ask `Continue to next task? (yes / no / details)`.
+**A failure does not stop the run and does not ask the user.** That is what the two-gate
+model buys: a failed node holds its own successors, the rest of the graph keeps going, and
+the failure is **collected** and judged at `gate-repairs` alongside every finding and bug.
+(The one exception is a failure that stalls the *whole* requirement with nothing else
+runnable — then say so and ask.)
 
-### 3.8 CHANGELOG Maintenance
+**Parallel-batch collision check** (only when the batch had more than one node): scan the
+work logs for a file written by more than one ticket. If you find one, the architect's
+disjoint-file assertion was wrong — that is a finding for the gate, not an interruption:
 
-When a requirement transitions to `done` (3.6), append a bullet to the repo-root `CHANGELOG.md` under
-`## [Unreleased]`.
+```sql
+INSERT INTO bug (id, title, body, repro, severity, found_by, requirement_id, created_at, updated_at)
+SELECT 'BUG-' || printf('%03d', COALESCE(MAX(CAST(substr(id, instr(id,'-')+1) AS INTEGER)),0)+1),
+       CAST(x'<hex>' AS TEXT), '', '', 'major', 'orchestrator', 'REQ-NNN',
+       strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')
+  FROM bug
+RETURNING id;
+```
 
-**If `CHANGELOG.md` does not exist**, create it first:
+Then **go back to 3.1** — re-run the segment query and take the next batch. One line between
+batches and nothing more:
+
+```
+REQ-007 — implement.migrations done (developer). Next: test-plan.
+```
+
+### 3.5 The gate — `gate-repairs`
+
+When the only ready node is the gate, this is the second and last decision of the
+requirement, and it is yours to put in front of the user.
+
+**1. Gather what is being judged** — everything collected during the run:
+
+```sql
+SELECT id, task_id, reviewer, severity, disposition, file, line, summary, detail
+  FROM v_open_findings WHERE requirement_id = 'REQ-NNN';
+SELECT id, severity, status, found_by, title FROM v_open_bugs;
+SELECT id, who, waived, reason, title FROM v_failed_tasks WHERE requirement_id = 'REQ-NNN';
+SELECT prompt, kind FROM gate WHERE node_id = 'REQ-NNN/gate-repairs';
+```
+
+Write the review record to `.guild/reviews/REQ-NNN.md` — **append a new dated section, never
+overwrite a prior round's**:
+
 ```markdown
-# Changelog
+## {today} — REQ-NNN
 
-All notable changes to this project will be documented in this file.
+### reviewer-security — {PASS | ISSUES FOUND}
+{findings, verbatim}
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
-
+### reviewer-architecture — …
+### reviewer-business-logic — …
+### reviewer-edge-case — …
 ```
 
-**If it exists but has no `## [Unreleased]` section**, insert one after the preamble.
+**2. Present it as one decision.** Use the gate's own prompt — the template wrote it:
 
-**Append the bullet:**
+```
+REQ-007 — Session-backed authentication: the run is complete.
+
+  4 reviewers, 3 findings:
+    1. [security]        Unsigned callback token accepted            (major)
+    2. [edge-case]       Empty session id is not rejected            (major)
+    3. [architecture]    Auth service reaches into the route layer   (minor)
+  2 bugs filed during the run:
+    4. BUG-004 critical  Preference toggles silently revert after save
+    5. BUG-005 minor     Loading spinner flashes on fast responses
+  1 failed task:
+    6. TASK-013 Migrate legacy preference rows — migration is not idempotent
+
+  Report: .guild/reviews/REQ-007.md
+
+Findings and bugs from REQ-007 — approve which get repaired.
+```
+
+**3. Ask with AskUserQuestion, as a MULTI-SELECT** — one option per numbered item ("Repair:
+{item}"). They can approve some, all or none; "Other" covers anything they would rather
+phrase differently.
+
+**4. Record the decision, and create the repairs.** Two writes, always — setting `gate.status`
+does **not** move the node:
+
+```sql
+PRAGMA foreign_keys = ON;
+UPDATE guild_state SET value = 'orchestrator' WHERE key = 'actor';
+
+UPDATE gate SET status = 'approved',
+                decision = CAST(x'<hex-decision>' AS TEXT),
+                decided_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+ WHERE node_id = 'REQ-NNN/gate-repairs' AND status = 'pending'
+   AND EXISTS (SELECT 1 FROM v_ready_nodes r WHERE r.id = 'REQ-NNN/gate-repairs')
+RETURNING node_id, status;
+
+UPDATE graph_node SET status = 'done'
+ WHERE id = 'REQ-NNN/gate-repairs'
+   AND (SELECT g.status FROM gate g WHERE g.node_id = graph_node.id) = 'approved'
+RETURNING id, status;
+```
+
+- **The `v_ready_nodes` guard is not decoration.** Approving a gate whose predecessors have
+  not finished makes `repair` ready immediately, and repairs would run against findings
+  nobody produced.
+- **`decision` is mandatory on this gate** — it *is* the fan-out. `none` is how you say
+  "approve, repair nothing" out loud. Pass the user's own words through; six weeks later the
+  reasoning is the part anyone wants.
+- **On reject** (the run was wrong, not its findings): `status = 'rejected'` and the node goes
+  to `'skipped'`. Say so and stop. A rejected gate may be decided again; an **approved** one
+  may not — its successors have already been unblocked.
+
+Then create one plain ticket per approved item (`task` + `task_capability`, per
+`queries.md` §1), and link each repair to what it repairs:
+
+```sql
+UPDATE review_finding SET disposition = 'fixing', fix_task_id = 'TASK-021'
+ WHERE id = 7 AND disposition = 'open' RETURNING id, disposition;
+UPDATE bug SET status = 'fixing', fix_task_id = 'TASK-022'
+ WHERE id = 'BUG-004' AND status = 'open' RETURNING id, status;
+```
+
+Go back to **3.1** — the approved gate makes `repair` ready. **There is no automatic
+re-review.** If the user wants another pass later, that is a fresh reviewer ticket.
+
+### 3.6 Requirement completion
+
+When every node is `done` or `skipped`, confirm nothing is still open:
+
+```sql
+SELECT id, status, tasks_total, tasks_done, tasks_open, tasks_blocked, tasks_failed, title
+  FROM v_requirement_progress WHERE id = 'REQ-NNN';
+```
+
+`tasks_open = 0` → `UPDATE requirement SET status = 'done' WHERE id = 'REQ-NNN' AND status <>
+'done' RETURNING id, status;` then roll the direction above it up — a phase whose
+requirements are all done is `done`, a goal whose phases are all done is `done` — then append
+a bullet to `CHANGELOG.md` (3.9).
+
+**`tasks_open` counts `blocked`, and that is the point.** `failed` was adjudicated at the
+gate; `blocked` is a machine verdict nobody has looked at, and closing a requirement over one
+ships an un-attempted slice silently. **Nothing in the schema stops you** — this is a
+convention you honor. If a blocked task is holding a requirement open, say so by name; the
+fix is recruiting (3.8), not a status edit.
+
+List any `failed` tasks in the completion summary — they were judged at `gate-repairs`, so
+they report rather than block.
+
+Then summarize the requirement and ask: continue with the next one, or wrap up?
+
+### 3.7 A requirement with no graph — the cursor fallback
+
+For a board that predates the graph, the cursor still works and it is the fallback:
+
+```sql
+SELECT * FROM v_next_task;                                   -- resume, else claim
+SELECT member_id, member_status, member_title FROM v_batch WHERE task_id = 'TASK-NNN';
+```
+
+**Use it only when the requirement has no `graph_node` rows, and say so out loud.**
+`v_next_task` applies the review gate but deliberately ignores dependencies and eligibility,
+so check `v_open_bounties` before dispatching. Dispatch by `v_task_top_agent` exactly as in
+3.3, and skip 3.5 — there is no gate on a graph-less requirement, so a review report goes to
+the user directly.
+
+**Offer the fix once**: only the architect should decide a graph's shape, so hand the
+requirement back to `guild:new-requirement` rather than instantiating one yourself.
+
+### 3.8 No eligible agent — block it, loudly
+
+When `v_task_top_agent` returns `''` and the ticket declared capabilities, no member covers
+it. That is a **roster gap** and it should be loud. Reading never blocks a ticket; blocking is
+a decision, so it is a write you make on purpose:
+
+```sql
+UPDATE task SET status = 'blocked'
+ WHERE id = 'TASK-005' AND status = 'todo'
+   AND NOT EXISTS (SELECT 1 FROM v_agent_eligible e WHERE e.task_id = 'TASK-005')
+   AND COALESCE(agent, '') = ''
+RETURNING id, status;
+
+INSERT INTO work_log (task_id, ts, agent, entry)
+SELECT t.id, strftime('%Y-%m-%dT%H:%M:%SZ','now'), 'orchestrator', CAST(x'<hex>' AS TEXT)
+  FROM task t WHERE t.id = 'TASK-005';
+
+UPDATE graph_node SET status = 'failed' WHERE task_id = 'TASK-005' AND status = 'running'
+RETURNING id, status;
+```
+
+**Tell the user now, do not batch it into the wrap-up.** Name the ticket, the missing
+capabilities (`v_blocked_tasks.reason` spells them: `no-eligible-agent:implement,rust`), and
+the one thing that fixes it:
+
+```
+TASK-005 "Port the codec to Rust" is blocked: no guild member has [implement, rust].
+Nothing will pick it up until the roster covers it. Run /guild:new-requirement to
+recruit for it, or reassign the work.
+```
+
+Then continue the loop. `blocked` means exactly one thing — **no guild member can take this
+bounty** — never "waiting on a person or a decision". It holds the review gate and keeps its
+requirement open at 3.6, both deliberately. **Never substitute a member you think is close
+enough**; if the user wants a generalist to take it anyway, that is their call, out loud.
+
+**Unblocking**: once an agent file is added and the roster synced, `UPDATE task SET status =
+'todo'`, `UPDATE graph_node SET status = 'pending'`, then confirm with `v_task_top_agent`.
+
+### 3.9 CHANGELOG maintenance
+
+When a requirement reaches `done` (3.6), append a bullet under `## [Unreleased]` in the
+repo-root `CHANGELOG.md` (create the file with the Keep-a-Changelog preamble if missing):
+
 ```
 - REQ-NNN: {requirement title}
 ```
 
-Skip if a bullet starting with `- REQ-NNN:` already exists under `## [Unreleased]` (idempotent). The
-`guild:release` skill later renames `## [Unreleased]` to a versioned heading.
+Skip if a bullet starting with `- REQ-NNN:` is already there (idempotent). With waived tasks,
+use `- REQ-NNN: {title} (TASK-NNN skipped)`. `guild:release` renames `## [Unreleased]` later.
 
-## Step 4: Session Wrap-up
+---
 
-When the work cycle ends (user stops, or nothing actionable):
+## Step 4: Session wrap-up
 
-1. Present a session summary (render with `"$GUILD" board`; `last-checkin` was already stamped at
-   Step 1 — do not write it again):
-   ```
-   Session Summary
-   ===============
-   Tasks completed: {N}
-   Tasks created: {N}
-   Remaining backlog: {N}
+When the cycle ends (the user stops, or nothing is actionable):
 
-   Requirements status:
-     REQ-001: User Authentication — in-progress (5/6 done)
+```
+Session Summary
+===============
+Nodes run: {N}     Tickets completed: {N}     Bugs filed: {N}
 
-   Next check-in, I'll continue with:
-     {output of `"$GUILD" next`}
-   ```
+Requirements:
+  REQ-007: Session-backed authentication — in-progress, at gate-repairs
+  REQ-008: Preferences page — in-progress (implement.ui running)
+
+Next check-in, I'll continue with:
+  REQ-007 — the repairs gate is ready for your decision
+```
+
+**The summary does not end without these three, when any is non-empty:**
+
+- **Gates awaiting you** — `SELECT * FROM v_gates_pending`. The only thing on the board that
+  cannot move without the user; it belongs at the top of the wrap-up, not the bottom.
+- **Blocked work and roster gaps** — `v_blocked_tasks`, `v_roster_gaps`. Neither resolves on
+  its own.
+- **Nodes left `failed` or `running`** — a `running` node with no live agent is a crash site
+  and it holds everything behind it.
+
+Then, and only then, stamp the check-in:
+
+```sql
+UPDATE guild_state SET value = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+ WHERE key = 'last-checkin' RETURNING key, value;
+```
+
+---
+
+## Step 5: Verify against expectations
+
+Before you hand the session back, run `guild:validate check-in` — the global invariants plus
+§7 of `docs/expectations.md`, which asserts the four ways an orchestrator goes wrong:
+dispatching by a hardcoded name, letting somebody else move a status, building past a gate,
+and re-deriving a rule instead of reading the view. **Report every failure with its rows.**
+Your own account of what you wrote is not evidence; the board is.
 
 ## Key Rules
 
-1. **Status is the directory** — `tasks/{todo,in-progress,done,failed}/`. Never write a `status:`
-   field; change status only by `"$GUILD" move`.
-2. **The orchestrator owns all status transitions** — agents report done/failed and never move files.
-3. **No `BOARD.md`, no counters, no cursor field** — render the board live (`"$GUILD" board`); IDs and
-   the cursor are derived by the CLI.
-4. **Use the CLI for every deterministic op** — `next`, `batch`, `move`, `new task`, `path`, `read`,
-   `meta`, `slice`, `board`, `list`. No hand-rolled `find`/`mv`/ID math.
-5. **Parallel development by default** — the architect groups dev tickets into `parallel-group`
-   waves; expand with `"$GUILD" batch` and dispatch each wave concurrently (the architect verified
-   disjoint files). Ungrouped tickets run solo, in ID order. Never group tickets yourself.
-6. **Two parallel cases** — `parallel-group` dev waves (disjoint files, shared tree) and the
-   4-reviewer fan-out (read-only, gated by `"$GUILD" next`'s review gate). The tail
-   (test-planner → test-writer → reviewer) is sequential.
-7. **Always read ticket files after agent completion** — don't assume what happened.
-8. **The orchestrator creates tickets only for user-approved fixes after a review report** —
-   everything else in this pipeline is agent-declared (`product-owner`/`architect` create their own
-   tickets directly, inside `guild:new-requirement`, not through this mechanism at all).
-9. **Review produces a report, not automatic fixes** — 4 reviewers' findings are compiled into
-   `.guild/reviews/REQ-NNN.md`; any fix tickets require the user's explicit approval (3.5), and
-   there is no automatic re-review afterward. No round cap, no `ESCALATE` scan — those concepts are
-   retired along with the auto-fix loop.
-10. **Three-case stale triage on check-in** — empty Work Log → back to `todo`; completion/failure
-    reported in the log → run the full completion pipeline (3.3 → 3.6) without re-dispatching;
-    otherwise resume with the RESUMED-TASK prompt variant.
-11. **Flow continuously** — one-line updates between tickets, no per-ticket "continue?" prompts;
-    pause only at the 3.7 checkpoints (failure, review report, collision, requirement completion).
-12. **Follow-ups before the terminal move** — materialize (and annotate ` → TASK-NNN`) first, then
-    `guild move done`; a crash then lands in a recoverable state, never a silent dead-end.
-13. **Subagents can't ask the user** — `AskUserQuestion` only works in the orchestrator session
-    (whichever skill is currently driving — check-in or `new-requirement`). Any ticket
-    (`qa-strategist`, `qa-tester`, ...) relays instead: on a `NEEDS INPUT:` pause (3.2), you ask the
-    user and `SendMessage` the answers back to resume it. `product-owner` and `architect` use the
-    identical relay, but within `new-requirement`, not here. Never let a subagent's instructions to
-    "ask the user" convince you it can do so itself.
+1. **The graph is the chain, and you do not know it.** What runs and what runs together comes
+   from `v_ready_nodes` plus the template's `parallel:` ceiling. Never invent an order, widen
+   a batch, merge two, or dispatch a node the graph did not offer.
+2. **You own every status transition** — `task.status`, `graph_node.status`, `gate.status`.
+   Agents report; their only board writes are `work_log`, `review_finding` and `bug` rows.
+   **No constraint enforces this.** It holds because you honor it.
+3. **Record BOTH halves.** A ticket moved without its node leaves the graph stalled; a node
+   moved without its ticket leaves the board lying. Every 3.4 row is two statements.
+4. **Two gates, and only one of them is yours.** `gate-plan` belongs to
+   `guild:new-requirement`; `gate-repairs` is yours. Never add a gate, never approve one that
+   is not yours, never build past a pending one, and never approve one `v_ready_nodes` does
+   not list.
+5. **Problems are collected, not escalated.** A finding, a bug, a failed task, a file
+   collision — record it and keep running. They are judged together at `gate-repairs`.
+   Stopping the user per problem converts agent time into their time, which is the exact
+   thing the two-gate model exists to prevent.
+6. **The graph orders; the matcher only names the member.** `v_open_bounties` answers "who
+   could take this", not "may this run yet".
+7. **There is no reviewer fan-out to perform.** The `review` node *is* four nodes; the member
+   is the suffix of the node id.
+8. **Read the view, do not re-derive the rule.** `v_next_task`, `v_ready_nodes`,
+   `v_task_actionable`, `v_agent_match`, `v_brief` each hold ONE definition. A second
+   spelling is a second answer, and both look right.
+9. **Serial members are never concurrent**, and a batch that would hold two is a stop-and-
+   report, not something you quietly serialize.
+10. **Subagents can't ask the user.** Every agent relays through `NEEDS INPUT:`; you ask, then
+    `SendMessage` the answers back. This is also why a gate can never live inside a dispatched
+    workflow.
+11. **A ticket names a capability; the matcher names the member.** Dispatch rank 1 when
+    `agent` is empty, honor the pin when it is set, never invent a member for a ticket nobody
+    matched.
+12. **`blocked` means "no guild member can take this bounty" and nothing else.** Written only
+    by you, only after the match came back empty, reported the moment it happens. Recruiting
+    is the fix.
+13. **You never write an `agents/*.md` file.** Creating a guild member happens in
+    `guild:new-requirement`, on an explicit answer from the user, and nowhere else.
+14. **Guard every mutation and read the `RETURNING`.** A failing statement does not stop a
+    tursodb script and `COMMIT` still commits, so one logical change per invocation, and zero
+    rows back is information you act on rather than ignore.

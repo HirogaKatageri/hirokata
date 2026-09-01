@@ -1,6 +1,6 @@
 {
   "name": "hirokata",
-  "version": "4.0.0",
+  "version": "4.2.0",
   "owner": {
     "name": "Gian Patrick Quintana",
     "email": "gian.quintana@hirokata.dev"
@@ -23,14 +23,14 @@
     {
       "name": "guild",
       "source": "./plugins/guild",
-      "version": "4.0.0",
-      "description": "Continuous agent orchestration system. A live 3-way interview between product-owner, architect, and user plans each requirement up front; the board then drives parallel development, test planning, unit & integration testing, and a 4-reviewer pass that produces a report for user-approved fixes, through a directory-based ticket board driven by a deterministic CLI, with crash-safe session resume, a Svelte/SvelteKit specialist developer agent, and an independent QA discipline. Say 'check in' to start a work session.",
+      "version": "6.0.0",
+      "description": "Continuous agent orchestration where the plugin IS a schema and a set of skills — there is no CLI. `tursodb` already executes SQL, so guild members reach the board by writing their own SQL against a guide, and the guild's rules live IN the database: CHECK constraints are the status vocabularies, VIEWS are the derived rules (the cursor, the review gate, node readiness, the matcher, the board, the brief — each with ONE definition, so two members cannot get two answers), and TRIGGERS write the `event` record on every mutation. A member can forget to call a command; a member cannot bypass a trigger or a CHECK. A ticket names a required CAPABILITY rather than an agent, so adding an agent file is the whole of hiring. Each requirement runs an execution graph with exactly two gates — the plan is approved before anything is built, and findings, bugs and failures are presented together as one decision after review — and it can work a shift unattended, stopping at the next gate because a gate is the one decision no subagent can make. An independent QA discipline files bugs and maps risk coverage as rows. Say 'check in' to start a work session, or 'work a shift' to leave it running. v6 is a fresh rewrite: the v5 CLI's test suite and review rounds do not carry over to code that no longer exists.",
       "author": {
         "name": "Gian Patrick Quintana",
         "email": "gian.quintana@hirokata.dev"
       },
       "license": "MIT",
-      "keywords": ["orchestration", "agents", "board", "continuous-workflow", "requirements", "review"]
+      "keywords": ["orchestration", "agents", "board", "schema", "sql", "execution-graph", "gates", "unattended", "requirements", "review", "turso", "sqlite", "dashboard", "qa"]
     },
     {
       "name": "research",

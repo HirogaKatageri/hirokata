@@ -1,0 +1,23 @@
+# Line endings.
+#
+# `journal.ndjson` is the guild's durability record and the ONE artifact git carries for
+# the board (plugins/guild/docs/v5-design.md §2.3). Every reader of it parses positionally
+# and requires each line's last byte to be `}`, so a CR before the newline makes the whole
+# file unreadable — and an unreadable journal used to be indistinguishable from an empty
+# one: `guild rebuild` produced an empty board and `guild journal compact` overwrote the
+# file, both at exit 0.
+#
+# The CLI now refuses on both paths, but a refusal is a worse outcome than never getting
+# the CRLF in the first place. `-text` means: never convert, in either direction, whatever
+# core.autocrlf or a `* text=auto` rule says. The pattern has no slash, so it matches at
+# any depth — this repo's own .guild/, and any fixture or test workspace under it.
+journal.ndjson -text
+
+# The spool files (.guild/spool/<TASK-ID>.ndjson, and the rejected/ copies that are the
+# only record of an agent line the drain could not import) are parsed the same way.
+*.ndjson -text
+
+# Shell is run by bash 3.2 on macOS and by CI on Linux. A CR at end of line turns a
+# heredoc terminator into a syntax error, and `scripts/guild` has no extension.
+*.sh text eol=lf
+plugins/guild/scripts/guild text eol=lf
