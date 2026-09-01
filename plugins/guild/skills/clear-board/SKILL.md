@@ -55,7 +55,6 @@ UNION ALL SELECT 'work_log',     COUNT(*) FROM work_log
 UNION ALL SELECT 'findings',     COUNT(*) FROM review_finding
 UNION ALL SELECT 'events',       COUNT(*) FROM event
 UNION ALL SELECT 'KEEP:agents',  COUNT(*) FROM agent
-UNION ALL SELECT 'KEEP:coverage',COUNT(*) FROM coverage
 UNION ALL SELECT 'KEEP:docs',    COUNT(*) FROM doc;
 ```
 
@@ -63,7 +62,7 @@ If every countable row is 0, say `The guild board is already empty — nothing t
 
 **What a clear deletes:** `goal`, `phase`, `requirement`, `plan`, `task`,
 `task_dependency`, `task_capability`, `graph_node`, `graph_edge`, `graph_deviation`, `gate`,
-`work_log`, `review_finding`, `bug`, `capability_request`, `inspection`, `inspection_coverage`,
+`work_log`, `review_finding`, `bug`, `capability_request`,
 and the `graph-template:REQ-NNN` keys in `guild_state`.
 
 **What survives, and why:**
@@ -71,11 +70,10 @@ and the `graph-template:REQ-NNN` keys in `guild_state`.
 | Kept | Because |
 |---|---|
 | `agent` · `agent_capability` | the roster is the guild, not the board. Retire a member with `active = 0`, never DELETE |
-| `coverage` | evergreen. It describes the **product**, and the product did not go away |
 | `doc` | the library. Knowledge the guild looked up once and should not look up again |
 | `event` | the guild's memory. Deleting it is a separate, louder decision — see Step 5 |
 | `guild_state` (except `graph-template:*`) | `actor` and `last-checkin` are board plumbing |
-| `.guild/docs/` · `.guild/qa/` on disk | evergreen for exactly the same reasons as `doc` and `coverage` |
+| `.guild/docs/` on disk | evergreen for exactly the same reasons as `doc` |
 
 ## Step 3 — back up, then confirm
 
@@ -88,7 +86,7 @@ ls -la .guild/guild.db.bak-*
 ```
 
 Then present the inventory and ask, in these words — say what is destroyed **and** what is kept,
-because a user who thinks their QA coverage map is about to go will answer the wrong question:
+because a user who thinks their `doc` library is about to go will answer the wrong question:
 
 ```
 Current board:
@@ -97,7 +95,7 @@ Current board:
 
 This DELETES all of it, permanently. There is no undo.
 
-Kept: the agent roster, the coverage map, the doc library, and the event feed.
+Kept: the agent roster, the doc library, and the event feed.
 Backed up first: .guild/guild.db.bak-{stamp}
 
 Clear the board? (yes / no)
@@ -140,9 +138,6 @@ DELETE FROM task;
 DELETE FROM plan;
 DELETE FROM capability_request;
 
--- maintenance runs (the coverage rows they point at STAY)
-DELETE FROM inspection_coverage;
-DELETE FROM inspection;
 
 -- direction
 DELETE FROM requirement;
@@ -154,7 +149,7 @@ DELETE FROM guild_state WHERE key LIKE 'graph-template:%';
 
 SELECT 'left', (SELECT COUNT(*) FROM task), (SELECT COUNT(*) FROM requirement),
                (SELECT COUNT(*) FROM graph_node), (SELECT COUNT(*) FROM agent),
-               (SELECT COUNT(*) FROM coverage), (SELECT COUNT(*) FROM doc);
+               (SELECT COUNT(*) FROM doc);
 ```
 
 **Verify with that last SELECT and report what it actually says.** A failing statement does not
@@ -189,7 +184,7 @@ Board cleared.
 
   Deleted: {N} requirement(s), {N} plan(s), {N} task(s), {N} graph node(s),
            {N} work-log entries, {N} finding(s), {N} bug(s)
-  Kept:    {N} agent(s), {N} coverage area(s), {N} doc(s), {N} event(s)
+  Kept:    {N} agent(s), {N} doc(s), {N} event(s)
   Backup:  .guild/guild.db.bak-{stamp}
 
 IDs are derived as MAX(n) + 1 and are never reused, so the next requirement is
@@ -201,7 +196,7 @@ now points at nothing. Delete the backup when you are sure.
 
 Run `guild:validate clear-board`. §8 of `docs/expectations.md` is symmetrical and the second
 half is the one that matters: §8.a asserts every board table is empty, §8.b diffs the *keep*
-fingerprint — Step 2's counts — to prove the roster, the coverage map, the library and the
+fingerprint — Step 2's counts — to prove the roster, the library and the
 event feed came through untouched. **Report any line that moved.** A clear that took an
 evergreen row destroyed something a board reset was never allowed to reach.
 
@@ -214,7 +209,7 @@ evergreen row destroyed something a board reset was never allowed to reach.
 - **Never `DELETE FROM agent`.** Retire with `active = 0`. A done task from months ago may still
   name a member whose file is gone, and deleting either breaks the foreign key or orphans the
   history that explains the board.
-- **Never delete `coverage` or `doc`.** They describe the product and the guild's knowledge, both
+- **Never delete `doc`.** It is the guild's knowledge,
   of which survive any number of boards.
 - **`event` is a separate question**, asked separately, answered separately.
 - **Verify by reading the counts back**, not by the absence of an error message.

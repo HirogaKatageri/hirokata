@@ -193,8 +193,6 @@ UNION ALL SELECT 'work_log.task_id', CAST(w.id AS TEXT), w.task_id FROM work_log
 UNION ALL SELECT 'agent_capability.agent', ac.agent || '/' || ac.capability, ac.agent FROM agent_capability ac WHERE NOT EXISTS (SELECT 1 FROM agent a WHERE a.name = ac.agent)
 UNION ALL SELECT 'task_capability.task_id', tc.task_id || '/' || tc.capability, tc.task_id FROM task_capability tc WHERE NOT EXISTS (SELECT 1 FROM task t WHERE t.id = tc.task_id)
 UNION ALL SELECT 'capability_request.requirement_id', CAST(q.id AS TEXT), q.requirement_id FROM capability_request q WHERE NOT EXISTS (SELECT 1 FROM requirement r WHERE r.id = q.requirement_id)
-UNION ALL SELECT 'inspection_coverage.inspection_id', ic.inspection_id || '/' || ic.coverage_id, ic.inspection_id FROM inspection_coverage ic WHERE NOT EXISTS (SELECT 1 FROM inspection i WHERE i.id = ic.inspection_id)
-UNION ALL SELECT 'inspection_coverage.coverage_id', ic.inspection_id || '/' || ic.coverage_id, ic.coverage_id FROM inspection_coverage ic WHERE NOT EXISTS (SELECT 1 FROM coverage c WHERE c.id = ic.coverage_id)
 UNION ALL SELECT 'graph_deviation.requirement_id', CAST(d.id AS TEXT), d.requirement_id FROM graph_deviation d WHERE NOT EXISTS (SELECT 1 FROM requirement r WHERE r.id = d.requirement_id)
 ORDER BY ref, row_id;
 ```
@@ -222,9 +220,6 @@ UNION ALL SELECT 'review_finding.severity', CAST(id AS TEXT), severity FROM revi
 UNION ALL SELECT 'review_finding.disposition', CAST(id AS TEXT), disposition FROM review_finding WHERE disposition NOT IN ('open','fixing','fixed','waived')
 UNION ALL SELECT 'bug.severity', id, severity FROM bug WHERE severity NOT IN ('critical','major','minor')
 UNION ALL SELECT 'bug.status', id, status FROM bug WHERE status NOT IN ('open','fixing','fixed','wontfix')
-UNION ALL SELECT 'coverage.risk', id, risk FROM coverage WHERE risk NOT IN ('high','medium','low')
-UNION ALL SELECT 'inspection.status', id, status FROM inspection WHERE status NOT IN ('todo','in-progress','done')
-UNION ALL SELECT 'inspection_coverage.verdict', inspection_id || '/' || coverage_id, verdict FROM inspection_coverage WHERE verdict IS NOT NULL AND verdict NOT IN ('pass','issues','not-reached')
 UNION ALL SELECT 'capability_request.status', CAST(id AS TEXT), status FROM capability_request WHERE status NOT IN ('open','created','declined')
 UNION ALL SELECT 'agent.active', name, CAST(active AS TEXT) FROM agent WHERE active NOT IN (0,1)
 UNION ALL SELECT 'agent.serial', name, CAST(serial AS TEXT) FROM agent WHERE serial NOT IN (0,1)
@@ -236,9 +231,6 @@ UNION ALL SELECT 'event.payload', CAST(id AS TEXT), payload FROM event WHERE NOT
 UNION ALL SELECT 'task.files', id, files FROM task WHERE NOT json_valid(files) OR json_type(files) <> 'array'
 ORDER BY col, row_id;
 ```
-
-`inspection.trigger` is deliberately absent — it is the one open enum in the schema, left
-uncheckable on purpose so a cadence can be added later without rebuilding the table.
 
 *Verified:* on a current board the CHECKs reject an invented status at write time —
 `UPDATE task SET status='in-review'` returns
@@ -257,7 +249,6 @@ UNION ALL SELECT 'requirement', id FROM requirement WHERE NOT (id GLOB 'REQ-[0-9
 UNION ALL SELECT 'plan', id FROM plan WHERE NOT (id GLOB 'PLAN-[0-9][0-9][0-9]' OR id GLOB 'PLAN-[0-9][0-9][0-9][0-9]')
 UNION ALL SELECT 'task', id FROM task WHERE NOT (id GLOB 'TASK-[0-9][0-9][0-9]' OR id GLOB 'TASK-[0-9][0-9][0-9][0-9]')
 UNION ALL SELECT 'bug', id FROM bug WHERE NOT (id GLOB 'BUG-[0-9][0-9][0-9]' OR id GLOB 'BUG-[0-9][0-9][0-9][0-9]')
-UNION ALL SELECT 'inspection', id FROM inspection WHERE NOT (id GLOB 'INSP-[0-9][0-9][0-9]' OR id GLOB 'INSP-[0-9][0-9][0-9][0-9]')
 UNION ALL SELECT 'graph_node', id FROM graph_node WHERE substr(id, 1, instr(id, '/') - 1) <> requirement_id
 UNION ALL SELECT 'graph_node.node_key', id FROM graph_node WHERE instr(id, '/') = 0
 ORDER BY tbl, id;
@@ -312,7 +303,7 @@ UNION ALL
 SELECT 'added-gate', n.id, n.node_key FROM graph_node n
  WHERE n.kind = 'gate'
    AND (SELECT value FROM guild_state WHERE key = 'graph-template:' || n.requirement_id) = 'standard'
-   AND n.node_key NOT IN ('gate-plan','gate-repairs')
+   AND n.node_key NOT IN ('gate-plan','gate-repairs','gate-repair-plan')
 UNION ALL
 -- a template gate with no node  =  A DROPPED GATE
 SELECT 'dropped-gate', r.id, k.k
@@ -462,7 +453,6 @@ UNION ALL SELECT 'no-created-event','plan', id FROM plan p WHERE NOT EXISTS (SEL
 UNION ALL SELECT 'no-created-event','task', id FROM task t WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='task' AND e.subject_id=t.id AND e.verb='created')
 UNION ALL SELECT 'no-created-event','bug', id FROM bug b WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='bug' AND e.subject_id=b.id AND e.verb='created')
 UNION ALL SELECT 'no-created-event','agent', name FROM agent a WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='agent' AND e.subject_id=a.name AND e.verb='recruited')
-UNION ALL SELECT 'no-created-event','coverage', id FROM coverage c WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='coverage' AND e.subject_id=c.id AND e.verb='created')
 UNION ALL SELECT 'no-found-event','review_finding', CAST(f.id AS TEXT) FROM review_finding f
  WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='task' AND e.subject_id=f.task_id AND e.verb='found'
                      AND json_valid(e.payload) AND json_extract(e.payload,'$.finding_id') = f.id)
@@ -518,7 +508,9 @@ SELECT 'dropped-required-node', r.id, k.k
    AND NOT EXISTS (SELECT 1 FROM graph_node n WHERE n.requirement_id = r.id AND n.node_key = k.k)
 UNION ALL
 SELECT 'dropped-optional-node-no-deviation', r.id, k.k
-  FROM requirement r JOIN (SELECT 'test-plan' AS k UNION ALL SELECT 'test-write' UNION ALL SELECT 'repair') k
+  FROM requirement r JOIN (SELECT 'test-plan' AS k UNION ALL SELECT 'test-write'
+                           UNION ALL SELECT 'repair-spec' UNION ALL SELECT 'repair-plan'
+                           UNION ALL SELECT 'gate-repair-plan' UNION ALL SELECT 'repair') k
  WHERE (SELECT value FROM guild_state WHERE key = 'graph-template:' || r.id) = 'standard'
    AND NOT EXISTS (SELECT 1 FROM graph_node n WHERE n.requirement_id = r.id AND n.node_key = k.k)
    AND NOT EXISTS (SELECT 1 FROM graph_deviation d WHERE d.requirement_id = r.id AND d.kind = 'drop-node' AND d.node_key = k.k)
@@ -529,7 +521,8 @@ UNION ALL
 SELECT 'node-key-not-in-template', n.id, n.node_key
   FROM graph_node n
  WHERE (SELECT value FROM guild_state WHERE key = 'graph-template:' || n.requirement_id) = 'standard'
-   AND n.node_key NOT IN ('gate-plan','implement','test-plan','test-write','review','gate-repairs','repair')
+   AND n.node_key NOT IN ('gate-plan','implement','test-plan','test-write','review','gate-repairs',
+                          'repair-spec','repair-plan','gate-repair-plan','repair')
    AND NOT EXISTS (SELECT 1 FROM graph_deviation d WHERE d.requirement_id = n.requirement_id AND d.kind = 'add-node' AND d.node_key = n.node_key)
 UNION ALL
 SELECT 'work-node-done-without-task', n.id, n.node_key
@@ -554,10 +547,14 @@ asserted* below.
 
 ### G9 — Concurrency
 
-Includes the `qa-execute` invariant: **more than one tester at a time is a breach.** It is
-expressed against `agent.serial` rather than against the name `qa-tester`, because `serial = 1`
-is what the schema means by "never run concurrently with itself" and the QA tester is the member
-that carries the flag, not the definition of the rule.
+Includes the **serial invariant**: a member carrying `serial = 1` may never hold two tickets
+`in-progress` at once. It is expressed against `agent.serial`, never against a member's name —
+`serial = 1` is what the schema means by "never run concurrently with itself", and which members
+carry the flag is roster data, not the definition of the rule.
+
+**No member carries `serial = 1` on the shipped roster today**, so this assertion is quiet until
+one does. That is the correct state for it: the rule outlives whichever member happened to need
+it, and re-adding such a member costs nothing here.
 
 ```sql
 SELECT 'serial-agent-double-booked' AS breach, a.name AS row_id, CAST(COUNT(*) AS TEXT) || ' in-flight' AS detail
@@ -571,8 +568,8 @@ SELECT 'parallel-group-crosses-requirements', t.parallel_group, group_concat(DIS
 ORDER BY breach, row_id;
 ```
 
-*Verified to fire:* two tickets claimed by `qa-tester` simultaneously returns
-`serial-agent-double-booked | qa-tester | 2 in-flight`.
+*Verified to fire:* with a member flagged `serial = 1` holding two `in-progress` tickets, this
+returns `serial-agent-double-booked | {member} | 2 in-flight`.
 
 ### Cannot be asserted — globally
 
@@ -645,8 +642,8 @@ P4.c must be a **separate round trip.** A failing statement does not stop a turs
    `agent`, `files` as a JSON array — the disjointness assertion that parallel dispatch depends
    on — and `parallel_group` where the architect declared a wave.
 6. **Instantiate the graph** from `templates/standard.md`: nodes, edges, two gate rows, and the
-   `guild_state` key `graph-template:REQ-NNN`. With *N* implement tickets this is **N + 9 nodes
-   and 2N + 10 edges** — for two tickets, 11 and 14.
+   `guild_state` key `graph-template:REQ-NNN`. With *N* implement tickets this is **N + 12 nodes
+   and 2N + 13 edges** — for two tickets, 14 and 17.
 7. **Validate the graph read-only** and send failures back to the architect. Do not patch a graph
    by hand: deviations are its record, and a graph the orchestrator patched has a shape nobody
    justified.
@@ -689,8 +686,8 @@ This is the strongest single statement that nothing can be built yet. `v_ready_n
 schema's one definition of readiness, and at plan time it offers a human decision and nothing
 else.
 
-**§4.c — node, edge and gate counts.** For a plan with *N* implement tickets, expect `N + 9`, `2N + 10`, and
-**exactly 2**:
+**§4.c — node, edge and gate counts.** For a plan with *N* implement tickets, expect `N + 12`,
+`2N + 13`, and **exactly 3**:
 
 ```sql
 SELECT (SELECT COUNT(*) FROM graph_node WHERE requirement_id = 'REQ-NNN') AS nodes,
@@ -789,7 +786,7 @@ specific ways *this* flow goes wrong:
 | Must not be true | Caught by |
 |---|---|
 | Any ticket left `todo` before `gate-plan` was approved | G4 `built-before-gate-plan` |
-| A third gate, or a missing one | G4 `added-gate`, `dropped-gate` |
+| A fourth gate, or a missing one | G4 `added-gate`, `dropped-gate` |
 | A gate approved without the node being moved | G4 `decided-gate-node-not-moved` |
 | `implement` or `review` dropped from the graph | G8 `dropped-required-node` |
 | A node key nobody recorded a deviation for | G8 `node-key-not-in-template` |
@@ -844,7 +841,7 @@ SELECT 'missing-view' AS breach, v.n AS row_id FROM (
   SELECT 'v_brief' AS n UNION ALL SELECT 'v_goal_progress' UNION ALL SELECT 'v_requirement_progress'
   UNION ALL SELECT 'v_in_flight' UNION ALL SELECT 'v_open_bounties' UNION ALL SELECT 'v_blocked_tasks'
   UNION ALL SELECT 'v_roster_gaps' UNION ALL SELECT 'v_open_bugs' UNION ALL SELECT 'v_failed_tasks'
-  UNION ALL SELECT 'v_open_findings' UNION ALL SELECT 'v_coverage_due' UNION ALL SELECT 'v_gates_pending'
+  UNION ALL SELECT 'v_open_findings' UNION ALL SELECT 'v_gates_pending'
   UNION ALL SELECT 'v_recent_activity' UNION ALL SELECT 'v_capability_unknown') v
  WHERE NOT EXISTS (SELECT 1 FROM sqlite_schema s WHERE s.type = 'view' AND s.name = v.n)
 UNION ALL
@@ -891,7 +888,6 @@ UNION ALL SELECT 'requirement',    COUNT(*) || '/' || COALESCE(SUM(length(id) + 
 UNION ALL SELECT 'work_log',       COUNT(*) || '/' || COALESCE(MAX(id),0) FROM work_log
 UNION ALL SELECT 'review_finding', COUNT(*) || '/' || COALESCE(SUM(length(disposition)),0) FROM review_finding
 UNION ALL SELECT 'bug',            COUNT(*) || '/' || COALESCE(SUM(length(id) + length(status)),0) FROM bug
-UNION ALL SELECT 'coverage',       COUNT(*) || '/' || COALESCE(SUM(length(id) + length(COALESCE(last_inspected_at,''))),0) FROM coverage
 UNION ALL SELECT 'agent',          COUNT(*) || '/' || COALESCE(SUM(length(name) + active + serial),0) FROM agent
 UNION ALL SELECT 'doc',            COUNT(*) FROM doc
 ORDER BY part;
@@ -904,7 +900,7 @@ tursodb -q -m list .guild/guild.db < fingerprint.sql > /tmp/fp.after
 diff /tmp/fp.before /tmp/fp.after || echo "EXPECTATION VIOLATED: the brief wrote to the board"
 ```
 
-On `messy` the fingerprint is 14 lines beginning `agent|14/212` and ending `work_log|6/6`.
+On `messy` the fingerprint begins `agent|12/187` and ends `work_log|6/6`.
 
 *Verified to fire:* the single most likely violation — a brief that stamps its own check-in —
 returns
@@ -935,7 +931,6 @@ SELECT DISTINCT kind, token FROM (
   UNION ALL SELECT 'failed-waived',        id                 FROM v_failed_tasks WHERE waived = 1
   UNION ALL SELECT 'blocked-task',         id                 FROM v_blocked_tasks
   UNION ALL SELECT 'blocked-because',      reason             FROM v_blocked_tasks
-  UNION ALL SELECT 'coverage-stale',       id                 FROM v_coverage_due
   UNION ALL SELECT 'roster-gap',           capability         FROM v_roster_gaps
   UNION ALL SELECT 'capability-unknown',   owner              FROM v_capability_unknown
   UNION ALL SELECT 'gate-waiting',         node_id            FROM v_gates_pending
@@ -977,8 +972,7 @@ blocked-task|TASK-011                    moved|TASK-003
 bug-open|BUG-001                         moved|TASK-007
 bug-open|BUG-002                         moved|TASK-008
 capability-unknown|TASK-010              moved|TASK-009
-coverage-stale|auth-session              roster-gap|rust
-coverage-stale|checkout-flow
+roster-gap|rust
 ```
 
 Row counts per fixture, so a harness can sanity-check its own load: `empty` **0**, `planned`
@@ -992,7 +986,7 @@ hides the one risk with a known remedy; an omitted `blocked-because` turns "nobo
 into "it's in the backlog".
 
 *Verified to fire.* Against a plausible-looking brief that covers direction, in-flight, both
-bugs, all five stuck tickets and both coverage areas — everything a reader would call thorough —
+bugs and all five stuck tickets — everything a reader would call thorough —
 the harness returns:
 
 ```
@@ -1103,7 +1097,7 @@ title is a real defect, reachable by anyone who can file a bug.
 
 ### Trigger
 
-`guild:dashboard` — "the dashboard", "visualize the board", "the roadmap", "the coverage view",
+`guild:dashboard` — "the dashboard", "visualize the board", "the roadmap",
 "the activity feed". Also offered by `guild:brief`'s closing line, and by check-in's wrap-up.
 
 ### Preconditions
@@ -1119,7 +1113,6 @@ SELECT 'missing-source' AS breach, v.n AS row_id FROM (
   UNION ALL SELECT 'v_recent_activity'
   UNION ALL SELECT 'phase' UNION ALL SELECT 'graph_node' UNION ALL SELECT 'graph_edge'
   UNION ALL SELECT 'gate' UNION ALL SELECT 'bug' UNION ALL SELECT 'review_finding'
-  UNION ALL SELECT 'coverage') v
  WHERE NOT EXISTS (SELECT 1 FROM sqlite_schema s WHERE s.type IN ('view','table') AND s.name = v.n);
 ```
 
@@ -1151,7 +1144,7 @@ these assertions exist for:
 INSERT INTO bug (id, title, body, repro, severity, status, found_by, requirement_id,
                  fix_task_id, created_at, updated_at)
 VALUES ('BUG-003', CAST(x'546f74616c732077726f6e67203c2f7363726970743e3c7363726970743e616c65727428646f63756d656e742e646f6d61696e293c2f7363726970743e206f6e2070726f6d6f' AS TEXT),
-        '', '', 'major','open','qa-tester','REQ-001',NULL,
+        '', '', 'major','open','reviewer-security','REQ-001',NULL,
         '2026-08-02T12:00:00Z','2026-08-02T12:00:00Z');
 -- and a task title carrying an attribute-context payload and a bare ampersand:
 -- Escape the "cart" & <img src=x onerror=alert(1)> path
@@ -1202,7 +1195,7 @@ against the data file:
 
 ```python
 NEEDED = ['brief','goals','phases','requirements','tasks','blocked','gaps',
-          'nodes','edges','gates','bugs','findings','coverage','activity']
+          'nodes','edges','gates','bugs','findings','activity']
 d = json.load(open('/tmp/guild-data.json'))
 for k in NEEDED:
     assert k in d,                    'MISSING KEY   ' + k
@@ -1217,7 +1210,6 @@ that matters here: a page whose Bugs view renders `undefined` or throws on an em
 empty guild as a broken one.
 
 The honest-empty-state rule extends to one value the JSON cannot express:
-`coverage[].last` is `''` for an area never inspected. Rendering that as "0 days ago" lies about
 the state of the product, and on `messy` `auth-session` is exactly that case.
 
 **§6.d — SECURITY. No `innerHTML`, and no external request of any kind.** Both greps run on the
@@ -1286,7 +1278,6 @@ of names in one click. Not assertable; it is the design rule the page exists to 
 | `innerHTML` / `insertAdjacentHTML` / `eval` anywhere in the shell | §6.d |
 | Any CDN, font, image, `fetch`, or socket | §6.d |
 | Two builds of one board differ | §6.e — **currently fires on `brief[0]`** |
-| A never-inspected coverage area rendered as fresh | §6.c's note; not mechanical |
 | The page published as an Artifact without being asked | not assertable |
 | `.guild/dashboard.html` hand-edited | not assertable — the next build discards it |
 
@@ -1477,13 +1468,16 @@ earlier and is the first observable moment the process went wrong. `planned` is 
 three tickets sit on `v_open_bounties` with `gate-plan` still `pending`, and nothing in the schema
 connects them to it.
 
-**§7.e — the serial invariant.** G9 `serial-agent-double-booked`, run before every `qa-execute`
-dispatch, not only afterwards. `maintenance` is the fixture and the trap is live:
+**§7.e — the serial invariant.** G9 `serial-agent-double-booked`, run **before** dispatching a
+batch, not only afterwards. `v_agent_match.serial` is what the compiler reads to refuse a
+concurrent batch holding two of the same serial member:
 
 ```sql
-SELECT task_id, agent, source, serial FROM v_agent_match WHERE task_id = 'TASK-904';
--- TASK-904|qa-tester|capability|1
+SELECT task_id, agent, source, serial FROM v_agent_match WHERE task_id = 'TASK-NNN';
 ```
+
+No shipped member carries the flag today, so this is a guard for the roster's future rather than
+a live trap. It costs nothing to keep and everything to re-derive later.
 
 `serial = 1` is in the row the matcher hands over. **Nothing will stop the dispatch.**
 
@@ -1532,7 +1526,7 @@ SELECT task_id, agent, source, serial FROM v_agent_match WHERE task_id = 'TASK-9
 
 `guild:clear-board`. Genuinely destructive, no undo, and the expectations are symmetrical: what
 must be **gone**, and what must be **untouched**. The second half is the one that matters — a
-clear that also took the coverage map or a roster member has destroyed something a board reset
+clear that also took a roster member has destroyed something a board reset
 was never supposed to reach.
 
 ### Trigger
@@ -1562,7 +1556,6 @@ comparison, so there has to be a *before*:
 -- keep.sql — run BEFORE the clear, and again after
 SELECT 'agent'            AS t, COUNT(*) AS n FROM agent
 UNION ALL SELECT 'agent_capability', COUNT(*) FROM agent_capability
-UNION ALL SELECT 'coverage',         COUNT(*) FROM coverage
 UNION ALL SELECT 'doc',              COUNT(*) FROM doc
 UNION ALL SELECT 'event',            COUNT(*) FROM event
 UNION ALL SELECT 'state-actor',      (SELECT COUNT(*) FROM guild_state WHERE key = 'actor')
@@ -1570,7 +1563,7 @@ UNION ALL SELECT 'state-checkin',    (SELECT COUNT(*) FROM guild_state WHERE key
 ORDER BY t;
 ```
 
-On `messy` this reads `agent|14`, `agent_capability|26`, `coverage|3`, `doc|0`, `event|61`,
+On `messy` this reads `agent|12`, `agent_capability|22`, `doc|0`, `event|56`,
 `state-actor|1`, `state-checkin|1`.
 
 ### Expected sequence
@@ -1610,14 +1603,8 @@ SELECT 'not-cleared' AS breach, t.tbl AS row_id, CAST(t.n AS TEXT) AS detail FRO
   UNION ALL SELECT 'review_finding', COUNT(*) FROM review_finding
   UNION ALL SELECT 'bug', COUNT(*) FROM bug
   UNION ALL SELECT 'capability_request', COUNT(*) FROM capability_request
-  UNION ALL SELECT 'inspection', COUNT(*) FROM inspection
-  UNION ALL SELECT 'inspection_coverage', COUNT(*) FROM inspection_coverage
   UNION ALL SELECT 'guild_state:graph-template', COUNT(*) FROM guild_state WHERE key LIKE 'graph-template:%'
 ) t WHERE t.n > 0
-UNION ALL
--- referential health survived the sweep
-SELECT 'orphan-after-clear', 'inspection_coverage', ic.coverage_id FROM inspection_coverage ic
- WHERE NOT EXISTS (SELECT 1 FROM coverage c WHERE c.id = ic.coverage_id)
 ORDER BY breach, row_id;
 ```
 
@@ -1635,9 +1622,9 @@ diff /tmp/keep.before /tmp/keep.after
 ```
 
 Expect **exactly one differing line**, and it must be `event`, and it must have **increased**.
-On `messy` the verified transcript is `event|61` → `event|80`: nineteen delete statements, each
-firing the trigger that records it. Every other line is byte-identical — `agent|14`,
-`agent_capability|26`, `coverage|3`, `doc|0`, `state-actor|1`, `state-checkin|1`.
+On `messy` the verified transcript is `event|56` → `event|75`: nineteen delete statements, each
+firing the trigger that records it. Every other line is byte-identical — `agent|12`,
+`agent_capability|22`, `doc|0`, `state-actor|1`, `state-checkin|1`.
 
 That the count *rises* is the assertion, not an artifact: a board that vanished with no trace is
 indistinguishable from a corrupted one. A clear that left `event` unchanged means the deletes ran
@@ -1646,18 +1633,15 @@ around the triggers.
 **§8.c — the views still answer on a cleared board.** *Verified* on the cleared `messy`:
 
 ```
-SELECT COUNT(*) FROM v_brief;                    -- 23
+SELECT COUNT(*) FROM v_brief;                    -- 22
 SELECT value FROM v_brief WHERE fact = 'next';   -- none
 SELECT value FROM v_brief WHERE fact = 'tasks_todo';    -- 0
-SELECT value FROM v_brief WHERE fact = 'coverage_due';  -- 2
 SELECT value FROM v_brief WHERE fact = 'roster_gaps';   -- 0
 ```
 
-**`coverage_due` is 2 and `roster_gaps` is 0 on a freshly cleared board, and both are correct.**
-The coverage map describes the *product*, which did not go away; the capability requests were
-board rows and went with the board. A member that reads the first as a bug — or that "tidies up"
-by deleting the coverage rows to make the brief quiet — has destroyed the QA discipline's memory
-to fix a number that was telling the truth.
+**`roster_gaps` is 0 on a freshly cleared board, and that is correct.** The capability requests were
+board rows and went with the board. A member that reads a quiet brief as a bug and "tidies up" the
+evergreen rows to change a number has destroyed memory to fix something that was telling the truth.
 
 **§8.d — the event purge, only if asked a second time.** After Step 5:
 
@@ -1675,7 +1659,7 @@ exists gives the next brief a cutoff with nothing behind it.
 | Must not be true | Caught by |
 |---|---|
 | An agent row deleted rather than deactivated | §8.b — `agent` line changed |
-| `coverage` or `doc` deleted | §8.b — those lines changed |
+| `doc` deleted | §8.b — that line changed |
 | `event` deleted as part of Step 4 | §8.b — `event` must *rise*, not fall |
 | `guild_state.actor` or `last-checkin` deleted | §8.b — the two `state-*` lines |
 | `graph-template:*` keys left behind | §8.a — the nineteenth row |
@@ -1689,10 +1673,10 @@ exists gives the next brief a cutoff with nothing behind it.
 - **Whether the backup was taken before the question was asked.** The file's mtime proves it
   exists, not that the ordering held.
 - **Whether the user understood what they said yes to.** The skill's confirmation text names what
-  survives precisely because a user who thinks their coverage map is about to go answers a
+  survives precisely because a user who thinks their `doc` library is about to go answers a
   different question. Whether they read it is not a row.
-- **Whether the on-disk evergreen directories survived.** `ls .guild/docs .guild/qa
-  .guild/reviews` is the check and it is a shell one; nothing in the database knows they exist.
+- **Whether the on-disk evergreen directories survived.** `ls .guild/docs .guild/reviews` is the
+  check and it is a shell one; nothing in the database knows they exist.
 - **Whether a `FOREIGN KEY constraint failed` line was noticed.** It arrives on *stdout*, exit
   code 1, and a member that piped the script to `/dev/null` has a half-cleared board and a
   clean-looking report. §8.a is what catches the result; nothing catches the not-looking.
@@ -1762,7 +1746,6 @@ UNION ALL SELECT 'gate',           COUNT(*) || '/' || COALESCE(SUM(length(status
 UNION ALL SELECT 'work_log',       COUNT(*) FROM work_log
 UNION ALL SELECT 'review_finding', COUNT(*) || '/' || COALESCE(SUM(length(disposition)),0) FROM review_finding
 UNION ALL SELECT 'bug',            COUNT(*) FROM bug
-UNION ALL SELECT 'coverage',       COUNT(*) || '/' || COALESCE(SUM(length(id)+length(COALESCE(last_inspected_at,''))),0) FROM coverage
 UNION ALL SELECT 'doc',            COUNT(*) FROM doc
 UNION ALL SELECT 'agent',          COUNT(*) FROM agent
 UNION ALL SELECT 'guild_state',    COUNT(*) FROM guild_state
@@ -1784,7 +1767,7 @@ Expect **exactly two differing lines**, and they must be these two:
 ```
 
 *Verified* — that is the transcript. `requirement`, `task`, `graph_node`, `gate`, `work_log`,
-`review_finding`, `bug`, `coverage`, `doc` and `agent` are all byte-identical across the release.
+`review_finding`, `bug`, `doc` and `agent` are all byte-identical across the release.
 A third differing line means a release restatused, snapshotted-and-deleted, or "tidied" something.
 
 Under `--dry-run` the correct diff is **empty**. Steps 2, 3 and 4 are reads and are safe; step 7's
@@ -1857,7 +1840,7 @@ a ticket nobody on the roster could take, and that is the loud case the skill sp
 |---|---|
 | A requirement's status changed by the release | §9.a, §9.b `released-requirement-not-done` |
 | Any row deleted | §9.a — every count is in the fingerprint |
-| `coverage` or `doc` snapshotted, moved or touched | §9.a — both lines byte-identical |
+| `doc` snapshotted, moved or touched | §9.a — that line byte-identical |
 | The same requirement released twice | §9.b `requirement-released-twice` |
 | A version cut twice | P9.b |
 | A `--dry-run` that wrote the board row | §9.a — the diff must be empty |
@@ -1951,413 +1934,7 @@ belongs to `guild:brief`."*
 
 ---
 
-## 11. The maintenance cycle
-
-The `maintenance` template, end to end: `qa-check` → `qa-plan` → `qa-execute` → `qa-report` →
-`gate-repairs` → `repair`. Six nodes, five edges, **one** gate — invariant, whatever the
-inspection covers, because nothing here fans out per implement ticket.
-
-### Trigger
-
-`guild:qa` — the user asks for one ("QA the checkout flow", "run a QA pass"). **That is the only
-trigger there is.** No auto-start on requirement-done, no cadence, and no shift may start one
-(§6). A full inspection runs the real product one browser at a time, so the expense is
-authorized by a person or it is not incurred.
-
-The cycle hangs off a **carrier requirement** — `graph_node.requirement_id` is
-`NOT NULL REFERENCES requirement(id)` and an inspection has no id of its own to key a graph by.
-Prefer a fresh unaffiliated carrier (`phase_id` NULL) over a feature requirement, which would
-otherwise carry two graphs and one ambiguous `graph-template:` key.
-
-### Preconditions
-
-```sql
--- P11.a  the schema is current — expect exactly one row, version 5
-SELECT version FROM schema_version WHERE id = 1;
-
--- P11.b  the carrier has no graph already — expect ZERO ROWS, in its own round trip
-SELECT id FROM graph_node WHERE requirement_id = 'REQ-NNN';
-
--- P11.c  the cycle is worth starting and can be staffed — expect ZERO ROWS
-SELECT 'no-area-is-due' AS breach, 'coverage' AS row_id, CAST((SELECT COUNT(*) FROM coverage) AS TEXT) AS detail
- WHERE NOT EXISTS (SELECT 1 FROM v_coverage_due)
-UNION ALL
-SELECT 'no-member-can-plan', 'qa-planning', '' WHERE NOT EXISTS
-  (SELECT 1 FROM agent_capability ac JOIN agent a ON a.name = ac.agent
-    WHERE a.active = 1 AND ac.capability = 'qa-planning')
-UNION ALL
-SELECT 'no-member-can-execute', 'qa-execution', '' WHERE NOT EXISTS
-  (SELECT 1 FROM agent_capability ac JOIN agent a ON a.name = ac.agent
-    WHERE a.active = 1 AND ac.capability = 'qa-execution')
-UNION ALL
-SELECT 'the-executor-is-not-serial', a.name, CAST(a.serial AS TEXT) FROM agent a
-  JOIN agent_capability ac ON ac.agent = a.name AND ac.capability = 'qa-execution'
- WHERE a.active = 1 AND a.serial <> 1
-UNION ALL
-SELECT 'a-tester-is-already-running', n.id, n.status FROM graph_node n
- WHERE n.node_key = 'qa-execute' AND n.status = 'running'
-UNION ALL
-SELECT 'a-tester-already-holds-a-ticket', t.id, COALESCE(t.claimed_by,'') FROM task t
- WHERE t.claimed_by IN (SELECT name FROM agent WHERE serial = 1) AND t.status = 'in-progress'
-ORDER BY breach, row_id;
-```
-
-**`no-area-is-due` is a precondition, not a failure.** It says the cycle should end at `qa-check`
-having cost nothing (§11.b), not that something is wrong. The other five are failures: a cycle
-that cannot be staffed, or a second one starting on top of a tester that is already driving a
-browser.
-
-*Verified:* zero rows on a cold `maintenance` carrier. On the `maintenance` fixture — where
-`INSP-001` is live — it returns `a-tester-already-holds-a-ticket | TASK-903 | qa-tester` and
-`a-tester-is-already-running | REQ-900/qa-execute | running`, which is exactly the refusal
-wanted: **do not start a second cycle while one is under way.**
-
-### Expected sequence
-
-1. **Create or choose the carrier requirement.** Unaffiliated, titled so nobody mistakes it for
-   feature work. Never a requirement that already has a graph.
-2. **Instantiate the graph** — 6 nodes, 5 edges, 1 `select-findings` gate row, and the
-   `guild_state` key `graph-template:REQ-NNN` = `maintenance`. `qa-execute.parallel_group` is
-   **NULL and stays NULL**.
-3. **`qa-check`** reads `v_coverage_due`. It does not re-derive the interval policy by hand; the
-   view is the one definition of "due" and its thresholds are 14 / 30 / 90 days by risk.
-4. **If nothing is due, end here** — `qa-check` `done`, everything downstream `skipped`, the
-   gate `approved` with a decision saying so (§11.b). Do not delete the nodes: an inspection that
-   correctly decided to do nothing is a record worth keeping, and deleting it reads as a drop.
-5. **`qa-plan`** writes the `inspection` row and its `inspection_coverage` rows, one per area in
-   scope, `verdict` NULL. Each mission becomes a ticket under the `qa-execute` anchor.
-6. **`qa-execute`** dispatches those tickets **one at a time**. Run the guard in §11.c *before
-   every dispatch*, board-wide — two inspections on two carriers still share one machine and one
-   set of ports. The anchor moves `done` once, when the last mission returns.
-7. **`qa-report`** compiles observations into `bug` rows with a severity from the vocabulary,
-   sets every reached area's `verdict`, stamps `coverage.last_inspected_at`, and closes the
-   `inspection` row. **The stamp is what closes the loop** — an inspection that runs without it
-   will be re-run immediately by the next `qa-check`, forever.
-8. **`gate-repairs`** — the same gate, the same `select-findings` kind, the same multi-select
-   presentation as the build flow. Two writes on approval: the `gate` row, then the node.
-9. **`repair`**, fanned out from `gate.decision` into fix tickets.
-
-Ordering that is load-bearing: the `inspection` row exists before any verdict points at it; the
-verdict is recorded before the stamp; the stamp happens before the inspection is closed.
-
-### Postconditions
-
-**§11.a — the trigger was a person.** Expect **zero rows**:
-
-```sql
-SELECT 'inspection-not-manual' AS breach, i.id AS row_id, i."trigger" AS detail
-  FROM inspection i WHERE i."trigger" <> 'manual'
-UNION ALL
-SELECT 'inspection-without-maintenance-carrier', i.id, 'no graph-template:… = maintenance' FROM inspection i
- WHERE NOT EXISTS (SELECT 1 FROM guild_state s WHERE s.key LIKE 'graph-template:%' AND s.value = 'maintenance')
-UNION ALL
-SELECT 'inspection-before-qa-check', i.id, i.status FROM inspection i
- WHERE NOT EXISTS (SELECT 1 FROM graph_node n
-                    WHERE n.node_key = 'qa-check' AND n.status IN ('done','skipped')
-                      AND (SELECT value FROM guild_state
-                            WHERE key = 'graph-template:' || n.requirement_id) = 'maintenance')
-UNION ALL
-SELECT 'maintenance-carrier-has-a-plan', p.requirement_id, p.id FROM plan p
- WHERE (SELECT value FROM guild_state WHERE key = 'graph-template:' || p.requirement_id) = 'maintenance'
-ORDER BY breach, row_id;
-```
-
-`inspection."trigger"` is the one open enum in the schema — no CHECK, deliberately, so a cadence
-can be added later without rebuilding the table. **These two clauses are therefore the only
-things in the system that hold "manual only" at all.** `inspection-before-qa-check` is the
-sharper of the two: an `inspection` row that exists while no `qa-check` anywhere has finished is
-an inspection nobody decided was due.
-
-*Verified to fire:* setting `"trigger" = 'cron'` and reverting `qa-check` to `pending` on the
-`maintenance` fixture returns `inspection-before-qa-check | INSP-001 | in-progress` and
-`inspection-not-manual | INSP-001 | cron`.
-
-**§11.b — the cheap exit is a complete exit.** When `qa-check` finds nothing due, the graph closes
-out cleanly rather than leaving a `repair` node nothing will ever release. Expect **zero rows**:
-
-```sql
-SELECT 'early-end-left-work-open' AS breach, n.id AS row_id, n.status AS detail
-  FROM graph_node n
- WHERE n.requirement_id IN (SELECT requirement_id FROM graph_node WHERE node_key = 'qa-plan' AND status = 'skipped')
-   AND n.status NOT IN ('done','skipped')
-UNION ALL
-SELECT 'early-end-with-mission-ticket', t.id, t.status FROM task t
- WHERE t.node_key = 'qa-execute'
-   AND t.requirement_id IN (SELECT requirement_id FROM graph_node WHERE node_key = 'qa-plan' AND status = 'skipped')
-UNION ALL
-SELECT 'early-end-gate-left-pending', g.node_id, g.status FROM gate g JOIN graph_node n ON n.id = g.node_id
- WHERE n.node_key = 'gate-repairs' AND g.status = 'pending'
-   AND n.requirement_id IN (SELECT requirement_id FROM graph_node WHERE node_key = 'qa-plan' AND status = 'skipped')
-UNION ALL
-SELECT 'inspection-running-nothing-due', i.id, 'v_coverage_due is empty'
-  FROM inspection i WHERE i.status = 'in-progress' AND NOT EXISTS (SELECT 1 FROM v_coverage_due)
-ORDER BY breach, row_id;
-```
-
-`v_coverage_due` is read, never re-derived: it is the schema's one definition of the interval
-policy, and a hand-written `datetime('now','-14 days')` beside it is a second one.
-
-*Verified:* zero rows on the `maintenance` fixture (an inspection legitimately under way, two
-areas due) **and** zero rows on the same fixture after `maintenance.md` §7.5's early-exit script. Leaving `repair`
-`pending`, the gate undecided and one mission ticket behind returns all three of
-`early-end-gate-left-pending`, `early-end-left-work-open | REQ-900/repair | pending` and
-`early-end-with-mission-ticket`. Making every area fresh while `INSP-001` is still running
-returns `inspection-running-nothing-due | INSP-001 | v_coverage_due is empty`.
-
-**§11.c — one tester, board-wide.** This is the invariant the whole template is shaped around, so
-it is asserted directly rather than left to `agent.serial`. **G9 catches the ticket half from the
-roster's side; these are the node-side and mission-side halves it does not see.** Expect **zero
-rows**:
-
-```sql
-SELECT 'two-qa-execute-running' AS breach, n.id AS row_id, n.requirement_id AS detail
-  FROM graph_node n
- WHERE n.node_key = 'qa-execute' AND n.status = 'running'
-   AND (SELECT COUNT(*) FROM graph_node m WHERE m.node_key = 'qa-execute' AND m.status = 'running') > 1
-UNION ALL
-SELECT 'two-mission-tickets-in-flight', t.id, t.requirement_id FROM task t
- WHERE t.node_key = 'qa-execute' AND t.status = 'in-progress'
-   AND (SELECT COUNT(*) FROM task u WHERE u.node_key = 'qa-execute' AND u.status = 'in-progress') > 1
-UNION ALL
-SELECT 'qa-execute-has-parallel-group', n.id, n.parallel_group FROM graph_node n
- WHERE n.node_key = 'qa-execute' AND n.parallel_group IS NOT NULL
-UNION ALL
-SELECT 'mission-ticket-has-parallel-group', t.id, t.parallel_group FROM task t
- WHERE t.node_key = 'qa-execute' AND COALESCE(t.parallel_group,'') <> ''
-UNION ALL
-SELECT 'qa-execute-running-node-unbound', n.id, 'task_id IS NULL' FROM graph_node n
- WHERE n.node_key = 'qa-execute' AND n.status = 'running' AND n.task_id IS NULL
-UNION ALL
-SELECT 'mission-ticket-not-with-the-serial-member', t.id, COALESCE(t.claimed_by,'(null)') FROM task t
- WHERE t.node_key = 'qa-execute' AND t.status = 'in-progress'
-   AND NOT EXISTS (SELECT 1 FROM agent a WHERE a.name = t.claimed_by AND a.serial = 1)
-ORDER BY breach, row_id;
-```
-
-**No clause here is scoped to a requirement, and that is the point.** Two inspections on two
-carriers still share one machine. A `parallel_group` on a `qa-execute` node is not a deviation
-an architect may justify — it is a defect, which is why it is asserted as an absolute rather than
-excused by a `graph_deviation` row the way an added node would be.
-
-*Verified to fire:* claiming `TASK-904` alongside `TASK-903` returns two
-`two-mission-tickets-in-flight` rows; setting `parallel_group = 'qa'` returns
-`qa-execute-has-parallel-group | REQ-900/qa-execute | qa`. A second carrier `REQ-901` with its
-own `qa-execute` running returns `two-qa-execute-running` for **both** nodes plus
-`qa-execute-running-node-unbound | REQ-901/qa-execute`.
-
-**§11.d — the report was compiled and the stamp was made.** Expect **zero rows**:
-
-```sql
-SELECT 'qa-report-done-inspection-still-open' AS breach, i.id AS row_id, i.status AS detail
-  FROM inspection i
- WHERE i.status <> 'done'
-   AND EXISTS (SELECT 1 FROM graph_node n WHERE n.node_key = 'qa-report' AND n.status = 'done'
-                 AND (SELECT value FROM guild_state
-                       WHERE key = 'graph-template:' || n.requirement_id) = 'maintenance')
-UNION ALL
-SELECT 'reached-area-not-stamped', ic.inspection_id || '/' || ic.coverage_id, COALESCE(c.last_inspected_at,'(never)')
-  FROM inspection_coverage ic JOIN inspection i ON i.id = ic.inspection_id
-  JOIN coverage c ON c.id = ic.coverage_id
- WHERE i.status = 'done' AND ic.verdict IN ('pass','issues')
-   AND COALESCE(c.last_inspected_at,'') < COALESCE(i.started_at,'')
-UNION ALL
-SELECT 'inspection-done-with-unreported-area', ic.inspection_id || '/' || ic.coverage_id, 'verdict IS NULL'
-  FROM inspection_coverage ic JOIN inspection i ON i.id = ic.inspection_id
- WHERE i.status = 'done' AND ic.verdict IS NULL
-UNION ALL
-SELECT 'issues-found-but-no-bug-filed', n.requirement_id, 'qa-report done, 0 bugs'
-  FROM graph_node n
- WHERE n.node_key = 'qa-report' AND n.status = 'done'
-   AND (SELECT value FROM guild_state WHERE key = 'graph-template:' || n.requirement_id) = 'maintenance'
-   AND EXISTS (SELECT 1 FROM inspection_coverage ic WHERE ic.verdict = 'issues')
-   AND NOT EXISTS (SELECT 1 FROM bug b WHERE b.requirement_id = n.requirement_id)
-UNION ALL
-SELECT 'bug-found-by-non-member', b.id, b.found_by FROM bug b
- WHERE COALESCE(b.found_by,'') <> '' AND NOT EXISTS (SELECT 1 FROM agent a WHERE a.name = b.found_by)
-UNION ALL
-SELECT 'inspection-done-no-finished-at', i.id, '(null)' FROM inspection i
- WHERE i.status = 'done' AND COALESCE(i.finished_at,'') = ''
-ORDER BY breach, row_id;
-```
-
-Severity vocabulary is **not** re-checked here — G2 already asserts `bug.severity ∈ (critical,
-major, minor)` board-wide, and the engine's CHECK rejects an invented one at write time. What G2
-cannot see is a bug that was never filed at all, which is what
-`issues-found-but-no-bug-filed` is for.
-
-`inspection-done-with-unreported-area` is the one that catches the honest-looking failure:
-`verdict` NULL means *not yet reached*, `'not-reached'` means *intended and ran out of road*, and
-they are not interchangeable. Closing an inspection with a NULL verdict leaves an area that a
-summariser will render as inspected when nobody looked at it.
-
-*Verified to fire:* moving `qa-report` to `done` with the bugs deleted returns
-`issues-found-but-no-bug-filed | REQ-900 | qa-report done, 0 bugs` and
-`qa-report-done-inspection-still-open | INSP-001 | in-progress`. Then closing `INSP-001` without
-stamping adds `inspection-done-no-finished-at`, `inspection-done-with-unreported-area |
-INSP-001/auth-session | verdict IS NULL` and `reached-area-not-stamped | INSP-001/checkout-flow`.
-
-**§11.e — the shared tail, and this is the assertion that matters most in this section.** The
-central simplification of the design is that QA does *not* get gates of its own: both templates
-converge on one `gate-repairs` → `repair` tail with identical semantics. That claim is
-checkable, so it is checked — **and this query is template-agnostic on purpose**, running over
-every graph on the board whatever built it. Expect **zero rows**:
-
-```sql
-SELECT 'tail-missing-gate-repairs' AS breach, substr(s.key,16) AS row_id, s.value AS detail
-  FROM guild_state s WHERE s.key LIKE 'graph-template:%'
-   AND NOT EXISTS (SELECT 1 FROM graph_node n WHERE n.requirement_id = substr(s.key,16)
-                    AND n.node_key = 'gate-repairs' AND n.kind = 'gate')
-UNION ALL
-SELECT 'tail-gate-not-select-findings', g.node_id, g.kind FROM gate g JOIN graph_node n ON n.id = g.node_id
- WHERE n.node_key = 'gate-repairs' AND g.kind <> 'select-findings'
-UNION ALL
-SELECT 'tail-gate-not-followed-by-repair', n.id, 'no edge to repair' FROM graph_node n
- WHERE n.node_key = 'gate-repairs'
-   AND NOT EXISTS (SELECT 1 FROM graph_edge e JOIN graph_node r ON r.id = e.to_node
-                    WHERE e.from_node = n.id AND r.node_key = 'repair')
-UNION ALL
-SELECT 'tail-repair-predecessor-not-the-gate', r.id, p.node_key
-  FROM graph_node r JOIN graph_edge e ON e.to_node = r.id JOIN graph_node p ON p.id = e.from_node
- WHERE r.node_key = 'repair' AND p.node_key <> 'gate-repairs'
-UNION ALL
-SELECT 'tail-repair-not-terminal', r.id, e.to_node
-  FROM graph_node r JOIN graph_edge e ON e.from_node = r.id WHERE r.node_key = 'repair'
-UNION ALL
-SELECT 'tail-repair-fanned-out', n.requirement_id, CAST(COUNT(*) AS TEXT) || ' repair nodes'
-  FROM graph_node n WHERE n.node_key = 'repair' GROUP BY n.requirement_id HAVING COUNT(*) <> 1
-ORDER BY breach, row_id;
-```
-
-`substr(s.key,16)` recovers the requirement id — `'graph-template:'` is fifteen characters.
-
-*Verified* against a board carrying **both** templates at once (`REQ-001` standard, `REQ-900`
-maintenance): zero rows, and the two tails read identically —
-
-```
-REQ-001|standard   |gate-repairs|gate|select-findings|REQ-001/repair
-REQ-001|standard   |repair      |work|-              |
-REQ-900|maintenance|gate-repairs|gate|select-findings|REQ-900/repair
-REQ-900|maintenance|repair      |work|-              |
-```
-
-*Verified to fire:* dropping `REQ-900`'s gate→repair edge and changing `REQ-001`'s gate kind to
-`approve` returns `tail-gate-not-followed-by-repair | REQ-900/gate-repairs` and
-`tail-gate-not-select-findings | REQ-001/gate-repairs | approve`.
-
-**§11.f — the maintenance graph matches its template.** G4's `added-gate` / `dropped-gate` and
-G8's `node-key-not-in-template` are both guarded by `= 'standard'` and **do not fire on a
-maintenance graph at all.** These are their `maintenance` counterparts, and without them a
-maintenance carrier is unchecked. Expect **zero rows**:
-
-```sql
-SELECT 'added-gate' AS breach, n.id AS row_id, n.node_key AS detail FROM graph_node n
- WHERE n.kind = 'gate' AND n.node_key <> 'gate-repairs'
-   AND (SELECT value FROM guild_state WHERE key = 'graph-template:' || n.requirement_id) = 'maintenance'
-UNION ALL
-SELECT 'dropped-required-node', r.id, k.k
-  FROM requirement r JOIN (SELECT 'qa-check' AS k UNION ALL SELECT 'qa-report'
-                           UNION ALL SELECT 'gate-repairs') k
- WHERE (SELECT value FROM guild_state WHERE key = 'graph-template:' || r.id) = 'maintenance'
-   AND NOT EXISTS (SELECT 1 FROM graph_node n WHERE n.requirement_id = r.id AND n.node_key = k.k)
-UNION ALL
-SELECT 'dropped-optional-node-no-deviation', r.id, k.k
-  FROM requirement r JOIN (SELECT 'qa-plan' AS k UNION ALL SELECT 'qa-execute'
-                           UNION ALL SELECT 'repair') k
- WHERE (SELECT value FROM guild_state WHERE key = 'graph-template:' || r.id) = 'maintenance'
-   AND NOT EXISTS (SELECT 1 FROM graph_node n WHERE n.requirement_id = r.id AND n.node_key = k.k)
-   AND NOT EXISTS (SELECT 1 FROM graph_deviation d WHERE d.requirement_id = r.id
-                     AND d.kind = 'drop-node' AND d.node_key = k.k)
-UNION ALL
-SELECT 'node-key-not-in-template', n.id, n.node_key FROM graph_node n
- WHERE (SELECT value FROM guild_state WHERE key = 'graph-template:' || n.requirement_id) = 'maintenance'
-   AND n.node_key NOT IN ('qa-check','qa-plan','qa-execute','qa-report','gate-repairs','repair')
-   AND NOT EXISTS (SELECT 1 FROM graph_deviation d WHERE d.requirement_id = n.requirement_id
-                     AND d.kind = 'add-node' AND d.node_key = n.node_key)
-UNION ALL
-SELECT 'node-count-not-six', r.id, CAST((SELECT COUNT(*) FROM graph_node n WHERE n.requirement_id = r.id) AS TEXT)
-  FROM requirement r
- WHERE (SELECT value FROM guild_state WHERE key = 'graph-template:' || r.id) = 'maintenance'
-   AND (SELECT COUNT(*) FROM graph_node n WHERE n.requirement_id = r.id) <> 6
-   AND NOT EXISTS (SELECT 1 FROM graph_deviation d WHERE d.requirement_id = r.id)
-UNION ALL
-SELECT 'edge-count-not-five', r.id, CAST((SELECT COUNT(*) FROM graph_edge e
-        JOIN graph_node n ON n.id = e.to_node WHERE n.requirement_id = r.id) AS TEXT)
-  FROM requirement r
- WHERE (SELECT value FROM guild_state WHERE key = 'graph-template:' || r.id) = 'maintenance'
-   AND (SELECT COUNT(*) FROM graph_edge e JOIN graph_node n ON n.id = e.to_node
-         WHERE n.requirement_id = r.id) <> 5
-   AND NOT EXISTS (SELECT 1 FROM graph_deviation d WHERE d.requirement_id = r.id)
-UNION ALL
-SELECT 'gate-count-not-one', r.id, CAST((SELECT COUNT(*) FROM graph_node n
-        WHERE n.requirement_id = r.id AND n.kind = 'gate') AS TEXT)
-  FROM requirement r
- WHERE (SELECT value FROM guild_state WHERE key = 'graph-template:' || r.id) = 'maintenance'
-   AND (SELECT COUNT(*) FROM graph_node n WHERE n.requirement_id = r.id AND n.kind = 'gate') <> 1
-ORDER BY breach, row_id;
-```
-
-`gate-count-not-one` is **not** excused by a deviation, unlike the node and edge counts: a gate
-may be neither added nor dropped, whatever the reason, because an extra gate turns an overnight
-inspection into a session that stops to ask a sleeping human. The counts a healthy carrier
-reports:
-
-```sql
-SELECT (SELECT COUNT(*) FROM graph_node WHERE requirement_id = 'REQ-NNN')  AS nodes,
-       (SELECT COUNT(*) FROM graph_edge WHERE to_node LIKE 'REQ-NNN/%')    AS edges,
-       (SELECT COUNT(*) FROM graph_node
-         WHERE requirement_id = 'REQ-NNN' AND kind = 'gate')               AS gates;
--- 6|5|1   — not 2 gates, that is `standard`
-```
-
-*Verified to fire:* adding a `gate-sign-off` gate node and dropping `qa-check` returns
-`added-gate | REQ-900/gate-sign-off`, `dropped-required-node | REQ-900 | qa-check`,
-`edge-count-not-five | REQ-900 | 4`, `gate-count-not-one | REQ-900 | 2` and
-`node-key-not-in-template | REQ-900/gate-sign-off`. Note what did **not** fire:
-`node-count-not-six`, because one node was added and one removed. Counts alone are not a
-template check, which is why the key-level clauses are there too.
-
-### Anti-expectations
-
-Must be false after the cycle.
-
-| Must not be true | Caught by |
-|---|---|
-| An inspection nobody asked for | §11.a `inspection-not-manual`, `inspection-before-qa-check` |
-| An inspection started while a tester was already running | P11.c `a-tester-is-already-running` |
-| Two testers at once, from either side | §11.c, G9 `serial-agent-double-booked` |
-| A `parallel_group` on a `qa-execute` node or mission ticket | §11.c — a defect, not a deviation |
-| A `qa-check` that found nothing but left the graph half-open | §11.b `early-end-left-work-open` |
-| An inspection closed without stamping `last_inspected_at` | §11.d `reached-area-not-stamped` |
-| An inspection closed with a NULL verdict passed off as inspected | §11.d `inspection-done-with-unreported-area` |
-| A maintenance carrier that also carries a plan and feature tickets | §11.a `maintenance-carrier-has-a-plan` |
-| A second gate on a maintenance graph | §11.f `added-gate`, `gate-count-not-one` |
-| A maintenance graph advancing past its undecided gate | G4 `past-unresolved-gate` |
-| A bug in `fixing` with no fix task | G6 `bug-fixing-without-task` |
-| The carrier closed with the inspection still open | G6 `requirement-done-with-unfinished-node` |
-
-### Cannot be asserted
-
-- **Whether the tester actually drove the product.** A `pass` verdict, a stamped
-  `last_inspected_at` and an e2e spec path are three columns. Nothing here opens a browser, and a
-  member that writes all three without running anything produces a board that passes every
-  assertion in this section. This is the single largest unasserted thing in the cycle.
-- **Whether a mission was worth running,** whether the risk map is right, and whether the
-  strategist's coverage areas are the areas that matter.
-- **Whether the inspected areas were the due ones.** Deliberately not asserted: an inspection may
-  legitimately cover an area that is *not* due — the `maintenance` fixture does exactly this,
-  recording `not-reached` for `admin-panel`, which `v_coverage_due` never offered. An assertion
-  that every inspected area was due would fire on a correct board.
-- **Whether `spec_path` points at a spec that exists,** or at one that still passes. The column
-  is a string; the repository is not visible to SQL.
-- **Whether a filed bug is real,** whether its severity is right, and whether a `wontfix` was a
-  judgement or an evasion.
-- **That the trigger really was a person.** `inspection."trigger" = 'manual'` is a value the
-  writer chose about itself. §11.a asserts the value and the ordering around it; it cannot
-  reach the human.
-
----
-
-## 12. The unattended shift
+## 11. The unattended shift
 
 The highest-risk process in the guild: work runs with nobody watching, on somebody's working
 tree, spending real money. **Run until the next gate, then stop and notify.** The segment
@@ -2400,7 +1977,7 @@ by `/loop 10m /guild:shift` or a scheduled agent, in which case each run is one 
 ### Preconditions
 
 ```sql
--- P12.a  is there a shift to work at all? — expect ZERO ROWS
+-- P11.a  is there a shift to work at all? — expect ZERO ROWS
 SELECT 'a-gate-is-already-waiting' AS breach, node_id AS row_id, node_key AS detail FROM v_gates_pending
 UNION ALL
 SELECT 'a-shift-is-already-open', eo.subject_id, eo.ts FROM event eo
@@ -2429,13 +2006,12 @@ Each row means something different and none of them is an error:
   open a rival shift and do not re-ask the ceiling.
 - **`no-candidate-has-ready-work`** — the shift would end `idle` immediately.
 
-The tier clause is the one that keeps a shift out of an inspection: a `standard` graph may be
-picked up cold, **anything else only if a node has already moved past `pending`.** The cautious
-default for an unknown template is deliberate — the CLI cannot know whether a project template's
-first step is cheap.
+The tier clause is the cautious default for an unfamiliar template: a `standard` graph may be
+picked up cold, **anything else only if a node has already moved past `pending`.** Nothing can
+know whether a project template's first step is cheap, so a shift does not find out at 3am.
 
 ```bash
-# P12.b  the tree is not somebody's work in progress. Expect NO OUTPUT.
+# P11.b  the tree is not somebody's work in progress. Expect NO OUTPUT.
 git status --porcelain | grep -v '^?? \.guild/'
 ```
 
@@ -2443,11 +2019,11 @@ git status --porcelain | grep -v '^?? \.guild/'
 shift did not create means stop with reason `operator` — do not stash, do not commit it, do not
 tidy it up.
 
-*Verified:* on `planned`, P12.a returns `a-gate-is-already-waiting | REQ-001/gate-plan | gate-plan`
+*Verified:* on `planned`, P11.a returns `a-gate-is-already-waiting | REQ-001/gate-plan | gate-plan`
 **and** `no-candidate-has-ready-work` — a board with three dispatchable bounties and no shift to
 work, exactly as intended. On `in-flight` it returns `no-candidate-has-ready-work`, because the
 only live node is already `running` and a shift dispatches ready nodes rather than adopting
-running ones. Releasing that barrier (`TASK-003` done, its node done) makes P12.a return **zero
+running ones. Releasing that barrier (`TASK-003` done, its node done) makes P11.a return **zero
 rows** and `v_ready_nodes` offer `REQ-001/test-plan` — the first genuinely startable shift board.
 
 ### Expected sequence
@@ -2484,7 +2060,7 @@ event as the last write of the shift.
 
 ### Postconditions
 
-**§12.a — it stopped at a gate and never past one.** The single most important assertion in this
+**§11.a — it stopped at a gate and never past one.** The single most important assertion in this
 document. Expect **zero rows**:
 
 ```sql
@@ -2533,27 +2109,12 @@ meaningful on a board whose history accumulated over hours and meaningless on on
 single second — a fixture loaded inside the window makes every `decided` event in it look like
 the shift's work. Open the shift *after* the board exists, which is what a real run does anyway.
 
-**§12.b — what it never touched.** Expect **zero rows**:
+**§11.b — what it never touched.** Expect **zero rows**:
 
 ```sql
 WITH w(t0, t1) AS ( /* the shift window, above */ )
-SELECT 'shift-started-an-inspection' AS breach, e.subject_id AS row_id, e.ts AS detail
-  FROM event e, w
- WHERE e.subject_type='graph_node' AND e.verb='node-moved'
-   AND json_extract(e.payload,'$.node_key') = 'qa-check'
-   AND json_extract(e.payload,'$.from') = 'pending'
-   AND e.ts >= w.t0 AND e.ts <= w.t1
-UNION ALL
-SELECT 'shift-opened-an-inspection-row', i.id, i.started_at
-  FROM inspection i, w
- WHERE substr(COALESCE(i.started_at,''),1,19) >= w.t0
-   AND substr(COALESCE(i.started_at,''),1,19) <= substr(w.t1,1,19)
-UNION ALL
-SELECT 'shift-declared-a-coverage-area', e.subject_id, e.ts
-  FROM event e, w
- WHERE e.subject_type='coverage' AND e.verb='created' AND e.ts >= w.t0 AND e.ts <= w.t1
-UNION ALL
-SELECT 'shift-recruited-or-retired-a-member', e.subject_id, e.verb || ' at ' || e.ts
+SELECT 'shift-recruited-or-retired-a-member' AS breach, e.subject_id, e.verb || ' at ' || e.ts
+, e.subject_id AS row_id, e.verb || ' at ' || e.ts AS detail
   FROM event e, w
  WHERE e.subject_type='agent' AND e.verb IN ('recruited','retired') AND e.ts >= w.t0 AND e.ts <= w.t1
 UNION ALL
@@ -2567,23 +2128,16 @@ SELECT 'shift-filed-a-capability-request-and-created-the-member', q.capability, 
 ORDER BY breach, row_id;
 ```
 
-`qa-check` moving off `pending` **is** an inspection starting — it is the entry node of the
-`maintenance` graph, so the one event says the whole thing. A shift may *continue* an inspection
-freely: every node from `qa-check` through `qa-report` only observes and records, and nothing
-before the gate touches production code. So `qa-plan`, `qa-execute` and `qa-report` moving inside
-the window are all legal, and only the first move of the first node is not.
-
 The last clause is a shape rather than a window: a `capability_request` still `open` whose
 `proposed_agent` already exists on the roster means somebody filed the gap *and then filled it
 themselves*, which is the exact thing `v5-design.md` §5.4's last line forbids.
 
-*Verified:* zero rows on a cold `maintenance` carrier with an open shift over it. Moving
-`qa-check` to `done`, inserting an `inspection` row and creating `developer-embedded` returns
-`shift-started-an-inspection | REQ-900/qa-check`, `shift-opened-an-inspection-row | INSP-009` and
+*Verified:* zero rows on an `in-flight` board with an open shift over it. Creating
+`developer-embedded` mid-shift returns
 `shift-recruited-or-retired-a-member | developer-embedded | recruited at …`. Closing `GOAL-001`
 and `PHASE-001` mid-shift returns `shift-touched-the-direction` for both.
 
-**§12.c — the failure policy was followed and the shift did not deadlock.** Expect **zero rows**:
+**§11.c — the failure policy was followed and the shift did not deadlock.** Expect **zero rows**:
 
 ```sql
 WITH w(t0, t1) AS ( /* the shift window, above */ )
@@ -2644,7 +2198,7 @@ ticket stays `failed` returns `failed-ticket-live-node | TASK-005 | REQ-001/test
 Deleting the work log returns `failed-ticket-with-no-reason-logged` and
 `given-up-without-a-retry | TASK-005 | failed`.
 
-**§12.d — a blocked ticket became a roster gap, not a silent skip.** Expect **zero rows**:
+**§11.d — a blocked ticket became a roster gap, not a silent skip.** Expect **zero rows**:
 
 ```sql
 SELECT 'uncoverable-ticket-left-todo' AS breach, t.id AS row_id, w.who AS detail
@@ -2686,7 +2240,7 @@ restated here because a shift is the thing most likely to write it.)
 staff returns `blocked-but-coverable | TASK-006 | reviewer`. Deleting the `embedded` capability
 request returns `blocked-for-a-capability-nobody-requested | TASK-013 | embedded`.
 
-**§12.e — the shift said why it stopped, every time.** Expect **zero rows**:
+**§11.e — the shift said why it stopped, every time.** Expect **zero rows**:
 
 ```sql
 SELECT 'shift-never-said-why-it-stopped' AS breach, eo.subject_id AS row_id, eo.ts AS detail
@@ -2748,7 +2302,7 @@ that is the point.
 `over-budget`, `shift-opened-without-a-budget` and `stop-reason-outside-the-vocabulary`
 together. An `ended` row with no matching `started` returns `shift-ended-that-never-started`.
 
-**§12.f — git safety.** *Asserted with `git`, not with SQL — the repository is not a table, and
+**§11.f — git safety.** *Asserted with `git`, not with SQL — the repository is not a table, and
 saying so is more useful than a proxy query that pretends otherwise.* Run these from the repo
 root after the shift. Each states its expected output exactly.
 
@@ -2813,22 +2367,21 @@ Must be false after a shift. These are the specific ways *this* process goes wro
 
 | Must not be true | Caught by |
 |---|---|
-| A gate moved from `pending` to decided during the shift | §12.a `gate-decided-during-shift`, `gate-approved-with-no-shift-boundary` |
-| Any node moved past an unresolved gate | §12.a `work-past-unresolved-gate`, G4 `past-unresolved-gate` |
+| A gate moved from `pending` to decided during the shift | §11.a `gate-decided-during-shift`, `gate-approved-with-no-shift-boundary` |
+| Any node moved past an unresolved gate | §11.a `work-past-unresolved-gate`, G4 `past-unresolved-gate` |
 | A requirement closed past an unresolved gate | G6 `requirement-done-with-pending-gate` |
-| An inspection *started* by the shift | §12.b `shift-started-an-inspection`, `shift-opened-an-inspection-row` |
-| A member created, or a filed gap quietly self-filled | §12.b `shift-recruited-or-retired-a-member`, `shift-filed-a-capability-request-and-created-the-member` |
-| A goal or phase moved | §12.b `shift-touched-the-direction` |
-| A ticket retried twice inside one shift | §12.c `retried-more-than-once` |
-| A failure recorded on only one of the ticket and the node | §12.c `failed-node-live-ticket`, `failed-ticket-live-node` |
+| A member created, or a filed gap quietly self-filled | §11.b `shift-recruited-or-retired-a-member`, `shift-filed-a-capability-request-and-created-the-member` |
+| A goal or phase moved | §11.b `shift-touched-the-direction` |
+| A ticket retried twice inside one shift | §11.c `retried-more-than-once` |
+| A failure recorded on only one of the ticket and the node | §11.c `failed-node-live-ticket`, `failed-ticket-live-node` |
 | A ticket left `in-progress` by a crashed turn | G6 `in-progress-unclaimed`, `claimed-without-timestamp` |
-| A ticket nobody can take left `todo` | §12.d `uncoverable-ticket-left-todo` |
-| A ticket `blocked` that the matcher could staff | §12.d `blocked-but-coverable`, G6 |
-| A shift that ended without saying why | §12.e `shift-never-said-why-it-stopped` |
-| A stop reason nobody else can read | §12.e `stop-reason-outside-the-vocabulary` |
-| A ceiling raised from inside the loop | §12.e `budget-changed-mid-shift`, `over-budget` |
-| A commit on the default branch, or anything pushed | §12.f G-2, G-3, G-4 |
-| A commit for a failed task | §12.f G-6, G-8 |
+| A ticket nobody can take left `todo` | §11.d `uncoverable-ticket-left-todo` |
+| A ticket `blocked` that the matcher could staff | §11.d `blocked-but-coverable`, G6 |
+| A shift that ended without saying why | §11.e `shift-never-said-why-it-stopped` |
+| A stop reason nobody else can read | §11.e `stop-reason-outside-the-vocabulary` |
+| A ceiling raised from inside the loop | §11.e `budget-changed-mid-shift`, `over-budget` |
+| A commit on the default branch, or anything pushed | §11.f G-2, G-3, G-4 |
+| A commit for a failed task | §11.f G-6, G-8 |
 | An invented capability tag on a ticket the shift created | G5 `capability-outside-vocabulary` |
 | A dispatch to somebody the matcher would not have picked | G5 `top-agent-disagrees-with-match` |
 
@@ -2840,7 +2393,7 @@ list is longer than the others' and every item on it is load-bearing.
 - **Whether the shift, or a human, made any given change.** SQL has no identity and
   `guild_state.actor` is a label the writer sets on itself. Every window assertion above answers
   *"did this happen during the shift"*, never *"did the shift do it"*. A guild master who wakes at
-  4am and approves a gate produces exactly the row §12.a fires on. **This is the single largest
+  4am and approves a gate produces exactly the row §11.a fires on. **This is the single largest
   thing v6 gave up, and it is worst here**, because the shift is the one process where nobody is
   present to remember.
 - **A priority change is invisible.** Verified: `UPDATE task SET priority = 1` and
@@ -2867,6 +2420,6 @@ list is longer than the others' and every item on it is load-bearing.
 - **Whether a `NEEDS INPUT:` was answered on the user's behalf.** The rule is to fail the node and
   log the questions. A member that guessed instead produces a `done` node and a plausible work
   log, and no query distinguishes them.
-- **Whether the board was clean before the shift.** P12.b is a *precondition* run at the time, not
+- **Whether the board was clean before the shift.** P11.b is a *precondition* run at the time, not
   a postcondition: by morning the tree contains the shift's own work and the earlier state is
   unrecoverable.

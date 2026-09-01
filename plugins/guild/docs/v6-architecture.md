@@ -43,13 +43,12 @@ skills/warehouse/
     ├── queries.md                  # the canonical verified queries — copy, don't improvise
     ├── tursodb-gotchas.md          # the engine's sharp edges
     └── templates/                  # the execution templates, as knowledge
-        ├── standard.md
-        └── maintenance.md
+        └── standard.md
 ```
 
 ## 3. What the database now enforces
 
-`schema.sql` is 24 tables, 26 views and 43 triggers.
+`schema.sql` is 21 tables, 25 views and 39 triggers.
 
 **CHECK constraints are the vocabularies.** Every status and enum column carries its word list. A
 value outside it is rejected by the engine, on every connection, from every member, forever. v5's
@@ -155,14 +154,14 @@ constraints. A board that wants them rebuilds.
 ```
 plugins/guild/
 ├── schema.sql              # THE TOOL — tables, CHECKs, views, triggers, and the rules in its header
-├── agents/                 # 14 members; frontmatter (name, model, capabilities, serial) IS the roster
+├── agents/                 # 12 members; frontmatter (name, model, capabilities, serial) IS the roster
 ├── skills/
 │   ├── warehouse/          # the guide to the board — every member loads this first
 │   ├── validate/           # runs docs/expectations.md against the live board
 │   ├── check-in/           # the orchestrator; references/ holds state-format & task-lifecycle
 │   ├── shift/              # the unattended loop
 │   ├── brief/ dashboard/ guild-status/
-│   ├── new-requirement/ qa/ qa-mindset/ qa-artifacts/
+│   ├── new-requirement/
 │   ├── release/ clear-board/ comprehensive-review/ discuss/ verify-and-fix/ create-workflow/
 │   └── svelte-*/           # specialist reference skills
 └── docs/
@@ -179,7 +178,6 @@ The board, in a project:
 ├── config.yaml         # committed. version + mode; env var NAMES only, never a credential
 ├── guild.db            # gitignored. THE BOARD — not derived, not rebuildable
 ├── docs/               # evergreen researcher knowledge
-├── qa/                 # evergreen QA artifacts
 ├── reviews/REQ-NNN.md  # per-requirement review records
 ├── dashboard.html      # gitignored, regenerated wholesale
 └── templates/*.yaml    # optional project override of the execution templates
@@ -187,13 +185,13 @@ The board, in a project:
 
 `guild.db` is gitignored because a binary file is a bad thing to merge — which means **the board is
 machine-local** unless the guild runs in cloud mode. What git carries is the human-readable residue:
-`config.yaml`, `docs/`, `qa/`, `reviews/`, and the repo's `CHANGELOG.md`.
+`config.yaml`, `docs/`, `reviews/`, and the repo's `CHANGELOG.md`.
 
 ## 8. What did not change
 
 Worth stating, because it bounds the blast radius. The data model, the ID scheme, the capability
-matcher's ranking rule, the two-gate structure, the execution graph, the shift's policy and budget,
-and the QA discipline are all exactly as reasoned out in `v5-design.md`. v6 changed **what enforces
+matcher's ranking rule, the gate structure, the execution graph, the shift's policy and budget,
+and the review discipline are all exactly as reasoned out in `v5-design.md`. v6 changed **what enforces
 them and who writes the SQL** — not what they are.
 
 ## 9. Status

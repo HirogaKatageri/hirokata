@@ -70,7 +70,7 @@ It holds because the orchestrator and the agent definitions honor it.
 | Writer | May write |
 |---|---|
 | orchestrator | `task.status`, `graph_node.status`, `gate.status`, plus the rows it creates |
-| any agent | `work_log`, `review_finding`, `bug`, `doc`, `coverage` — its own reports |
+| any agent | `work_log`, `review_finding`, `bug`, `doc` — its own reports |
 | nobody | `event` — the triggers write it, and a memory you can edit is not one |
 
 Always guard the transition on the status you expect, and always `RETURNING`. Zero rows back

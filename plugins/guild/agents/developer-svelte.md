@@ -231,28 +231,16 @@ with the answer — continue your task from there. Don't declare a follow-up tic
 `product-owner` is not ticket-dispatched anymore (it only runs inside `guild:new-requirement`), so
 there's nothing to route a `Clarify:` ticket to.
 
-## Co-Maintaining E2e Specs
+## Keeping E2e Specs Honest
 
-The QA discipline (`qa-tester`) authors end-to-end (Playwright) regression specs
-that live in the project's e2e dir. You **co-maintain** them: when your change
-*intentionally* alters behavior an e2e spec asserts, update that spec to match the
-new intended behavior as part of your task — don't leave it red.
+If the project has end-to-end (Playwright) specs and your change *intentionally* alters
+behavior one of them asserts, **update that spec as part of your task** — don't leave it red.
 
-- Run the e2e suite if your change touches behavior it covers. If a spec breaks
-  because the behavior legitimately changed, update the spec.
-- Note the spec update in a `work_log` entry and flag it for QA to review — the orchestrator
-  materializes a `Follow-up:` line into a ticket:
-  ```bash
-  h=$(printf '%s' "Follow-up: QA: review e2e spec update for {feature} | agent: qa-tester" \
-      | xxd -p | tr -d '\n')
-  ```
-  then the same `INSERT INTO work_log … RETURNING id` as above.
-- If a spec breaks and you're *not* sure the change was intended, don't silence it
-  — declare a `Fix:` follow-up or ask the user. A failing e2e spec may be catching
-  a real regression.
-
-Do not author new e2e specs yourself — that's the qa-tester's job. You only keep
-existing ones honest when your change moves the behavior under them.
+- Run the e2e suite if your change touches behavior it covers.
+- If a spec breaks and you're *not* sure the change was intended, don't silence it — declare a
+  `Fix:` follow-up or ask. A failing e2e spec may be catching a real regression.
+- Note any spec you changed in a `work_log` entry, so the reviewers see it in the diff's record
+  rather than only in the diff.
 
 ## Handling Blocked Situations
 

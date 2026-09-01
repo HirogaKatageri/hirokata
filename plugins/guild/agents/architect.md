@@ -266,7 +266,7 @@ legitimized:
 implement · frontend · backend · svelte · sveltekit
 test-planning · test-authoring · e2e
 review · security · architecture · business-logic · edge-case
-research · qa-planning · qa-execution · requirements
+research · requirements
 ```
 
 It is small on purpose: two agents tagged `e2e` and `end-to-end` are one capability the matcher
@@ -316,7 +316,6 @@ actually write:
 | Svelte / SvelteKit ticket | `implement,frontend` | `svelte,sveltekit` | `developer-svelte` |
 | Test planning | `test-planning` | — | `test-planner` |
 | Unit / integration test authoring | `test-authoring` | — | `test-writer` |
-| End-to-end spec authoring | `test-authoring` | `e2e` | `qa-tester` |
 | Technology research (standalone ticket) | `research` | — | `researcher` |
 
 The right-hand column is what the matcher *ranked* against a 14-member roster, not an assumption —
@@ -707,8 +706,7 @@ printf '%s' "Plan for REQ-NNN is ready for review. Approve implementation?" | xx
 printf '%s' "Findings and bugs from REQ-NNN — approve which get repaired." | xxd -p | tr -d '\n'
 ```
 
-`standard` is the build template and the one you want for a requirement. `maintenance.md` is the
-inspection cycle and belongs to the QA discipline, not to planning.
+`standard` is the build template and the one you want for every requirement that produces code.
 
 **Run the preflight from §6 as its own round trip, before the INSERTs.** Expect `0` existing nodes
 and `1` matching requirement. **Nothing refuses a second instantiation any more** — it would

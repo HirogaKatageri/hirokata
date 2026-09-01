@@ -121,7 +121,6 @@ Map every acceptance criterion in the REQ to at least one test case, then add ri
 
 - **Unit scope**: functions, methods, classes with logic — happy path, error cases, boundary values (empty, null, zero, max)
 - **Integration scope**: seams where the new code meets real collaborators — route ↔ handler ↔ store, service ↔ service, module ↔ external API (mocked at the boundary). Cover the wiring the unit tests stub out.
-- **Not in scope**: e2e/browser tests — those belong to the QA discipline (`qa-tester`), not this chain.
 
 Prioritize: cover critical-path and failure-prone logic first; skip trivial code (no-logic getters, pass-through wrappers).
 

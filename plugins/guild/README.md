@@ -17,9 +17,9 @@ write SQL.
 ## Overview
 
 A work session starts with a check-in. The orchestrator reads the brief, asks what you want to work
-on, and drives requirements through an execution graph that stops at exactly two gates — the plan is
-approved before anything is built, and findings, bugs and failures are presented together as one
-decision after review. Between gates it runs continuously. You can also leave it running unattended
+on, and drives requirements through an execution graph that stops at exactly three gates — the plan
+is approved before anything is built; findings, bugs and failures are presented together as one
+decision after review; and the repair plan is approved before any fix is written. Between gates it runs continuously. You can also leave it running unattended
 with `guild:shift`, which works the same loop and stops at the same line.
 
 ### The pivot from v5
@@ -78,14 +78,13 @@ bash. Nothing polices them now — they are documented in `schema.sql` and nowhe
   rewiring — `v_agent_match` picks it up on the next roster sync.
 - **The chain is data.** An execution template is instantiated per requirement into `graph_node` /
   `graph_edge` / `gate` rows. `v_ready_nodes` says what can run.
-- **Two gates, always.** `gate-plan` before anything is built; `gate-repairs` after review. Gates
-  cannot live inside a workflow, because subagents cannot ask the user a question — segmenting at
-  gates is the only shape that preserves guild-master control.
+- **Three gates, always.** `gate-plan` before anything is built; `gate-repairs` to choose which
+  problems matter; `gate-repair-plan` to approve how they get fixed. Gates cannot live inside a
+  workflow, because subagents cannot ask the user a question — segmenting at gates is the only
+  shape that preserves guild-master control.
 - **It can work a shift while you are away.** `guild:shift` runs the loop unattended, retries a
   failure once, commits per completed task on its own branch, and stops at the next gate. It never
   pushes and never touches the default branch.
-- **An independent QA discipline** files `bug` rows and maps risk as `coverage` rows, so "what is
-  still broken?" and "what has not been looked at lately?" are queries.
 - **The board is a query, not a file.** There is no `BOARD.md`, no ticket file, no `state.yaml` and
   no status directory. Status is a column; the board is `v_board`.
 
@@ -106,7 +105,7 @@ Put the `export` line in your shell profile. Every skill assumes `tursodb` is on
 ### 2. Apply the schema
 
 ```bash
-mkdir -p .guild/docs .guild/qa .guild/reviews
+mkdir -p .guild/docs .guild/reviews
 tursodb .guild/guild.db < "${CLAUDE_PLUGIN_ROOT}/schema.sql"
 ```
 
@@ -148,13 +147,13 @@ plan is how the architect intends to build it; a task is a bounty a guild member
 the file set it owns in `files`.
 
 Alongside them: `graph_node` / `graph_edge` / `gate` (the execution graph), `agent` /
-`agent_capability` / `task_capability` (the roster and the matcher), `bug`, `coverage`,
+`agent_capability` / `task_capability` (the roster and the matcher), `bug`,
 `review_finding`, `work_log`, `doc`, and `event` — the activity feed the triggers write.
 
 **`event` is the record.** There is no journal any more. `guild.db` is not derived state that can be
 thrown away and rebuilt; it is the board. It is gitignored because a binary file is a bad thing to
 merge, which means the board is machine-local unless you run in cloud mode. What git carries instead
-is the human-readable residue: `config.yaml`, `.guild/docs/`, `.guild/qa/`, `.guild/reviews/`, and
+is the human-readable residue: `config.yaml`, `.guild/docs/`, `.guild/reviews/`, and
 the repo's own `CHANGELOG.md`.
 
 ### The views are the API
@@ -172,7 +171,7 @@ Read the view; do not re-derive the rule. The ones you will use most:
 | `v_gates_pending` | What is waiting on the guild master. |
 | `v_agent_match` / `v_task_top_agent` | Who should take this. |
 | `v_requirement_progress` / `v_goal_progress` | How far along. |
-| `v_failed_tasks`, `v_open_findings`, `v_open_bugs`, `v_coverage_due` | What still needs attention. |
+| `v_failed_tasks`, `v_open_findings`, `v_open_bugs` | What still needs attention. |
 | `v_roster_gaps`, `v_capability_unknown` | Why the matcher went quiet. |
 | `v_recent_activity` | What moved. |
 
@@ -224,14 +223,13 @@ the price of moving the vocabulary into the engine, and it is a real one.
 
 | Skill | What it does |
 |-------|--------------|
-| `guild:check-in` | **The orchestrator.** Opens with the brief, gathers input, runs each requirement's execution graph, presents the two gates, and drives the continuous work cycle. Say "check in". |
+| `guild:check-in` | **The orchestrator.** Opens with the brief, gathers input, runs each requirement's execution graph, presents the gates, and drives the continuous work cycle. Say "check in". |
 | `guild:shift` | `check-in` with the human taken out of the middle. Runs unattended to the next gate, then stops and says why. Never decides a gate — not even "the obvious ones". |
-| `guild:brief` | Where the project stands: direction, in flight, bugs, coverage due, what moved. Read-only. |
+| `guild:brief` | Where the project stands: direction, in flight, bugs, findings, what moved. Read-only. |
 | `guild:guild-status` | **Deprecated alias for `guild:brief`** — the v4 name. It claims **no** natural-language trigger phrases; every status phrasing routes to `guild:brief`, because two skills advertising "guild status" would make every status request a coin flip. Reachable only by typing `/guild:guild-status`. |
 | `guild:dashboard` | Renders the board as one self-contained offline HTML page. Read-only. |
 | `guild:new-requirement` | A live 3-way interview between the product-owner, the architect and you. Writes the requirement, the plan, the tickets **and the execution graph**, then ends at `gate-plan` — nothing is built until you approve. |
-| `guild:qa` | Seeds a QA pass onto the board: a qa-strategist plans risk-based coverage, then qa-testers run the app, author Playwright specs, and file bugs back to the board. |
-| `guild:comprehensive-review` | Multi-dimensional pre-PR review — requirements compliance, coverage, edge cases, architecture, security. |
+| `guild:comprehensive-review` | Multi-dimensional pre-PR review — requirements compliance, test coverage, edge cases, architecture, security. |
 | `guild:verify-and-fix` | Diagnoses a reported error end to end, then applies a test-driven fix. |
 | `guild:release` | Stamps `CHANGELOG.md`'s Unreleased section with a version, snapshots completed requirements, and creates an annotated tag. Does not push. |
 | `guild:clear-board` | Deletes every unit of work, keeping the things that outlive a board. **There is no journal to replay any more** — a `DELETE` is final. Back the file up first. |
@@ -240,8 +238,8 @@ the price of moving the vocabulary into the engine, and it is a real one.
 | `guild:validate` | **Runs `docs/expectations.md` against the live board** — the nine global invariants by default, a named process's postconditions on request. Reports each failure with the offending rows. Read-only unless you ask it to load a fixture. |
 | `guild:warehouse` | **The reference every member loads before touching guild data.** |
 
-Agent-facing skills that specialists pre-load rather than users invoking: `guild:qa-mindset`,
-`guild:qa-artifacts`, and the four `guild:svelte-*` skills, plus `guild:svelte-env-vars-check`.
+Agent-facing skills that specialists pre-load rather than users invoking: the four
+`guild:svelte-*` skills, plus `guild:svelte-env-vars-check`.
 
 ---
 
@@ -266,8 +264,6 @@ capability count (**asc**, so a specialist beats a generalist), then name.
 | `reviewer-business-logic` | Haiku | `review`, `business-logic` | Acceptance criteria, business rules, testability. |
 | `reviewer-edge-case` | Haiku | `review`, `edge-case` | Boundary conditions, null handling, error scenarios. |
 | `researcher` | Haiku | `research` | Technology research, API investigation, documentation lookup. |
-| `qa-strategist` | Sonnet | `qa-planning` | Risk map as `coverage` rows, adversarial what-if missions. |
-| `qa-tester` | Sonnet | `qa-execution`, `test-authoring`, `e2e` | **`serial: true`** — runs the product and authors e2e specs; Playwright collides on ports, so two may never run concurrently. |
 
 **Hiring is adding a file.** Write `agents/<name>.md` with `name`, `model`, `capabilities` and
 `serial` in the frontmatter, then check in — the roster sync picks it up. A capability the roster
@@ -287,13 +283,13 @@ The plugin:
 
 ```
 plugins/guild/
-├── schema.sql              # THE TOOL. 24 tables, 26 views, 43 triggers, and the guild's rules
+├── schema.sql              # THE TOOL. 21 tables, 25 views, 39 triggers, and the guild's rules
 ├── agents/                 # 14 roster members; frontmatter is the roster source
 ├── skills/
 │   ├── warehouse/          # how to reach the board — the skill every member loads
 │   │   └── references/     # schema.md, queries.md, tursodb-gotchas.md, templates/
 │   ├── validate/           # runs the expectations against the live board
-│   └── …                   # check-in, shift, brief, dashboard, new-requirement, qa, …
+│   └── …                   # check-in, shift, brief, dashboard, new-requirement, …
 └── docs/
     ├── v6-architecture.md        # the current design — start here
     ├── expectations.md           # THE SPEC a member's work is checked against
@@ -308,7 +304,6 @@ The board, in your project:
 ├── config.yaml         # committed. version + storage mode; env var NAMES only, never a credential
 ├── guild.db            # gitignored. THE BOARD
 ├── docs/               # evergreen researcher knowledge (the `doc` table is the primary copy)
-├── qa/                 # evergreen QA artifacts — charter, missions, bug ledger, session logs
 ├── reviews/REQ-NNN.md  # per-requirement review records, appended per round
 ├── dashboard.html      # gitignored. regenerated wholesale
 └── templates/*.yaml    # optional. a project's override of the shipped execution templates
@@ -335,8 +330,8 @@ expected result**:
 | | |
 |---|---|
 | **§3 — nine global invariants** | Hold at all times, whatever just ran: referential health, vocabulary, id shape, gate integrity, roster integrity, closure, event coverage, graph structure, concurrency. |
-| **§4–§12 — one section per process** | Trigger, preconditions, expected sequence, postconditions, anti-expectations, and *cannot be asserted* — for `new-requirement`, `brief`, `dashboard`, `check-in`, `clear-board`, `release`, `guild-status`, `qa` and `shift`. |
-| **`expectations-fixtures.md`** | Six known board states — `empty`, `planned`, `in-flight`, `review-ready`, `messy`, `maintenance` — because an assertion run against an unknown state answers differently every time. |
+| **§4–§11 — one section per process** | Trigger, preconditions, expected sequence, postconditions, anti-expectations, and *cannot be asserted* — for `new-requirement`, `brief`, `dashboard`, `check-in`, `clear-board`, `release`, `guild-status` and `shift`. |
+| **`expectations-fixtures.md`** | Five known board states — `empty`, `planned`, `in-flight`, `review-ready`, `messy` — because an assertion run against an unknown state answers differently every time. |
 
 Assertions return **zero rows when healthy and the offending rows when not**, so a failure names its
 own cause. `finding-open-past-gate-repairs|1|REQ-001` tells you the row, the requirement and the
@@ -348,8 +343,8 @@ running its own section, because a member's account of what it wrote is not evid
 That is why postconditions are queried rather than assumed.)
 
 **What this deliberately does not do.** It does not assert that the code works, that a feature is
-correct, or that a test passes — the guild has reviewers, testers and a QA discipline for that, and
-they operate on the product, not on the board. It also leaves the largest questions open on purpose:
+correct, or that a test passes — the guild has reviewers and testers for that, and they operate on
+the product, not on the board. It also leaves the largest questions open on purpose:
 whether a plan is any *good*, whether the code was actually written, whether a human genuinely made
 the decision a gate records, who really wrote a row. Each section names those under *Cannot be
 asserted* rather than inventing a proxy check, because a weak assertion turns an open question into

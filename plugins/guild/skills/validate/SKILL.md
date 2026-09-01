@@ -40,10 +40,9 @@ rather than prose to be interpreted. This skill runs them and reports what holds
 | `new-requirement` | §4 the build flow | `clear-board` | §8 |
 | `brief` | §5 | `release` | §9 |
 | `dashboard` | §6 | `guild-status` | §10 |
-| `check-in` | §7 | `qa` | §11 the maintenance cycle |
-| | | `shift` | §12 the unattended shift |
+| `check-in` | §7 | `shift` | §11 the unattended shift |
 
-`<name>` is one of `empty`, `planned`, `in-flight`, `review-ready`, `messy`, `maintenance` —
+`<name>` is one of `empty`, `planned`, `in-flight`, `review-ready`, `messy` —
 `docs/expectations-fixtures.md`.
 
 ## The shape every assertion has
@@ -136,9 +135,7 @@ Four things are mandatory:
    UNION ALL SELECT 'requirement', CAST(COUNT(*) AS TEXT) FROM requirement HAVING COUNT(*) > 0
    UNION ALL SELECT 'task',        CAST(COUNT(*) AS TEXT) FROM task        HAVING COUNT(*) > 0
    UNION ALL SELECT 'bug',         CAST(COUNT(*) AS TEXT) FROM bug         HAVING COUNT(*) > 0
-   UNION ALL SELECT 'coverage',    CAST(COUNT(*) AS TEXT) FROM coverage    HAVING COUNT(*) > 0
    UNION ALL SELECT 'doc',         CAST(COUNT(*) AS TEXT) FROM doc         HAVING COUNT(*) > 0
-   UNION ALL SELECT 'inspection',  CAST(COUNT(*) AS TEXT) FROM inspection  HAVING COUNT(*) > 0
    UNION ALL SELECT 'event',       CAST(COUNT(*) AS TEXT) FROM event       HAVING COUNT(*) > 0
    ORDER BY tbl;
    ```
@@ -149,7 +146,7 @@ Four things are mandatory:
 3. **Load in order.** The chains are §0.1 of `expectations-fixtures.md`, and every one
    starts with the roster block (§0.5):
    `empty` = schema only · `planned` = `00`+`02` · `in-flight` = +`03` ·
-   `review-ready` = +`04` · `messy` = `00`,`02`,`03`,`05` · `maintenance` = `00`,`06`.
+   `review-ready` = +`04` · `messy` = `00`,`02`,`03`,`05`.
    Extract each seed block by its `**Seed SQL — \`NN-name.sql\`:**` line, same awk.
 4. **Check both channels after every load, then run the fixture's sanity query** and compare
    it to the stated result. Every seed script is silent on success, so *any* output is an

@@ -293,7 +293,7 @@ CREATE TABLE IF NOT EXISTS agent (
   description TEXT NOT NULL DEFAULT '',
   active      INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
   serial      INTEGER NOT NULL DEFAULT 0 CHECK (serial IN (0, 1))
-              -- 1 = never run concurrently with itself (the qa-tester drives one app)
+              -- 1 = never run concurrently with itself (a shared external resource)
 ) STRICT;
 
 -- A capability is compared for EQUALITY and never normalized, so the alphabet is narrow
@@ -465,50 +465,8 @@ CREATE TABLE IF NOT EXISTS bug (
 
 
 -- =====================================================================================
--- MAINTENANCE — coverage, inspection, inspection_coverage, doc
+-- MEMORY — doc
 -- =====================================================================================
-
--- What the product is made of, from a quality standpoint. EVERGREEN: it survives releases
--- and board resets. `last_inspected_at` + `risk` is what makes "what needs looking at" a
--- QUERY (`v_coverage_due`) rather than a judgment call.
-CREATE TABLE IF NOT EXISTS coverage (
-  id                TEXT PRIMARY KEY,         -- 'checkout-flow'
-  area              TEXT NOT NULL,            -- human name
-  risk              TEXT NOT NULL DEFAULT 'medium'
-                    CHECK (risk IN ('high', 'medium', 'low')),
-  spec_path         TEXT,                     -- committed e2e spec, if one exists
-  last_inspected_at TEXT,
-  notes             TEXT NOT NULL DEFAULT ''
-) STRICT;
-
--- One turn of the maintenance cycle.
---
--- `trigger` HAS NO CHECK, AND THAT IS DELIBERATE — it is the one enum in this file left
--- open. Today the only value written is 'manual', because an inspection is among the most
--- expensive things the guild does and nothing should start one on its own. The column
--- exists so a cadence can be added later WITHOUT rebuilding the table, which is precisely
--- the cost a CHECK would impose. Every other vocabulary here is closed because it is
--- settled. This one is not settled.
-CREATE TABLE IF NOT EXISTS inspection (
-  id          TEXT PRIMARY KEY,               -- INSP-001
-  scope       TEXT NOT NULL,                  -- 'whole product' | a coverage area
-  "trigger"   TEXT NOT NULL DEFAULT 'manual',
-  status      TEXT NOT NULL DEFAULT 'todo'
-              CHECK (status IN ('todo', 'in-progress', 'done')),
-  started_at  TEXT,
-  finished_at TEXT
-) STRICT;
-
--- `verdict` is NULL until the area is actually reached. 'not-reached' is the honest
--- answer for an area the inspection intended to cover and ran out of road before it did —
--- it is NOT the same as NULL, and it is not a pass.
-CREATE TABLE IF NOT EXISTS inspection_coverage (
-  inspection_id TEXT NOT NULL REFERENCES inspection(id),
-  coverage_id   TEXT NOT NULL REFERENCES coverage(id),
-  verdict       TEXT CHECK (verdict IS NULL
-                            OR verdict IN ('pass', 'issues', 'not-reached')),
-  PRIMARY KEY (inspection_id, coverage_id)
-) STRICT;
 
 -- The library. Long-lived knowledge the guild looked up once and should not look up
 -- again. Search it with LIKE — there is no FTS5.
@@ -527,7 +485,7 @@ CREATE TABLE IF NOT EXISTS doc (
 -- WRITTEN BY TRIGGERS. You do not normally INSERT here by hand, and you never UPDATE or
 -- DELETE: this is the guild's memory, and a memory you can edit is not one.
 --
--- `subject_type` IS THE SUBJECT'S TABLE NAME — 'task', 'requirement', 'coverage'. That is
+-- `subject_type` IS THE SUBJECT'S TABLE NAME — 'task', 'requirement', 'bug'. That is
 -- what lets `v_recent_activity` resolve a title for it. `verb` is intentionally NOT
 -- CHECKed: new machinery invents new verbs, and an event that cannot be written is worse
 -- than one whose verb you have not seen before. The verbs the triggers below emit are:
@@ -1290,8 +1248,7 @@ SELECT b.id             AS id,
 -- `subject_title` is a COALESCE over one GUARDED scalar subquery per titled table: the
 -- type check sits inside the WHERE, so a non-matching type selects no rows and yields
 -- NULL rather than a wrong title, and a deleted subject falls through to ''. Two of the
--- eight disagree with the obvious guess — `doc` is keyed by `slug`, and `coverage` calls
--- its human label `area`.
+-- of them disagree with the obvious guess — `doc` is keyed by `slug`, not `id`.
 --
 -- `json_extract` RAISES on malformed JSON and a raised error aborts the whole query, so
 -- every extraction is wrapped in `CASE WHEN json_valid(...)`, which evaluates only the
@@ -1317,7 +1274,6 @@ SELECT e.id           AS id,
          (SELECT s.title FROM task        s WHERE e.subject_type = 'task'        AND s.id   = e.subject_id),
          (SELECT s.title FROM bug         s WHERE e.subject_type = 'bug'         AND s.id   = e.subject_id),
          (SELECT s.title FROM doc         s WHERE e.subject_type = 'doc'         AND s.slug = e.subject_id),
-         (SELECT s.area  FROM coverage    s WHERE e.subject_type = 'coverage'    AND s.id   = e.subject_id),
          '')          AS subject_title,
        CASE WHEN json_valid(e.payload) THEN
          CASE WHEN COALESCE(CAST(json_extract(e.payload, '$.to') AS TEXT), '') <> ''
@@ -1330,57 +1286,6 @@ SELECT e.id           AS id,
  ORDER BY e.ts DESC, e.id DESC;
 
 
--- ------------------------------------------------------------------------------------
--- v_coverage_due — QUALITY AREAS NOBODY HAS LOOKED AT LATELY
--- ------------------------------------------------------------------------------------
--- Never inspected, or past its risk-weighted interval. The thresholds ARE the judgment
--- this view encodes, and they are stated exactly once — here:
---
---   high risk    stale after 14 days
---   medium risk  stale after 30 days
---   low risk     stale after 90 days
---
--- An unrecognized risk value falls to the medium threshold rather than vanishing, which
--- is the safe direction to fall. (The CHECK on `coverage.risk` makes that unreachable
--- today, and the ELSE stays because a widened vocabulary should not silently drop rows.)
---
--- `days_since` is NULL for an area that has never been inspected — which is not "0 days
--- ago", and a reader that renders it as such is lying about the state of the product.
---
--- The clock is `'now'`, so this view is time-dependent by design.
-DROP VIEW IF EXISTS v_coverage_due;
-CREATE VIEW v_coverage_due AS
-SELECT c.id                AS id,
-       c.risk              AS risk,
-       c.spec_path         AS spec_path,
-       c.last_inspected_at AS last_inspected_at,
-       CASE c.risk WHEN 'high' THEN 14 WHEN 'low' THEN 90 ELSE 30 END AS interval_days,
-       CASE WHEN COALESCE(c.last_inspected_at, '') = '' THEN NULL
-            ELSE CAST(julianday('now') - julianday(c.last_inspected_at) AS INTEGER)
-       END                 AS days_since,
-       c.area              AS area,
-       c.notes             AS notes
-  FROM coverage c
- WHERE COALESCE(c.last_inspected_at, '') = ''
-    OR (julianday('now') - julianday(c.last_inspected_at))
-       >= CASE c.risk WHEN 'high' THEN 14 WHEN 'low' THEN 90 ELSE 30 END
- ORDER BY CASE c.risk WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, c.id;
-
-
--- ------------------------------------------------------------------------------------
--- v_capability_vocabulary — THE WORDS THIS GUILD KNOWS
--- ------------------------------------------------------------------------------------
--- The seed list, plus every capability legitimized by a `capability_request` that was not
--- declined. Kept SMALL on purpose: a sprawling vocabulary makes matching mushy, and the
--- concrete failure is two agents tagged `e2e` and `end-to-end` and a matcher that quietly
--- stops working.
---
--- THE ONLY DOOR INTO THIS LIST IS A `capability_request` ROW. It is deliberately NOT
--- sourced from `agent_capability` — that would be self-approving, and one typo'd tag would
--- become legal forever the moment somebody synced it.
---
--- This cannot be a CHECK: a CHECK may not read another table. So it is a view, and
--- `v_capability_unknown` is the audit. Item 5 of "what this file cannot enforce".
 DROP VIEW IF EXISTS v_capability_vocabulary;
 CREATE VIEW v_capability_vocabulary AS
 SELECT 'implement'      AS capability
@@ -1390,15 +1295,12 @@ UNION SELECT 'svelte'
 UNION SELECT 'sveltekit'
 UNION SELECT 'test-planning'
 UNION SELECT 'test-authoring'
-UNION SELECT 'e2e'
 UNION SELECT 'review'
 UNION SELECT 'security'
 UNION SELECT 'architecture'
 UNION SELECT 'business-logic'
 UNION SELECT 'edge-case'
 UNION SELECT 'research'
-UNION SELECT 'qa-planning'
-UNION SELECT 'qa-execution'
 UNION SELECT 'requirements'
 UNION SELECT capability FROM capability_request WHERE status <> 'declined';
 
@@ -1476,10 +1378,9 @@ UNION ALL SELECT 14, 'requirements_open',   CAST((SELECT COUNT(*) FROM requireme
 UNION ALL SELECT 15, 'requirements_done',   CAST((SELECT COUNT(*) FROM requirement WHERE status = 'done') AS TEXT)
 UNION ALL SELECT 16, 'bugs_open',           CAST((SELECT COUNT(*) FROM v_open_bugs) AS TEXT)
 UNION ALL SELECT 17, 'findings_open',       CAST((SELECT COUNT(*) FROM v_open_findings) AS TEXT)
-UNION ALL SELECT 18, 'coverage_due',        CAST((SELECT COUNT(*) FROM v_coverage_due) AS TEXT)
-UNION ALL SELECT 19, 'roster_gaps',         CAST((SELECT COUNT(*) FROM v_roster_gaps) AS TEXT)
-UNION ALL SELECT 20, 'capability_unknown',  CAST((SELECT COUNT(*) FROM v_capability_unknown) AS TEXT)
-UNION ALL SELECT 21, 'nodes_ready',         CAST((SELECT COUNT(*) FROM v_ready_nodes WHERE kind = 'work') AS TEXT)
+UNION ALL SELECT 18, 'roster_gaps',         CAST((SELECT COUNT(*) FROM v_roster_gaps) AS TEXT)
+UNION ALL SELECT 19, 'capability_unknown',  CAST((SELECT COUNT(*) FROM v_capability_unknown) AS TEXT)
+UNION ALL SELECT 20, 'nodes_ready',         CAST((SELECT COUNT(*) FROM v_ready_nodes WHERE kind = 'work') AS TEXT)
 UNION ALL SELECT 22, 'gates_pending',       CAST((SELECT COUNT(*) FROM v_gates_pending) AS TEXT)
 UNION ALL SELECT 23, 'events_since_checkin',
   CAST((SELECT COUNT(*) FROM event
@@ -1516,7 +1417,7 @@ UNION ALL SELECT 23, 'events_since_checkin',
 --   * `graph_node` INSERTS — instantiating one requirement's graph writes dozens of nodes
 --     in a breath. Only node STATUS CHANGES are recorded, which is the part that means
 --     something moved.
---   * `graph_edge`, `task_dependency`, `inspection_coverage` — structure,
+--   * `graph_edge`, `task_dependency` — structure,
 --     written once at creation time alongside a parent that IS instrumented.
 --
 -- THE ACTOR IS `guild_state.actor`, defaulting to 'orchestrator'. Set it at the top of
@@ -1817,56 +1718,6 @@ BEGIN
   INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
   VALUES (new.ts, new.agent, 'logged', 'task', new.task_id,
           json_object('entry', new.entry));
-END;
-
-
--- ---- coverage -----------------------------------------------------------------------
--- `inspected` fires only when the CLOCK moves. Re-saving an area's risk or notes is not
--- an inspection, and letting it look like one would make an area nobody has opened in
--- three months read as fresh.
-DROP TRIGGER IF EXISTS trg_coverage_created;
-CREATE TRIGGER trg_coverage_created AFTER INSERT ON coverage
-BEGIN
-  INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
-  VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-          COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
-          'created', 'coverage', new.id,
-          json_object('risk', new.risk, 'spec_path', new.spec_path));
-END;
-
-DROP TRIGGER IF EXISTS trg_coverage_inspected;
-CREATE TRIGGER trg_coverage_inspected AFTER UPDATE OF last_inspected_at ON coverage
-WHEN old.last_inspected_at IS NOT new.last_inspected_at
-BEGIN
-  INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
-  VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-          COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
-          'inspected', 'coverage', new.id,
-          json_object('from', old.last_inspected_at, 'to', new.last_inspected_at,
-                      'risk', new.risk));
-END;
-
-
--- ---- inspection ---------------------------------------------------------------------
-DROP TRIGGER IF EXISTS trg_inspection_created;
-CREATE TRIGGER trg_inspection_created AFTER INSERT ON inspection
-BEGIN
-  INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
-  VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-          COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
-          'created', 'inspection', new.id,
-          json_object('scope', new.scope, 'trigger', new."trigger"));
-END;
-
-DROP TRIGGER IF EXISTS trg_inspection_moved;
-CREATE TRIGGER trg_inspection_moved AFTER UPDATE OF status ON inspection
-WHEN old.status IS NOT new.status
-BEGIN
-  INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
-  VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-          COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
-          'moved', 'inspection', new.id,
-          json_object('from', old.status, 'to', new.status));
 END;
 
 
