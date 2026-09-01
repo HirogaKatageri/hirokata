@@ -50,8 +50,9 @@
 --      The waiver lives in a work_log line's PREFIX, matched with LIKE. It is a marker,
 --      not a column. `v_failed_tasks.waived` reads it back honestly; nothing stops a
 --      stray log line from looking like one.
---   4. "PLAN SLICES TOUCH DISJOINT FILES." `plan_slice.files` is a JSON array and the
---      disjointness is an ASSERTION BY THE ARCHITECT. Nothing checks it.
+--   4. "CONCURRENTLY DISPATCHED TASKS TOUCH DISJOINT FILES." `task.files` is a JSON
+--      array and the disjointness across a `parallel_group` is an ASSERTION BY THE
+--      ARCHITECT. Nothing checks it.
 --   5. "A CAPABILITY MUST BE IN THE VOCABULARY." `v_capability_vocabulary` defines the
 --      word list and `v_capability_unknown` reports violations, but a CHECK cannot
 --      reference another table, so an unknown capability INSERTS fine and simply matches
@@ -194,7 +195,7 @@ CREATE TABLE IF NOT EXISTS phase (
 
 
 -- =====================================================================================
--- WORK — requirement, plan, plan_slice, task, task_dependency
+-- WORK — requirement, plan, task, task_dependency
 -- =====================================================================================
 
 CREATE TABLE IF NOT EXISTS requirement (
@@ -221,20 +222,6 @@ CREATE TABLE IF NOT EXISTS plan (
   updated_at     TEXT NOT NULL
 ) STRICT;
 
--- A parallelizable unit of a plan. `files` is a JSON array and the DISJOINTNESS OF THOSE
--- FILE SETS ACROSS SLICES IS AN ASSERTION, not a constraint — it is the architect's
--- promise that the slices can run concurrently without stepping on each other. Nothing
--- verifies it. See "what this file cannot enforce", item 4.
-CREATE TABLE IF NOT EXISTS plan_slice (
-  id        TEXT PRIMARY KEY,                 -- PLAN-001/auth-service
-  plan_id   TEXT NOT NULL REFERENCES plan(id),
-  slug      TEXT NOT NULL,
-  title     TEXT NOT NULL,
-  body      TEXT NOT NULL DEFAULT '',
-  files     TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(files)),
-  UNIQUE (plan_id, slug)
-) STRICT;
-
 -- ---- THE TASK STATUS VOCABULARY, AND WHAT EACH WORD BUYS ----------------------------
 --
 --   todo         not started. The only status `v_task_actionable` will offer.
@@ -256,8 +243,12 @@ CREATE TABLE IF NOT EXISTS task (
   id             TEXT PRIMARY KEY,            -- TASK-001
   requirement_id TEXT NOT NULL REFERENCES requirement(id),
   plan_id        TEXT REFERENCES plan(id),
-  plan_slice_id  TEXT REFERENCES plan_slice(id),
-  plan_slice     TEXT,                        -- the raw slice slug, denormalized
+  -- The file set this ticket touches. A JSON array, and THE DISJOINTNESS OF THOSE SETS
+  -- ACROSS A `parallel_group` IS AN ASSERTION BY THE ARCHITECT, not a constraint — it is
+  -- the promise that lets the group dispatch concurrently into one shared working tree
+  -- without two members editing one file. Nothing verifies it. See "what this file
+  -- cannot enforce", item 4.
+  files          TEXT NOT NULL DEFAULT '[]' CHECK (json_valid(files)),
   parallel_group TEXT,                        -- tasks sharing one dispatch together
   node_key       TEXT,                        -- the graph node that produced it
   title          TEXT NOT NULL,
@@ -571,7 +562,6 @@ CREATE INDEX IF NOT EXISTS finding_by_task  ON review_finding(task_id, dispositi
 CREATE INDEX IF NOT EXISTS worklog_by_task  ON work_log(task_id, ts);
 CREATE INDEX IF NOT EXISTS bug_by_status    ON bug(status, severity);
 CREATE INDEX IF NOT EXISTS phase_by_goal    ON phase(goal_id, ordinal);
-CREATE INDEX IF NOT EXISTS slice_by_plan    ON plan_slice(plan_id);
 -- Both capability tables are keyed (owner, capability), so "what does this agent/task
 -- declare" is already a seek. The matcher asks the OTHER question — "who can cover
 -- `rust`" — which is a scan on the second key column. These cover that direction.
@@ -679,7 +669,7 @@ SELECT task_id,
 --
 -- THE REVIEW GATE. A task whose `agent` is EXACTLY 'reviewer' is not actionable while any
 -- OTHER, NON-REVIEWER task for the same requirement is still open. A review that
--- certifies a requirement whose implementation slice never ran is a FALSE GREEN, and a
+-- certifies a requirement whose implementation task never ran is a FALSE GREEN, and a
 -- false green is silent — it looks exactly like a real one.
 --
 -- Three details, each of which was a real bug before it was a rule:
@@ -773,10 +763,10 @@ SELECT 'claim',
 -- batch of one (it joins to itself).
 --
 -- A `blocked` MEMBER IS EXCLUDED and the group dispatches without it. It cannot be
--- dispatched — that is what blocked means — and a parallel group's slices touch disjoint
--- files by construction, so the members that can run have no reason to wait. Holding the
--- whole batch would turn one roster gap into a stalled group while telling the reader
--- nothing new. The review gate is where the blocked slice is accounted for.
+-- dispatched — that is what blocked means — and the tasks in a parallel group touch
+-- disjoint files by assertion, so the members that can run have no reason to wait.
+-- Holding the whole batch would turn one roster gap into a stalled group while telling
+-- the reader nothing new. The review gate is where the blocked task is accounted for.
 --
 --   SELECT member_id FROM v_batch WHERE task_id = 'TASK-003'
 DROP VIEW IF EXISTS v_batch;
@@ -1125,7 +1115,7 @@ SELECT 6, 'Waived',
 -- v_requirement_progress — the Requirements section, with live counters
 -- ------------------------------------------------------------------------------------
 -- `tasks_open` counts todo + in-progress + BLOCKED. That is the number to look at before
--- closing a requirement: a requirement completed over a blocked task ships a slice nobody
+-- closing a requirement: a requirement completed over a blocked task ships work nobody
 -- ever attempted, and nothing in this schema will stop you (see "what this file cannot
 -- enforce", item 2). `failed` is excluded from `tasks_open` because a human has already
 -- ruled on it.
@@ -1526,7 +1516,7 @@ UNION ALL SELECT 23, 'events_since_checkin',
 --   * `graph_node` INSERTS — instantiating one requirement's graph writes dozens of nodes
 --     in a breath. Only node STATUS CHANGES are recorded, which is the part that means
 --     something moved.
---   * `graph_edge`, `task_dependency`, `plan_slice`, `inspection_coverage` — structure,
+--   * `graph_edge`, `task_dependency`, `inspection_coverage` — structure,
 --     written once at creation time alongside a parent that IS instrumented.
 --
 -- THE ACTOR IS `guild_state.actor`, defaulting to 'orchestrator'. Set it at the top of

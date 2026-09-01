@@ -6,7 +6,7 @@ no writable paths. Read one with SQL; the columns are documented in
 
 ```sql
 SELECT json_object('id', id, 'status', status, 'req', requirement_id, 'plan', plan_id,
-                   'slice', COALESCE(plan_slice, ''), 'group', COALESCE(parallel_group, ''),
+                   'files', json(files), 'group', COALESCE(parallel_group, ''),
                    'agent', COALESCE(agent, ''), 'claimed_by', COALESCE(claimed_by, ''),
                    'priority', priority, 'title', title)
   FROM task WHERE id = 'TASK-001';
@@ -122,7 +122,7 @@ SELECT id, who, waived, reason, title FROM v_failed_tasks;
 
 `parallel_group` is a **safety assertion by the architect**, not a dependency graph: "these
 tickets touch disjoint files and neither needs the other's output". The disjointness lives in
-`plan_slice.files` and **nothing verifies it** — a collision found afterwards is a bug filed
+`task.files` and **nothing verifies it** — a collision found afterwards is a bug filed
 for the repairs gate.
 
 Dependencies are a different table. `task_dependency` holds **direct predecessors only** —

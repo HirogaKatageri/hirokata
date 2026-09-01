@@ -7,7 +7,7 @@
 **Shape:** approve the plan, then run to completion.
 
 ```
-gate-plan ─▶ implement (× slices) ─▶ test-plan ─▶ test-write ─▶ review (× 4) ─▶ gate-repairs ─▶ repair
+gate-plan ─▶ implement (× tickets) ─▶ test-plan ─▶ test-write ─▶ review (× 4) ─▶ gate-repairs ─▶ repair
    GATE                                                                            GATE
    └──────────────── segment 1: runs without stopping ──────────────┘              └─ segment 2 ─┘
 ```
@@ -22,14 +22,14 @@ Use it for every requirement that produces code. For inspecting code that alread
 | # | node key | kind | after | fan-out | may run in parallel | required |
 |---|----------|------|-------|---------|---------------------|----------|
 | 1 | `gate-plan` | gate | — | none, always one | n/a | yes |
-| 2 | `implement` | work | `gate-plan` | one node **per plan slice** | slices sharing a `parallel_group` | yes |
+| 2 | `implement` | work | `gate-plan` | one node **per implement ticket** | tickets sharing a `parallel_group` | yes |
 | 3 | `test-plan` | work | `implement` (all of them) | none, always one | no | no |
 | 4 | `test-write` | work | `test-plan` | one **anchor**, tickets underneath | no | no |
 | 5 | `review` | work | `test-write` | **fixed at 4 named reviewers** | all four together | yes |
 | 6 | `gate-repairs` | gate | `review` (all four) | none, always one | n/a | yes |
 | 7 | `repair` | work | `gate-repairs` | one **anchor**, tickets underneath | tickets sharing a `parallel_group` | no |
 
-With *N* plan slices that is **N + 9 nodes and 2N + 10 edges**. Two slices → 11 nodes, 14
+With *N* implement tickets that is **N + 9 nodes and 2N + 10 edges**. Two tickets → 11 nodes, 14
 edges, 2 gate rows. That is the number to check your INSERT against.
 
 ---
@@ -41,7 +41,7 @@ edges, 2 gate rows. That is the number to check your INSERT against.
 Prompt: `Plan for {requirement} is ready for review. Approve implementation?`
 Gate kind: `approve`.
 
-Produces nothing. It *is* the decision. Everything downstream — how many slices, which
+Produces nothing. It *is* the decision. Everything downstream — how many tickets, which
 reviewers, what gets tested — was already written by the time this gate is presented; the guild
 master is approving a plan they can read, not authorizing an unknown.
 
@@ -49,16 +49,17 @@ The plan is the cheapest place to change your mind. One decision here redirects 
 requirement. That is why it is the first node and why there is no second chance to redirect
 before `gate-repairs`.
 
-### `implement` — one node per plan slice
+### `implement` — one node per implement ticket
 
-Capability: `implement`. Produces: **working code and a passing build for one slice.**
+Capability: `implement`. Produces: **working code and a passing build for one ticket.**
 
-Fan-out is `per-slice`: read `plan_slice` for the requirement's plan and emit one node per
-slice, id `REQ-NNN/implement.<slug>`. Each node binds the ticket carrying that slice, and
-inherits that ticket's `parallel_group`.
+Fan-out is `per-task`: read the requirement's tickets where `node_key = 'implement'` and emit one
+node per ticket, id `REQ-NNN/implement.<TASK-ID>`. Each node binds that ticket and inherits its
+`parallel_group`.
 
-**The one guard that is not obvious.** If the plan has no slices yet — which is the state every
-board is in for the first few minutes — emit **one unfanned node** `REQ-NNN/implement` instead.
+**The one guard that is not obvious.** If the plan has no implement tickets yet — which is the
+state every board is in for the first few minutes — emit **one unfanned node**
+`REQ-NNN/implement` instead.
 The two INSERTs below are mutually exclusive by construction. Never let a template key end up
 with zero rows; see §5.
 
@@ -67,7 +68,7 @@ with zero rows; see §5.
 Capability: `test-planning`. Produces: **a test declaration** — which behaviours need covering,
 at what level, in how many specs.
 
-It waits for **every** `implement.<slice>` node, because it inventories the whole diff. That is
+It waits for **every** `implement.<TASK-ID>` node, because it inventories the whole diff. That is
 what the cross-join edge INSERT gives you for free: one statement, `implement` × `test-plan`,
 and a fanned predecessor becomes a real barrier.
 
@@ -117,7 +118,7 @@ into the guild master's time, which is the resource the whole template is built 
 Capability: `implement`. Produces: **fixes for the approved findings only.**
 
 Nominally `per-approved-finding`; same anchor rule as `test-write`. Tickets inherit the
-`parallel_group` of the slice they touch, so disjoint repairs still run concurrently.
+`parallel_group` of the ticket they repair, so disjoint repairs still run concurrently.
 
 ---
 
@@ -128,12 +129,12 @@ the same non-null label form one batch. A NULL label means "run me alone".
 
 | node | label written at instantiation | effect |
 |---|---|---|
-| `implement.<slug>` | the slice ticket's own `parallel_group` | slices the architect declared disjoint run together |
+| `implement.<TASK-ID>` | the implement ticket's own `parallel_group` | tickets the architect declared disjoint run together |
 | `review.<agent>` | the literal `'review'` | all four reviewers in one wave |
 | everything else | `NULL` | serial |
 
-**The disjointness assertion belongs to the architect, not to the database.** `plan_slice.files`
-is where you record which files a slice owns; if two slices share a file, give them different
+**The disjointness assertion belongs to the architect, not to the database.** `task.files`
+is where you record which files a ticket owns; if two tickets share a file, give them different
 `parallel_group` values and they serialize. Nothing in the schema checks this for you. If you
 are unsure, use different groups — a wrong serialization costs time, a wrong parallelization
 costs a merge conflict inside an unattended shift.
@@ -180,12 +181,12 @@ VALUES ('REQ-007', 'add-node', 'research',
 | **A gate may be neither dropped nor added** | §4. `add-gate` is refused outright, whatever the reason. |
 | **Every deviation carries a non-empty reason** | Whitespace-only is empty. A graph with unexplained divergence cannot be diffed against a baseline when a run goes wrong — you end up staring at a bespoke graph with no way to tell intent from accident. |
 | **An `add-node` must name a capability the roster has** | Otherwise you get a graph that cannot run: a node no active member can be matched to, discovered at dispatch time in the middle of a shift. Check before you insert (§8). |
-| **Every template key gets at least one node** | This is what makes "dropped" unambiguous. A key with zero rows was dropped — full stop, with no *"unless its fan-out happened to be empty"* caveat to hide behind. It is also why `implement` has a no-slices fallback and why the anchors exist. |
+| **Every template key gets at least one node** | This is what makes "dropped" unambiguous. A key with zero rows was dropped — full stop, with no *"unless its fan-out happened to be empty"* caveat to hide behind. It is also why `implement` has a no-tickets fallback and why the anchors exist. |
 
 **Legitimate deviations look like:** a `research` node ahead of `implement` for an unfamiliar
 API; dropping `test-plan` and going straight to `test-write` for a docs-only change; fanning
 `review` to six with a performance and an accessibility reviewer for a UI-heavy requirement;
-splitting `implement` into three sequential waves because the slices are not disjoint.
+splitting `implement` into three sequential waves because the file sets are not disjoint.
 
 ### What is enforced and what is convention — read this before you trust it
 
@@ -242,31 +243,22 @@ INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_gr
 SELECT 'REQ-007/gate-plan', r.id, 'gate-plan', 'gate', NULL, NULL, 'pending'
 FROM requirement r WHERE r.id = 'REQ-007';
 
--- 2a. implement — one node per plan slice, bound to that slice's ticket ---------
+-- 2a. implement — one node per implement ticket, bound to that ticket ----------
 INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
-SELECT 'REQ-007/implement.' || s.slug, r.id, 'implement', 'work',
-       (SELECT MIN(t.id) FROM task t
-         WHERE t.requirement_id = r.id
-           AND (t.plan_slice_id = s.id
-                OR (t.plan_slice_id IS NULL AND t.plan_slice = s.slug))),
-       (SELECT MIN(t.parallel_group) FROM task t
-         WHERE t.requirement_id = r.id
-           AND (t.plan_slice_id = s.id
-                OR (t.plan_slice_id IS NULL AND t.plan_slice = s.slug))),
-       'pending'
+SELECT 'REQ-007/implement.' || t.id, r.id, 'implement', 'work',
+       t.id, t.parallel_group, 'pending'
 FROM requirement r
-JOIN plan p ON p.requirement_id = r.id
-JOIN plan_slice s ON s.plan_id = p.id
+JOIN task t ON t.requirement_id = r.id AND t.node_key = 'implement'
 WHERE r.id = 'REQ-007';
 
--- 2b. implement — the fallback when the plan has no slices yet.
+-- 2b. implement — the fallback when the plan has no implement tickets yet.
 --     Mutually exclusive with 2a by construction. Together they are what makes
 --     "every template key gets at least one node" true.
 INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
 SELECT 'REQ-007/implement', r.id, 'implement', 'work', NULL, NULL, 'pending'
 FROM requirement r WHERE r.id = 'REQ-007'
-  AND NOT EXISTS (SELECT 1 FROM plan p JOIN plan_slice s ON s.plan_id = p.id
-                   WHERE p.requirement_id = r.id);
+  AND NOT EXISTS (SELECT 1 FROM task t
+                   WHERE t.requirement_id = r.id AND t.node_key = 'implement');
 
 -- 3. test-plan -----------------------------------------------------------------
 INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
@@ -302,7 +294,7 @@ FROM requirement r WHERE r.id = 'REQ-007';
 
 -- EDGES: one statement per (predecessor key, successor key) pair.
 -- A CROSS JOIN over the INSTANCES of the two keys, so a fanned predecessor becomes a
--- real barrier: test-plan waits for every implement.<slice>. Template-sized, never
+-- real barrier: test-plan waits for every implement.<TASK-ID>. Template-sized, never
 -- board-sized: six statements whatever N is.
 INSERT INTO graph_edge (from_node, to_node)
 SELECT f.id, t.id FROM graph_node f, graph_node t
@@ -385,7 +377,7 @@ ORDER BY batch, n.id;
 `done` **and** `skipped` both count as finished. A node the architect deliberately skipped must
 not hold its successors forever; that is the graph's spelling of `task.waived`.
 
-If the warehouse schema ships a `v_ready_node` view, **select from it instead of re-typing this
+The warehouse schema ships `v_ready_nodes` — **select from it instead of re-typing this
 predicate.** Two spellings of readiness is two answers to "what runs next".
 
 ```sql
@@ -449,7 +441,7 @@ Before an `add-node` deviation, confirm the capability exists on an active membe
 ```sql
 SELECT 'NO MEMBER FOR: ' || 'perf-profiling'
 WHERE NOT EXISTS (SELECT 1 FROM agent_capability ac JOIN agent a ON a.name = ac.agent
-                   WHERE ac.capability = 'perf-profiling' AND a.status = 'active');
+                   WHERE ac.capability = 'perf-profiling' AND a.active = 1);
 ```
 
 Node counts, as a sanity check against the numbers in §1:

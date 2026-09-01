@@ -41,7 +41,7 @@ string literal.
 An **inline** semicolon is harmless — `VALUES('has; inline')` inserts fine. It is
 specifically a `;` at end-of-line.
 
-**Why it matters more than it looks.** Requirement bodies, plan slices, work-log entries
+**Why it matters more than it looks.** Requirement bodies, plan bodies, work-log entries
 and review findings routinely quote code. Code has lines ending in `;`. So this fires in
 ordinary use, not adversarial use — and it fired **silently for three review rounds**,
 because (see below) tursodb writes the parse error to *stdout*, where a caller doing

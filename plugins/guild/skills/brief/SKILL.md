@@ -145,7 +145,7 @@ open. Do not announce empty categories, and do not invent one.
 {"id":"TASK-005","req":"REQ-001","status":"blocked",
  "reason":"no-eligible-agent:implement,rust","title":"Port the codec to Rust"}
 {"cap":"rust","req":"REQ-001","proposed":"developer-rust","covered":0,
- "why":"Three plan slices are Rust crates; developer has no Rust idiom guidance."}
+ "why":"Three implement tickets are Rust crates; developer has no Rust idiom guidance."}
 ```
 
 - **`## blocked` is `id · req · status · reason · title`,** and `reason` is one blank-free

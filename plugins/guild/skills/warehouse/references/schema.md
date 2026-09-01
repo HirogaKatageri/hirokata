@@ -10,7 +10,7 @@ Twenty-five tables. They fall into seven groups:
 |---|---|
 | bookkeeping | `schema_version` · `guild_state` |
 | direction | `goal` · `phase` |
-| work | `requirement` · `plan` · `plan_slice` · `task` · `task_dependency` |
+| work | `requirement` · `plan` · `task` · `task_dependency` |
 | roster | `agent` · `agent_capability` · `task_capability` · `capability_request` |
 | execution graph | `graph_node` · `graph_edge` · `graph_deviation` · `gate` |
 | records | `work_log` · `review_finding` · `bug` |
@@ -19,9 +19,9 @@ Twenty-five tables. They fall into seven groups:
 The spine is one containment chain:
 
 ```
-goal → phase → requirement → plan → plan_slice
-                    ↓                    ↓
-                   task ─────────────────┘
+goal → phase → requirement → plan
+                    ↓           ↓
+                   task ────────┘
                     ↓
         work_log · review_finding · task_dependency · task_capability
 ```
@@ -58,7 +58,7 @@ phase not yet done — and its requirement counts.
 
 ---
 
-## Work — `requirement`, `plan`, `plan_slice`, `task`, `task_dependency`
+## Work — `requirement`, `plan`, `task`, `task_dependency`
 
 **`requirement`** — the unit the guild master asks for. `body` holds the full REQ markdown.
 `phase_id` is **nullable**: unaffiliated work is legal and normal.
@@ -66,10 +66,8 @@ phase not yet done — and its requirement counts.
 **`plan`** — the architect's implementation plan for a requirement. `task_id` is optional
 and means "a plan written FOR one ticket" rather than for the whole requirement.
 
-**`plan_slice`** — a parallelizable unit of a plan. Its id is conventionally
-`PLAN-001/auth-service`. `files` is a JSON array. **The disjointness of those file sets
-across slices is an assertion by the architect, not a constraint** — it is the promise that
-lets the slices run concurrently, and nothing verifies it.
+There is no intermediate row between a plan and its tickets. The decomposition lands on the
+tickets, and `task.files` carries the file set each one owns.
 
 **`task`** — the ticket. The one table with a six-word status vocabulary, and each word buys
 something specific:
@@ -94,8 +92,11 @@ Two agent columns, and they are different things:
 - **`claimed_by`** — who actually took it, `REFERENCES agent(name)`. Set it with
   `claimed_at` when you claim.
 
-`parallel_group` groups tickets that dispatch together (`v_batch`). `plan_slice_id` /
-`plan_slice` / `node_key` are the back-references to where the ticket came from.
+`parallel_group` groups tickets that dispatch together (`v_batch`); `node_key` is the
+back-reference to the template node that produced the ticket. **`files`** is a JSON array of
+the paths this ticket owns, and **the disjointness of those sets across a `parallel_group` is
+an assertion by the architect, not a constraint** — it is the promise that lets the group run
+concurrently in one working tree, and nothing verifies it.
 
 **`task_dependency`** — **direct predecessors only.** There is no transitive closure
 anywhere in this schema and there must not be one: readiness propagates a hop at a time as
@@ -214,7 +215,7 @@ cannot be written is worse than an unfamiliar one. Payload is JSON; a status cha
 - `priority BETWEEN 1 AND 5`; `active`/`serial`/`required` are 0 or 1.
 - The capability **alphabet**: lowercase letters, digits, `-`, 1–64 chars, starting with a
   letter.
-- `json_valid()` on `plan_slice.files` and `event.payload`.
+- `json_valid()` on `task.files` and `event.payload`.
 - `graph_deviation.reason` is non-empty; `task_dependency` and `graph_edge` reject
   self-reference; `schema_version.id = 1`.
 
@@ -224,7 +225,7 @@ cannot be written is worse than an unfamiliar one. Payload is JSON; a status cha
 stamped. You cannot forget to. Deliberately *not* instrumented: capability rows (a roster
 sync rewrites them all and would bury the feed), `graph_node` inserts (only status changes
 mean something moved), and pure-structure tables (`graph_edge`, `task_dependency`,
-`plan_slice`, `inspection_coverage`).
+`inspection_coverage`).
 
 **Views** — one definition per rule. Read them instead of rewriting them.
 
@@ -242,7 +243,7 @@ convention:
 3. **The `failed`-task waiver is a work-log line's PREFIX**, matched with `LIKE`. It is a
    marker, not a column. Nothing stops a stray log line from looking like one — though the
    waiver is only ever consulted for a ticket already at `failed`.
-4. **Plan slices touch disjoint files.** An assertion in `plan_slice.files`. Nothing checks
+4. **Concurrently dispatched tickets touch disjoint files.** An assertion in `task.files`. Nothing checks
    it.
 5. **A capability must be in the vocabulary.** A CHECK cannot reference another table, so an
    unknown capability inserts fine and simply **matches nobody, silently, forever**.

@@ -74,7 +74,7 @@ It is a label, not an identity — nothing authenticates it.
   it when you are deciding *where a piece of information belongs*, or when you need to
   know whether something is actually guaranteed.
 - **`references/queries.md`** — the canonical, verified queries: creating a requirement /
-  plan / slice / task / bug / doc with derived ids, moving something through status, the
+  plan / task / bug / doc with derived ids, moving something through status, the
   daily reads (board, brief, bounties, what moved), the execution graph, and the roster
   and matcher. Load it when you are about to write SQL. Copy from it rather than
   improvising.

@@ -96,14 +96,15 @@ Build the **Changed Files Inventory** — the definitive list of what developmen
      WHERE t.requirement_id='REQ-NNN' AND t.status='done'
      ORDER BY w.task_id, w.id;\n" | tursodb -q -m list "$DB"
    ```
-2. Read the slice rows for the same requirement — `files` is the architect's declared file set
-   per slice, which is the other half of the inventory:
+2. Read the implement tickets for the same requirement — `files` is the architect's declared file
+   set per ticket, which is the other half of the inventory:
    ```bash
-   printf "SELECT json_object('slice',s.id,'slug',s.slug,'files',json(s.files))
-      FROM plan_slice s JOIN plan p ON p.id = s.plan_id
-     WHERE p.requirement_id='REQ-NNN' ORDER BY s.id;\n" | tursodb -q -m list "$DB"
+   printf "SELECT json_object('task',t.id,'title',t.title,'files',json(t.files))
+      FROM task t
+     WHERE t.requirement_id='REQ-NNN' AND t.node_key='implement' ORDER BY t.id;\n" \
+     | tursodb -q -m list "$DB"
    ```
-   **It is an assertion, not a constraint** — nothing checks that a slice touched only what it
+   **It is an assertion, not a constraint** — nothing checks that a ticket touched only what it
    claimed. Cross-check it against the work logs and against `git diff --stat`; where they
    disagree, the git diff is what actually happened.
 3. Skim the changed source files enough to identify testable units and integration seams — do not read the whole codebase.
@@ -129,8 +130,8 @@ Prioritize: cover critical-path and failure-prone logic first; skip trivial code
 Compose it here, in full, into a **file** (`/tmp/test-plan.md`), because you will write the same
 text to two places from the same bytes and they must not drift:
 
-1. the **`plan_slice` row** `PLAN-NNN/test-plan` — the durable record, and where the reviewers
-   read the Changed Files Inventory from;
+1. a **`plan` row written FOR your ticket** (`task_id = $T`) — the durable record, and where the
+   reviewers read the Changed Files Inventory from;
 2. the **`objective`** of each test-writer ticket you create in step 6 — the field the test-writer
    actually works from.
 
@@ -175,30 +176,35 @@ would tear the statement if they crossed as a literal.
 - {anything intentionally untested, with reason}
 ```
 
-### 6. Write the Plan Slice, Create the Test-Writer Ticket(s), Log Your Work
+### 6. Write the Test Plan, Create the Test-Writer Ticket(s), Log Your Work
 
 **Create them yourself, right now, in this session.** v4 had you declare them in a "Follow-up
 Tasks" section of your ticket file for the orchestrator to materialize later; there is no ticket
 file, so a declaration would go nowhere.
 
-**6a. The slice row** — one upsert, so re-running after a correction fixes rather than duplicates:
+**6a. The test-plan row** — a `plan` row bound to your ticket by `task_id`, upserted so that
+re-running after a correction fixes rather than duplicates:
 
 ```bash
 hex=$(xxd -p < /tmp/test-plan.md | tr -d '\n')
 ttl=$(printf '%s' "{Feature} test plan" | xxd -p | tr -d '\n')
 { printf "PRAGMA foreign_keys = ON;\n"
-  printf "INSERT INTO plan_slice (id, plan_id, slug, title, body, files)
-          SELECT p.id || '/test-plan', p.id, 'test-plan', CAST(x'$ttl' AS TEXT),
-                 CAST(x'$hex' AS TEXT), json_array()
-            FROM plan p WHERE p.id='PLAN-NNN'
-          ON CONFLICT(id) DO UPDATE SET title = excluded.title, body = excluded.body
+  printf "INSERT INTO plan (id, requirement_id, task_id, title, body, created_at, updated_at)
+          SELECT 'PLAN-' || printf('%%03d',
+                   (SELECT COALESCE(MAX(CAST(substr(id, instr(id,'-')+1) AS INTEGER)),0)+1
+                      FROM plan)),
+                 t.requirement_id, t.id, CAST(x'$ttl' AS TEXT), CAST(x'$hex' AS TEXT),
+                 strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now'),
+                 strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now')
+            FROM task t WHERE t.id='$T'
           RETURNING id;\n"
-} | tursodb -q -m list "$DB"
+} | tursodb -q -m list "$DB"        # → PLAN-0NN
 ```
 
-`files` stays an empty array: it is the **implementation** disjointness assertion, and a test plan
-does not claim source files. `FROM plan p WHERE p.id='PLAN-NNN'` is the referential check — a bad
-plan id yields zero rows and no partial write.
+`task_id` is what makes this "a plan written FOR one ticket" rather than a second implementation
+plan — it is how the reviewers find it. `FROM task t WHERE t.id='$T'` is the referential check: a
+bad ticket id yields zero rows and no partial write. Re-running creates a second row, so if you
+must correct it, `UPDATE plan SET body = ... WHERE task_id='$T'` instead.
 
 **6b. The ticket(s).** Declare the **capability**, not a member — that is what lets the matcher
 route it and what makes a roster gap visible. `test-authoring` reaches `test-writer` today:
@@ -206,12 +212,12 @@ route it and what makes a roster gap visible. `test-authoring` reaches `test-wri
 ```bash
 ttitle=$(printf '%s' "Write unit tests for {feature}" | xxd -p | tr -d '\n')
 { printf "PRAGMA foreign_keys = ON;\n"
-  printf "INSERT INTO task (id, requirement_id, plan_id, plan_slice_id, plan_slice,
+  printf "INSERT INTO task (id, requirement_id, plan_id, files,
                             node_key, title, objective, priority, created_at, updated_at)
           SELECT 'TASK-' || printf('%%03d',
                    (SELECT COALESCE(MAX(CAST(substr(id, instr(id,'-')+1) AS INTEGER)),0)+1
                       FROM task)),
-                 r.id, 'PLAN-NNN', 'PLAN-NNN/test-plan', 'test-plan', 'test-write',
+                 r.id, 'PLAN-NNN', json_array(), 'test-write',
                  CAST(x'$ttitle' AS TEXT), CAST(x'$hex' AS TEXT), 2,
                  strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now'),
                  strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now')
@@ -265,7 +271,7 @@ e3=$(printf '%s' "All acceptance criteria mapped: {yes/no — gaps noted in the 
 ```
 
 **Report completion in your final message** (done), naming the ticket IDs you created and the
-slice id `PLAN-NNN/test-plan`. Do NOT move your own ticket, and do NOT move the tickets you
+test plan's `PLAN-NNN` id. Do NOT move your own ticket, and do NOT move the tickets you
 created — the orchestrator owns status transitions.
 
 ## What NOT to Do

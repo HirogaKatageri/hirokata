@@ -255,8 +255,8 @@ Two things change because nobody is watching:
   the questions to `work_log` so they are in the record. They surface at `gate-repairs`.
   **Never answer on the user's behalf.**
 - **A parallel file collision stops the shift.** `guild:check-in` files a bug and keeps going; a
-  shift may not. Two slices writing the same file means the architect's disjoint-file assertion
-  in `plan_slice.files` was wrong, and reconciling a tree nobody is watching is not safely
+  shift may not. Two tickets writing the same file means the architect's disjoint-file assertion
+  in `task.files` was wrong, and reconciling a tree nobody is watching is not safely
   automatable. File the bug, fail the batch's nodes, **leave the tree exactly as it is**, and end
   the shift with reason `collision`.
 
@@ -266,12 +266,12 @@ One commit per completed task is what makes a bad overnight run bisectable and r
 by task, and the commit log a second record of the shift beside the `event` feed.
 
 ```bash
-# on done — commit ONLY that task's files (the plan slice's own file list)
+# on done — commit ONLY that task's files (its own `task.files` list)
 git add -- src/lib/auth.ts src/routes/login/+page.server.ts
 git commit -m "$(printf 'feat(auth): session-backed login\n\nGuild-Task: TASK-001\nGuild-Requirement: REQ-001\n')"
 ```
 
-Stage the plan slice's declared files by path. Fall back to `git add -A` **only** when no other
+Stage the ticket's declared `files` by path. Fall back to `git add -A` **only** when no other
 finished task of this requirement is uncommitted — otherwise the diff is mis-attributed to
 whichever task happened to commit first.
 
@@ -384,7 +384,7 @@ increments never decrements.
 | 3 | `max-tasks` | `used >= max_tasks` |
 | 4 | `max-minutes` | `minutes >= max_minutes` |
 | 5 | `idle` | no candidate has ready work and no gate is waiting either |
-| 6 | `collision` | two slices wrote the same file — only you can see this |
+| 6 | `collision` | two tickets wrote the same file — only you can see this |
 | 7 | `operator` | the user ended it |
 
 `gate` outranks the ceilings deliberately: if both are true at once, "a decision is waiting" is
@@ -448,13 +448,13 @@ present, then hand it back:
 ```sql
 SELECT body FROM requirement WHERE id = 'REQ-NNN';          -- one column: byte-exact
 SELECT body FROM plan WHERE requirement_id = 'REQ-NNN';
-SELECT json_object('slice', id, 'files', files) FROM plan_slice
- WHERE plan_id IN (SELECT id FROM plan WHERE requirement_id = 'REQ-NNN');
+SELECT json_object('task', id, 'group', COALESCE(parallel_group,''), 'files', files)
+  FROM task WHERE requirement_id = 'REQ-NNN' AND node_key = 'implement';
 SELECT id, capability, proposed_agent, rationale FROM capability_request WHERE status = 'open';
 SELECT id, node_key, kind, status FROM graph_node WHERE requirement_id = 'REQ-NNN' ORDER BY id;
 ```
 
-Present the plan, its slices, and **every open capability request by name** — each is a member
+Present the plan, its tickets and their file sets, and **every open capability request by name** — each is a member
 the architect proposed and the guild does not have, and approving the plan is also approving the
 recruiting. Then say plainly: *this is yours to approve; `/guild:new-requirement` is where it
 happens.* Stop.

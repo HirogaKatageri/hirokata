@@ -246,7 +246,7 @@ The charter is **evergreen** — update it in place on later passes, never clobb
 ### 5. Decompose into Missions
 
 Split the coverage matrix into scoped **missions**, one per coverage area (or a
-cohesive slice). Each mission is self-contained — the tester reads only its
+cohesive group of them). Each mission is self-contained — the tester reads only its
 mission to work. Write each to `.guild/qa/missions/MISSION-{slug}.md` (format in
 the `guild:qa-artifacts` skill), naming the file after the coverage area id and
 carrying that id in its `coverage:` frontmatter field, so the tester can go from a

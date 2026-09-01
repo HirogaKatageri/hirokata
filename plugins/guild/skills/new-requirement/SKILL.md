@@ -7,7 +7,7 @@ description: >
   guild board. Runs a live 3-way interview between the product-owner, the
   architect, and the user, places the requirement in the guild's direction (or
   deliberately leaves it unaffiliated), then writes the requirement, the
-  implementation plan and its slices, the developer/test-planner/reviewer tickets,
+  implementation plan, the developer/test-planner/reviewer tickets,
   and the requirement's execution graph — and ends at `gate-plan`, where the guild
   master approves the plan before anything is built.
 version: 5.0.0
@@ -24,13 +24,13 @@ arguments:
 # New Requirement — Add Work to the Guild
 
 Run the product-owner and architect through a live interview with the user, then hand the board
-a fully-planned requirement: the requirement itself, an implementation plan and its slices, every
+a fully-planned requirement: the requirement itself, an implementation plan, every
 ticket needed to build it, and the **execution graph** that says what runs when. Unlike the rest
 of the guild's pipeline, none of this is ticket-dispatched — you (the orchestrator) spawn both
 agents directly and moderate the conversation until the user says it's done.
 
 **Load `guild:warehouse` first.** There is no guild CLI: `tursodb` is the tool and every write
-below is SQL. The canonical statements — creating a requirement, a plan, a slice, a ticket with
+below is SQL. The canonical statements — creating a requirement, a plan, a ticket with
 its capabilities, instantiating a graph — are in `references/queries.md`; copy from there rather
 than improvising.
 
@@ -221,14 +221,14 @@ Agent(
            v_capability_vocabulary before you finish: an unknown capability matches nobody,
            silently. If the plan needs a capability the guild lacks, INSERT the
            capability_request first, then raise it as a `NEEDS INPUT: ROSTER GAP` block and
-           hold that slice's ticket until I answer. You may not create an agent file; only the
+           hold that ticket until I answer. You may not create an agent file; only the
            guild master can.
-           Your deliverable is the full set: the plan, its SLICES with each slice's `files`
+           Your deliverable is the full set: the plan, the TICKETS with each ticket's `files`
            JSON array — that is the disjoint-file assertion parallel dispatch depends on —
-           the tickets with their capabilities and parallel groups, and then the EXECUTION
+           their capabilities and parallel groups, and then the EXECUTION
            GRAPH: graph_node + graph_edge + gate rows instantiated from
            guild:warehouse references/templates/standard.md per queries.md §4, with a
-           graph_deviation row (carrying a REASON) for every departure from it. Slices and
+           graph_deviation row (carrying a REASON) for every departure from it. The
            tickets must exist BEFORE the graph, because the nodes bind to them. Declare every
            edge BACKWARDS in template order — to_node declared after from_node — that is the
            only cycle protection there is. You may not add or drop a gate.
@@ -268,7 +268,7 @@ round-robin.
   `SELECT body FROM requirement WHERE id = '{REQ}'` and proceed to Design and Write the Plan."
   Keep relaying further `NEEDS INPUT` rounds until it reports done.
 
-**Architect reports done:** it reports the PLAN id, the slices, the ticket ids, and **the
+**Architect reports done:** it reports the PLAN id, the ticket ids and their file sets, and **the
 graph** — which template, how many nodes, and every deviation with its reason. It wrote all of
 that itself; you do not re-create any of it. Go to Step 6.7 and check the graph yourself before
 you take anything to the user.
@@ -320,7 +320,7 @@ like goals and phases.
 > on a "reasonable inference". An agent file is a permanent addition to the guild.
 
 **Why live rather than at `gate-plan`.** The request is a permanent record and it **also**
-surfaces at `gate-plan` with the plan — but the architect cannot write the affected slice's
+surfaces at `gate-plan` with the plan — but the architect cannot write the affected
 ticket until it knows the answer, and its session does not survive the gate.
 
 **1. Read the gap back before you ask.** The architect's block is a claim; this is the record:
@@ -338,7 +338,7 @@ question body so the decision is informed:
 |---|---|
 | **Create `{proposed-agent}`** | The guild grows a permanent new member. The next requirement needing this capability finds it already there. |
 | **Assign to `{existing member}` anyway** | The work goes to a generalist. The gap stays on the record, because the guild still cannot do this work well. |
-| **Revise the plan** | The architect re-slices so the capability is not needed. Collect what the user wants changed. |
+| **Revise the plan** | The architect redraws the tickets so the capability is not needed. Collect what the user wants changed. |
 
 **3a. On "create":**
 
@@ -402,7 +402,7 @@ later and neither is:
   still dispatchable: `v_task_top_agent` returns the pin, and check-in dispatches on it.
 
 **3c. On "revise the plan":** `SendMessage` the architect what the user wants changed and let it
-re-slice. The same note about the request staying open applies.
+redraw them. The same note about the request staying open applies.
 
 **4. Never do any of these:** write an agent file the user did not approve; file the
 `capability_request` yourself (the architect files it — you resolve it); create or re-create a
@@ -474,7 +474,7 @@ plan` away if they want it:
 
 ```
 REQ-007 — Session-backed authentication
-  Plan: PLAN-004 · 3 slices (auth-service, session-store, migrations) — file sets disjoint
+  Plan: PLAN-004 · 3 implement tickets (auth-service, session-store, migrations) — file sets disjoint
   Graph: standard · 9 nodes · 1 deviation
     + research (before implement) — "the payments provider's webhook API is undocumented
       in the repo and no doc row covers it"
@@ -542,7 +542,7 @@ Requirement planned!
   Requirement: {REQ} — {title}
   Direction: {PHASE-NNN — phase title (GOAL-NNN — goal title)}
              (or "unaffiliated — not attached to a goal")
-  Plan: {PLAN-NNN} — {N} slices (or "none — simple fix, no plan needed")
+  Plan: {PLAN-NNN} — {N} implement tickets (or "none — simple fix, no plan needed")
   Graph: {standard · N nodes · N deviations} (or "none — simple fix, no graph")
   Tickets created: {list of TASK-NNN — title (needs: cap,cap | pinned to NAME)}
   Roster: {"developer-rust added on your approval — 15 members" | omit the line}
@@ -575,7 +575,7 @@ is not a surprise later:
 Run `guild:validate new-requirement` before you report. §4 of `docs/expectations.md` asserts
 what this skill is for: §4.a that nothing moved and nothing was claimed, §4.b that
 `v_ready_nodes` offers **exactly one** row and it is `gate-plan`, §4.c the node/edge/gate
-arithmetic (`N+9`, `2N+10`, `2`), §4.d the plan, its slices and the four-way review fan-out.
+arithmetic (`N+9`, `2N+10`, `2`), §4.d the plan, its tickets and the four-way review fan-out.
 **Report every failure with its rows.** A silently torn INSERT exits `1` and looks like
 success — §4.b is the strongest single statement that nothing can be built yet.
 
@@ -614,10 +614,10 @@ success — §4.b is the strongest single statement that nothing can be built ye
   the architect may flag a mismatch; neither of them writes one.
 - **A requirement with no phase is a finished requirement.** `phase_id` is nullable by design.
   Never block, re-ask, or apologise because the user left one unaffiliated.
-- **Slices, capabilities and parallel groups are the architect's to set.** `plan_slice.files` is
+- **File sets, capabilities and parallel groups are the architect's to set.** `task.files` is
   the disjointness assertion parallel dispatch depends on, and **nothing verifies it** — if a
-  slice is missing or its file set is wrong, that is a message to the architect, not an edit you
-  make.
+  ticket is missing or its file set is wrong, that is a message to the architect, not an edit
+  you make.
 - **A capability request is closed by recruiting, not by withdrawal.** Only an admitted agent
   moves it `open → created`; `declined` keeps the word out of the vocabulary entirely. Say
   plainly when a gap is being left open rather than letting it appear unexplained in the next

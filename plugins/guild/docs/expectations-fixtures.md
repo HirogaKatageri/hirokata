@@ -181,7 +181,7 @@ SELECT (SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table')   AS tables,
 25|26|43|5|17|0
 ```
 
-25 tables, 26 views, 43 triggers, schema version 5, the 17 seed capability words, zero events.
+24 tables, 26 views, 43 triggers, schema version 5, the 17 seed capability words, zero events.
 A vocabulary of 17 on an empty board is the point: the words exist before any member does.
 
 **The traps this fixture sets.**
@@ -202,7 +202,7 @@ A vocabulary of 17 on an empty board is the point: the words exist before any me
 
 **Load:** `schema.sql` → `00-roster.sql` → `02-planned.sql`
 
-**What it represents.** One goal, one phase, one requirement, a plan cut into three slices, six
+**What it represents.** One goal, one phase, one requirement, a plan cut into three implement tickets, six
 tickets, and a `standard` graph instantiated over it with **`gate-plan` still `pending`**. Not
 one line of code has been written and nothing has been approved. This is the state a board is in
 for the minutes between the architect finishing and the guild master answering.
@@ -244,25 +244,20 @@ INSERT INTO plan (id, requirement_id, task_id, title, body, status, created_at, 
 VALUES ('PLAN-001', 'REQ-001', NULL, CAST(x'496d706c656d656e746174696f6e20706c616e20666f72205245512d303031' AS TEXT), '', 'todo',
         '2026-08-01T09:20:00Z', '2026-08-01T09:20:00Z');
 
-INSERT INTO plan_slice (id, plan_id, slug, title, body, files) VALUES
-  ('PLAN-001/cart-api',     'PLAN-001', 'cart-api',     CAST(x'4361727420415049' AS TEXT), '', '["src/lib/server/cart.ts","src/lib/server/cookies.ts"]'),
-  ('PLAN-001/cart-ui',      'PLAN-001', 'cart-ui',      CAST(x'43617274205549' AS TEXT), '', '["src/routes/cart/+page.svelte"]'),
-  ('PLAN-001/promo-engine', 'PLAN-001', 'promo-engine', CAST(x'50726f6d6f20656e67696e65' AS TEXT), '', '["src/lib/server/promo.ts"]');
-
-INSERT INTO task (id, requirement_id, plan_id, plan_slice_id, plan_slice, parallel_group,
+INSERT INTO task (id, requirement_id, plan_id, files, parallel_group,
                   node_key, title, objective, body, status, priority, agent,
                   claimed_by, claimed_at, created_at, updated_at) VALUES
-  ('TASK-001','REQ-001','PLAN-001','PLAN-001/cart-api','cart-api','wave-1','implement',
+  ('TASK-001','REQ-001','PLAN-001','["src/lib/server/cart.ts","src/lib/server/cookies.ts"]','wave-1','implement',
    CAST(x'436172742041504920e280942073657373696f6e20636f6f6b696520666c616773' AS TEXT),'','', 'todo',2,NULL,NULL,NULL,'2026-08-01T09:30:00Z','2026-08-01T09:30:00Z'),
-  ('TASK-002','REQ-001','PLAN-001','PLAN-001/cart-ui','cart-ui','wave-1','implement',
+  ('TASK-002','REQ-001','PLAN-001','["src/routes/cart/+page.svelte"]','wave-1','implement',
    CAST(x'4361727420554920e2809420737572666163652074686520726f746174696f6e206e6f74696365' AS TEXT),'','', 'todo',2,NULL,NULL,NULL,'2026-08-01T09:30:01Z','2026-08-01T09:30:01Z'),
-  ('TASK-003','REQ-001','PLAN-001','PLAN-001/promo-engine','promo-engine','wave-2','implement',
+  ('TASK-003','REQ-001','PLAN-001','["src/lib/server/promo.ts"]','wave-2','implement',
    CAST(x'50726f6d6f20656e67696e6520e280942072652d7369676e2070726f6d6f20746f6b656e73' AS TEXT),'','', 'todo',2,NULL,NULL,NULL,'2026-08-01T09:30:02Z','2026-08-01T09:30:02Z'),
-  ('TASK-004','REQ-001','PLAN-001',NULL,NULL,NULL,'test-plan',
+  ('TASK-004','REQ-001','PLAN-001','[]',NULL,'test-plan',
    CAST(x'4465636c617265207465737420636f76657261676520666f72205245512d303031' AS TEXT),'','', 'todo',3,NULL,NULL,NULL,'2026-08-01T09:30:03Z','2026-08-01T09:30:03Z'),
-  ('TASK-005','REQ-001','PLAN-001',NULL,NULL,NULL,'test-write',
+  ('TASK-005','REQ-001','PLAN-001','[]',NULL,'test-write',
    CAST(x'417574686f722074686520737065637320666f72205245512d303031' AS TEXT),'','', 'todo',3,NULL,NULL,NULL,'2026-08-01T09:30:04Z','2026-08-01T09:30:04Z'),
-  ('TASK-006','REQ-001','PLAN-001',NULL,NULL,'review','review',
+  ('TASK-006','REQ-001','PLAN-001','[]','review','review',
    CAST(x'526576696577205245512d303031' AS TEXT),'','', 'todo',2,'reviewer',NULL,NULL,'2026-08-01T09:30:05Z','2026-08-01T09:30:05Z');
 
 INSERT INTO task_capability (task_id, capability, required) VALUES
@@ -282,26 +277,16 @@ SELECT 'REQ-001/gate-plan', r.id, 'gate-plan', 'gate', NULL, NULL, 'pending'
 FROM requirement r WHERE r.id = 'REQ-001';
 
 INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
-SELECT 'REQ-001/implement.' || s.slug, r.id, 'implement', 'work',
-       (SELECT MIN(t.id) FROM task t
-         WHERE t.requirement_id = r.id
-           AND (t.plan_slice_id = s.id
-                OR (t.plan_slice_id IS NULL AND t.plan_slice = s.slug))),
-       (SELECT MIN(t.parallel_group) FROM task t
-         WHERE t.requirement_id = r.id
-           AND (t.plan_slice_id = s.id
-                OR (t.plan_slice_id IS NULL AND t.plan_slice = s.slug))),
-       'pending'
+SELECT 'REQ-001/implement.' || t.id, r.id, 'implement', 'work', t.id, t.parallel_group, 'pending'
 FROM requirement r
-JOIN plan p ON p.requirement_id = r.id
-JOIN plan_slice s ON s.plan_id = p.id
+JOIN task t ON t.requirement_id = r.id AND t.node_key = 'implement'
 WHERE r.id = 'REQ-001';
 
 INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
 SELECT 'REQ-001/implement', r.id, 'implement', 'work', NULL, NULL, 'pending'
 FROM requirement r WHERE r.id = 'REQ-001'
-  AND NOT EXISTS (SELECT 1 FROM plan p JOIN plan_slice s ON s.plan_id = p.id
-                   WHERE p.requirement_id = r.id);
+  AND NOT EXISTS (SELECT 1 FROM task t
+                   WHERE t.requirement_id = r.id AND t.node_key = 'implement');
 
 INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
 SELECT 'REQ-001/test-plan', r.id, 'test-plan', 'work', 'TASK-004', NULL, 'pending'
@@ -386,7 +371,7 @@ SELECT (SELECT COUNT(*) FROM graph_node WHERE requirement_id = 'REQ-001')  AS no
 12|16|2|1|0
 ```
 
-Three slices, so `standard`'s arithmetic is N+9 nodes and 2N+10 edges: **12 and 16**, exactly
+Three implement tickets, so `standard`'s arithmetic is N+9 nodes and 2N+10 edges: **12 and 16**, exactly
 the numbers `standard.md` §1 tells the architect to check the INSERT against. `gates` is 2 —
 not one, not three. `gates_waiting` is 1 because `gate-repairs` is buried behind four unfinished
 review nodes and an undecided gate nobody can reach yet is not something to ask a human about.
@@ -437,7 +422,7 @@ Two smaller ones:
 
 ---
 
-## 3. `in-flight` — approved, two slices done, one running
+## 3. `in-flight` — approved, two implement tickets done, one running
 
 **Load:** `schema.sql` → `00-roster.sql` → `02-planned.sql` → `03-in-flight.sql`
 
@@ -448,9 +433,9 @@ and 45 minutes old.
 
 **One deviation from the brief, stated plainly.** This fixture was asked for `test-plan` *ready*
 alongside an unfinished implement node. **That state is unreachable, and the schema is right to
-forbid it.** `test-plan` has an edge from every `implement.<slice>` node — that cross-join edge
+forbid it.** `test-plan` has an edge from every `implement.<task>` node — that cross-join edge
 INSERT is what turns a fanned predecessor into a real barrier — so `v_ready_nodes` cannot offer
-it while `implement.promo-engine` is `running`. Seeding it anyway would mean hand-writing a node
+it while `implement.TASK-003` is `running`. Seeding it anyway would mean hand-writing a node
 status the readiness rule contradicts, and the fixture would then be teaching the wrong lesson.
 
 So this fixture ships with **zero ready work nodes**, and that is its most useful assertion: a
@@ -494,9 +479,9 @@ INSERT INTO work_log (task_id, ts, agent, entry) VALUES
   ('TASK-002','2026-08-01T11:35:00Z','developer-svelte', CAST(x'526f746174696f6e206e6f7469636520616464656420746f20746865206361727420706167652e204275696c6420677265656e2e' AS TEXT)),
   ('TASK-003',strftime('%Y-%m-%dT%H:%M:%SZ','now','-40 minutes'),'developer', CAST(x'52652d7369676e696e67207468652070726f6d6f20746f6b656e2e20576f726b696e67207468726f75676820746865206c656761637920484d414320706174682e' AS TEXT));
 
-UPDATE graph_node SET status = 'done'    WHERE id = 'REQ-001/implement.cart-api';
-UPDATE graph_node SET status = 'done'    WHERE id = 'REQ-001/implement.cart-ui';
-UPDATE graph_node SET status = 'running' WHERE id = 'REQ-001/implement.promo-engine';
+UPDATE graph_node SET status = 'done'    WHERE id = 'REQ-001/implement.TASK-001';
+UPDATE graph_node SET status = 'done'    WHERE id = 'REQ-001/implement.TASK-002';
+UPDATE graph_node SET status = 'running' WHERE id = 'REQ-001/implement.TASK-003';
 ```
 
 **Sanity query.**
@@ -523,9 +508,9 @@ The full node state, for anyone diffing a member's understanding against the fix
 
 ```
 REQ-001/gate-plan                      done
-REQ-001/implement.cart-api             done
-REQ-001/implement.cart-ui              done
-REQ-001/implement.promo-engine         running
+REQ-001/implement.TASK-001             done
+REQ-001/implement.TASK-002              done
+REQ-001/implement.TASK-003         running
 REQ-001/test-plan                      pending
 REQ-001/test-write                     pending
 REQ-001/review.reviewer-architecture   pending
@@ -538,12 +523,12 @@ REQ-001/repair                         pending
 
 ### 3.1 Releasing the barrier
 
-Two writes finish the third slice, and `test-plan` becomes the only ready node. Run this against
+Two writes finish the third ticket, and `test-plan` becomes the only ready node. Run this against
 a copy if you want to assert that the barrier releases rather than merely that it holds:
 
 ```sql
 UPDATE task       SET status = 'done', updated_at = '2026-08-01T12:40:00Z' WHERE id = 'TASK-003';
-UPDATE graph_node SET status = 'done' WHERE id = 'REQ-001/implement.promo-engine';
+UPDATE graph_node SET status = 'done' WHERE id = 'REQ-001/implement.TASK-003';
 SELECT id, node_key FROM v_ready_nodes WHERE kind = 'work';
 ```
 
@@ -584,7 +569,7 @@ PRAGMA foreign_keys = ON;
 UPDATE guild_state SET value = 'orchestrator' WHERE key = 'actor';
 
 UPDATE task SET status = 'done', updated_at = '2026-08-01T12:40:00Z' WHERE id = 'TASK-003';
-UPDATE graph_node SET status = 'done' WHERE id = 'REQ-001/implement.promo-engine';
+UPDATE graph_node SET status = 'done' WHERE id = 'REQ-001/implement.TASK-003';
 
 UPDATE task SET status = 'done', claimed_by = 'test-planner',
                 claimed_at = '2026-08-01T12:45:00Z', updated_at = '2026-08-01T13:05:00Z'
@@ -703,15 +688,15 @@ INSERT INTO requirement (id, phase_id, title, body, status, priority, created_at
 VALUES ('REQ-002', 'PHASE-001', CAST(x'53756e73657420746865206c65676163792070726f6d6f2073657276696365' AS TEXT), '', 'todo', 4,
         '2026-08-02T08:00:00Z', '2026-08-02T08:00:00Z');
 
-INSERT INTO task (id, requirement_id, plan_id, plan_slice_id, plan_slice, parallel_group,
+INSERT INTO task (id, requirement_id, plan_id, files, parallel_group,
                   node_key, title, objective, body, status, priority, agent,
                   claimed_by, claimed_at, created_at, updated_at) VALUES
-  ('TASK-007','REQ-001','PLAN-001',NULL,NULL,NULL,NULL, CAST(x'4261636b66696c6c207468652070726f6d6f20617564697420726f7773'  AS TEXT),'','','todo',3,NULL,NULL,NULL,'2026-08-02T09:00:00Z','2026-08-02T09:00:00Z'),
-  ('TASK-008','REQ-001','PLAN-001',NULL,NULL,NULL,NULL, CAST(x'4d69677261746520746865206c656761637920636f75706f6e207461626c65'  AS TEXT),'','','todo',3,NULL,NULL,NULL,'2026-08-02T09:00:01Z','2026-08-02T09:00:01Z'),
-  ('TASK-009','REQ-001','PLAN-001',NULL,NULL,NULL,NULL, CAST(x'506f7274207468652070726963696e67206b65726e656c20746f2052757374'  AS TEXT),'','','todo',2,NULL,NULL,NULL,'2026-08-02T09:00:02Z','2026-08-02T09:00:02Z'),
-  ('TASK-010','REQ-001','PLAN-001',NULL,NULL,NULL,NULL, CAST(x'466c6173682074686520696e2d73746f7265207465726d696e616c206669726d77617265' AS TEXT),'','','todo',3,NULL,NULL,NULL,'2026-08-02T09:00:03Z','2026-08-02T09:00:03Z'),
-  ('TASK-011','REQ-001','PLAN-001',NULL,NULL,NULL,NULL, CAST(x'57697265207468652070726f6d6f20776562686f6f6b' AS TEXT),'','','todo',3,NULL,NULL,NULL,'2026-08-02T09:00:04Z','2026-08-02T09:00:04Z'),
-  ('TASK-012','REQ-001','PLAN-001',NULL,NULL,NULL,NULL, CAST(x'46697820746865206361727420726174652d6c696d697420627970617373' AS TEXT),'','','todo',1,NULL,NULL,NULL,'2026-08-02T09:00:05Z','2026-08-02T09:00:05Z');
+  ('TASK-007','REQ-001','PLAN-001','[]',NULL,NULL, CAST(x'4261636b66696c6c207468652070726f6d6f20617564697420726f7773'  AS TEXT),'','','todo',3,NULL,NULL,NULL,'2026-08-02T09:00:00Z','2026-08-02T09:00:00Z'),
+  ('TASK-008','REQ-001','PLAN-001','[]',NULL,NULL, CAST(x'4d69677261746520746865206c656761637920636f75706f6e207461626c65'  AS TEXT),'','','todo',3,NULL,NULL,NULL,'2026-08-02T09:00:01Z','2026-08-02T09:00:01Z'),
+  ('TASK-009','REQ-001','PLAN-001','[]',NULL,NULL, CAST(x'506f7274207468652070726963696e67206b65726e656c20746f2052757374'  AS TEXT),'','','todo',2,NULL,NULL,NULL,'2026-08-02T09:00:02Z','2026-08-02T09:00:02Z'),
+  ('TASK-010','REQ-001','PLAN-001','[]',NULL,NULL, CAST(x'466c6173682074686520696e2d73746f7265207465726d696e616c206669726d77617265' AS TEXT),'','','todo',3,NULL,NULL,NULL,'2026-08-02T09:00:03Z','2026-08-02T09:00:03Z'),
+  ('TASK-011','REQ-001','PLAN-001','[]',NULL,NULL, CAST(x'57697265207468652070726f6d6f20776562686f6f6b' AS TEXT),'','','todo',3,NULL,NULL,NULL,'2026-08-02T09:00:04Z','2026-08-02T09:00:04Z'),
+  ('TASK-012','REQ-001','PLAN-001','[]',NULL,NULL, CAST(x'46697820746865206361727420726174652d6c696d697420627970617373' AS TEXT),'','','todo',1,NULL,NULL,NULL,'2026-08-02T09:00:05Z','2026-08-02T09:00:05Z');
 
 INSERT INTO task_capability (task_id, capability, required) VALUES
   ('TASK-007','implement',1), ('TASK-007','backend',1),
@@ -940,7 +925,7 @@ ticket is waiting. `INSP-001` is `in-progress` with one verdict recorded, one ar
 (not yet reached) and one explicitly `not-reached`. One bug has already been filed.
 
 The graph is **6 nodes, 5 edges, 1 gate** — invariant, whatever the inspection covers, because
-`maintenance` has no per-slice fan-out. `qa-execute.parallel_group` is NULL and must stay NULL.
+`maintenance` has no per-ticket fan-out. `qa-execute.parallel_group` is NULL and must stay NULL.
 
 **Seed SQL — `06-maintenance.sql`:**
 ```sql
@@ -949,9 +934,15 @@ UPDATE guild_state SET value = 'architect' WHERE key = 'actor';
 
 -- the carrier requirement: unaffiliated, obviously not feature work
 INSERT INTO requirement (id, phase_id, title, body, status, priority, created_at, updated_at)
-SELECT 'REQ-900', NULL, CAST(x'4d61696e74656e616e636520696e7370656374696f6e20e2809420636865636b6f757420616e642061757468' AS TEXT), '', 'in-progress', 3,
+SELECT 'REQ-900', NULL, CAST(x'4d61696e74656e616e636520696e7370656374696f6e20e2809420636865636b6f757420616e642061757468' AS TEXT), '', 'todo', 3,
        '2026-08-03T08:00:00Z', '2026-08-03T08:00:00Z'
 WHERE NOT EXISTS (SELECT 1 FROM requirement WHERE id = 'REQ-900');
+
+-- MOVED, not inserted at its end state: the status trigger is what writes the `moved` event,
+-- and G7 asserts every non-`todo` requirement has one. Seeding straight to 'in-progress'
+-- produces a board with no history of it happening — the exact shortcut G7 exists to catch.
+UPDATE requirement SET status = 'in-progress', updated_at = '2026-08-03T08:00:00Z'
+ WHERE id = 'REQ-900' AND status = 'todo';
 
 INSERT INTO coverage (id, area, risk, spec_path, last_inspected_at, notes) VALUES
   ('checkout-flow', CAST(x'436865636b6f757420666c6f77' AS TEXT), 'high', 'e2e/checkout.spec.ts',
@@ -1010,13 +1001,13 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value;
 
 UPDATE guild_state SET value = 'orchestrator' WHERE key = 'actor';
 
-INSERT INTO task (id, requirement_id, plan_id, plan_slice_id, plan_slice, parallel_group,
+INSERT INTO task (id, requirement_id, plan_id, files, parallel_group,
                   node_key, title, objective, body, status, priority, agent,
                   claimed_by, claimed_at, created_at, updated_at) VALUES
-  ('TASK-901','REQ-900',NULL,NULL,NULL,NULL,'qa-check',   CAST(x'446563696465207768657468657220616e20696e7370656374696f6e20697320647565' AS TEXT),'','','todo',3,'qa-strategist',NULL,NULL,'2026-08-03T08:10:00Z','2026-08-03T08:10:00Z'),
-  ('TASK-902','REQ-900',NULL,NULL,NULL,NULL,'qa-plan',    CAST(x'5269736b206d617020616e64206d697373696f6e206c697374' AS TEXT),'','','todo',3,'qa-strategist',NULL,NULL,'2026-08-03T08:10:01Z','2026-08-03T08:10:01Z'),
-  ('TASK-903','REQ-900',NULL,NULL,NULL,NULL,'qa-execute', CAST(x'4d697373696f6e3a20636865636b6f757420666c6f77' AS TEXT),'','','todo',2,NULL,NULL,NULL,'2026-08-03T08:10:02Z','2026-08-03T08:10:02Z'),
-  ('TASK-904','REQ-900',NULL,NULL,NULL,NULL,'qa-execute', CAST(x'4d697373696f6e3a206175746820616e642073657373696f6e' AS TEXT),'','','todo',2,NULL,NULL,NULL,'2026-08-03T08:10:03Z','2026-08-03T08:10:03Z');
+  ('TASK-901','REQ-900',NULL,'[]',NULL,'qa-check',   CAST(x'446563696465207768657468657220616e20696e7370656374696f6e20697320647565' AS TEXT),'','','todo',3,'qa-strategist',NULL,NULL,'2026-08-03T08:10:00Z','2026-08-03T08:10:00Z'),
+  ('TASK-902','REQ-900',NULL,'[]',NULL,'qa-plan',    CAST(x'5269736b206d617020616e64206d697373696f6e206c697374' AS TEXT),'','','todo',3,'qa-strategist',NULL,NULL,'2026-08-03T08:10:01Z','2026-08-03T08:10:01Z'),
+  ('TASK-903','REQ-900',NULL,'[]',NULL,'qa-execute', CAST(x'4d697373696f6e3a20636865636b6f757420666c6f77' AS TEXT),'','','todo',2,NULL,NULL,NULL,'2026-08-03T08:10:02Z','2026-08-03T08:10:02Z'),
+  ('TASK-904','REQ-900',NULL,'[]',NULL,'qa-execute', CAST(x'4d697373696f6e3a206175746820616e642073657373696f6e' AS TEXT),'','','todo',2,NULL,NULL,NULL,'2026-08-03T08:10:03Z','2026-08-03T08:10:03Z');
 
 INSERT INTO task_capability (task_id, capability, required) VALUES
   ('TASK-903','qa-execution',1), ('TASK-903','e2e',0),
@@ -1181,7 +1172,7 @@ enforces at all.
 Honest limits, so nobody reads a passing fixture as more than it is.
 
 **A fixture cannot assert a judgment.** Whether `reviewer-security`'s finding is *correct*,
-whether the architect's three slices are the right three, whether a mission actually exercised
+whether the architect's three implement tickets are the right three, whether a mission actually exercised
 the checkout flow or just loaded the page — none of that is in the database, and no query will
 find it. The fixtures can assert that a finding was *filed with a severity and a file and a
 line*; they cannot assert it was worth filing.
@@ -1190,8 +1181,8 @@ line*; they cannot assert it was worth filing.
 `messy` attributed to `developer` was written by whoever ran the script. This is item 1 of §4
 and the single biggest thing v6 gave up; it is not testable in SQL, at all, by anyone.
 
-**A fixture cannot check slice disjointness.** `plan_slice.files` in `planned` are disjoint
-because I wrote them that way. Nothing verifies it, here or in the schema, and two slices
+**A fixture cannot check file disjointness.** `task.files` in `planned` are disjoint
+because I wrote them that way. Nothing verifies it, here or in the schema, and two tickets
 sharing a file would load without complaint and produce a merge conflict inside an unattended
 shift.
 
