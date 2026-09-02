@@ -55,12 +55,10 @@ It is not a formality: they are handing an unsupervised process their working tr
 **The asymmetry is the point: an unattended guild can do work and record problems, but every
 judgment call waits for the guild master.**
 
-> **In v5 not one row of that table is enforced by anything.** The old CLI locked four of these
-> doors in code — `guild node` refused a gate node, `guild git` had no `push` verb. That CLI is
-> gone. SQL has no identity, `git` has no allowlist, and `guild_state.actor` is a label anyone
-> can write. **Every line above is now a promise you keep, not a guard that catches you.** Read
-> the table before each shift, and when you catch yourself reasoning toward an exception, that
-> is the moment the table exists for.
+> **Not one row of that table is enforced by anything.** SQL has no identity, `git` has no
+> allowlist, and `guild_state.actor` is a label anyone can write. **Every line above is a
+> promise you keep, not a guard that catches you.** Read the table before each shift, and when
+> you catch yourself reasoning toward an exception, that is the moment the table exists for.
 
 ## Step 1 — preflight
 
@@ -215,8 +213,8 @@ git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|^
 **The git allowlist for a shift is exactly this:** `status`, `rev-parse`, `symbolic-ref`,
 `branch`, `switch`, `diff`, `log`, `add -- <paths>`, `commit`, `checkout -- <paths>`.
 Nothing else. Specifically **never** `push`, `fetch`, `pull`, `remote`, `rebase`, `reset`,
-`stash`, `tag`, `cherry-pick`, `filter-branch`, or any `-f`/`--force` anything. There is no
-wrapper enforcing that list any more — it is enforced by you reading it.
+`stash`, `tag`, `cherry-pick`, `filter-branch`, or any `-f`/`--force` anything. No wrapper
+enforces that list — it is enforced by you reading it.
 
 ### 2.3 — the segment, and the dispatch
 
@@ -563,14 +561,14 @@ Narrate stop reason first, then what got done, then the decisions waiting, then 
 next. **Name things** — "TASK-013 failed twice and was given up on; its edits are quarantined in
 `.guild/backup-revert-TASK-013-…`" is a briefing. "1 failure" is not.
 
-## Step 6 — verify against §12, and put it in the report
+## Step 6 — verify against §11, and put it in the report
 
 Run `guild:validate shift` before the morning report goes out, and fold the result into it.
-§12 of `docs/expectations.md` matters more than any other section: **in v5 the CLI locked
-four of these doors in code, and that CLI is gone.** §12.a asserts you stopped at a gate and
-never past one, §12.b what you never touched, §12.c the failure policy, §12.d that a blocked
-ticket became a roster gap rather than a silent skip, §12.e that every stop said why, and
-§12.f the git safety checks — never pushed, never on the default branch. The assertions run
+§11 of `docs/expectations.md` matters more than any other section, because **nothing enforces
+a single line of the MAY / MAY NOT table.** §11.a asserts you stopped at a gate and
+never past one, §11.b what you never touched, §11.c the failure policy, §11.d that a blocked
+ticket became a roster gap rather than a silent skip, §11.e that every stop said why, and
+§11.f the git safety checks — never pushed, never on the default branch. The assertions run
 *after* the night, not during it, so a failure here is something the user reads at breakfast.
 **Report every one with its rows, before the summary.**
 
@@ -615,7 +613,7 @@ that mattered — arrives silenced.
 ## Rules
 
 1. **Never decide a gate.** Not `gate-plan`, not `gate-repairs`, not "the obvious ones". Nothing
-   refuses this for you any more.
+   refuses this for you.
 2. **Never push, never commit to the default branch, never rewrite history.** The git allowlist
    in §2.2 is the whole of what a shift may run.
 3. **The budget is fixed when the shift opens.** It lives in the `started` event's payload. If

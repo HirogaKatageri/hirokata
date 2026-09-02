@@ -726,9 +726,8 @@ from it.
 
 ## 5. The roster — not in this database
 
-**There is nothing to sync and no roster tables to write.** `agent`, `agent_capability` and
-`capability_request` were dropped in v7. Who the guild's members are, what each declares and
-whether one runs serially are facts about the agent FILES:
+**There is nothing to sync and no roster tables to write.** Who the guild's members are, what
+each declares and whether one runs serially are facts about the agent FILES:
 
 ```bash
 # every subagent available to the user: name | model | serial | scope | capabilities
@@ -772,8 +771,7 @@ thing that makes the gap visible.
 
 ### There is no capability request
 
-A capability nobody declares used to be filed as a `capability_request` row so the word could
-be admitted to a vocabulary this database owned. Both are gone. **The fix for a missing
+There is no row to file and no vocabulary to admit a word to. **The fix for a missing
 capability is writing the agent file, and nothing precedes it.**
 
 Record the gap where the guild master will actually see it: the plan's Technical Decisions
@@ -844,8 +842,8 @@ ran out of road before it did. It is not NULL and it is not a pass.
   guild's memory, and a memory you can edit is not one.
 - **Do not set `updated_at` yourself** unless you mean to override the trigger.
 - **Do not DELETE anything.** Not a task, not a requirement, not a doc, not the `event` feed —
-  the guild has no board clear and no supported procedure that removes a record (**G11**, and
-  §8 of `docs/expectations.md`). Work is retired by *status*: `done`, `cancelled`, `superseded`.
+  the guild has no supported procedure that removes a record (**G11**, and §8 of
+  `docs/expectations.md`). Work is retired by *status*: `done`, `cancelled`, `superseded`.
   A board that genuinely has to start over starts over as a **new database file**, with the old
   one moved aside and still readable. The one narrow exception is a `doc → doc` `knowledge_edge`
   rewritten while retiring a decision, and G11 is scoped to allow exactly that.

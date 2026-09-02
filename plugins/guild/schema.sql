@@ -1,5 +1,5 @@
 -- =====================================================================================
--- guild v7 — THE SCHEMA IS THE TOOL
+-- guild — THE SCHEMA IS THE TOOL
 -- =====================================================================================
 --
 -- APPLY IT
@@ -28,8 +28,8 @@
 -- ------------------------------------------------------------------------------------
 -- WHAT THIS FILE IS
 --
--- There is no guild CLI any more. `tursodb` is already a tool that executes SQL, so the
--- guild does not ship a second one. Every member reaches the warehouse the same way —
+-- There is no guild CLI. `tursodb` is already a tool that executes SQL, so the guild
+-- does not ship a second one. Every member reaches the warehouse the same way —
 -- they write SQL — and THIS FILE is the guild's knowledge of what the warehouse contains
 -- and what its rules are.
 --
@@ -131,7 +131,7 @@
 --     is TEXT or INTEGER. Keep it that way.
 --   * WORKING: STRICT, RETURNING, ON CONFLICT DO UPDATE, printf(), plain CTEs, WAL,
 --     foreign_keys, JSON functions, CHECK, VIEW, TRIGGER, `UPDATE OF <col>` triggers.
---   * ALSO WORKING, and added in v8 because the library's views lean on them — verified on
+--   * ALSO WORKING, and the library's views lean on them — verified on
 --     0.7.2, see references/tursodb-gotchas.md §7: `group_concat(col, sep)`, a LEFT JOIN
 --     onto a VIEW, a correlated `NOT EXISTS` against a VIEW built from `UNION ALL`, and
 --     `AFTER DELETE` triggers.
@@ -163,9 +163,9 @@
 -- ALTER TABLE task_new RENAME TO task`, with foreign_keys OFF for the swap. Adding a
 -- word is a migration. Choose words you can live with.
 --
--- Likewise, applying this file over a database created by an EARLIER v5 stage does NOT
--- add the CHECKs — `CREATE TABLE IF NOT EXISTS` sees the table and moves on. The new
--- views and triggers land, the constraints do not. A board that wants them rebuilds.
+-- Likewise, applying this file over a board whose tables PREDATE a CHECK does NOT add
+-- that CHECK — `CREATE TABLE IF NOT EXISTS` sees the table and moves on. The new views
+-- and triggers land, the constraint does not. A board that wants it rebuilds.
 -- =====================================================================================
 
 
@@ -230,9 +230,8 @@ WHERE NOT EXISTS (SELECT 1 FROM guild_state WHERE key = 'actor');
 -- direction. Priority is 1 (highest) to 5 (lowest) everywhere it appears.
 --
 -- A GOAL is a high-level target. A PROJECT is a named group of work that has to be done
--- to reach it. `project` was called `phase` through v6.1, and the rename is not cosmetic:
--- a phase is a STAGE, which implies one runs at a time, and the table's `ordinal NOT NULL`
--- said exactly that. A project may run BESIDE its siblings — see `concurrent` and
+-- to reach it. A project is NOT a stage: a stage implies one runs at a time, which is what
+-- an `ordinal NOT NULL` would say. A project may run BESIDE its siblings — see `concurrent` and
 -- `isolation` below, and `v_projects_runnable`, which is the one place that rule lives.
 
 CREATE TABLE IF NOT EXISTS goal (
@@ -428,11 +427,10 @@ CREATE TABLE IF NOT EXISTS task_capability (
   PRIMARY KEY (task_id, capability)
 ) STRICT;
 
--- A capability the guild lacks used to be filed here as a `capability_request` row, so
--- the word could be admitted to a vocabulary this database owned. v7 dropped both. The
--- vocabulary is the union of what the agent files declare, so ADMITTING A NEW WORD IS
--- WRITING THE AGENT FILE THAT DECLARES IT — there is no intermediate paperwork, and a
--- request row that outlived its recruitment was only ever bookkeeping about bookkeeping.
+-- A capability the guild lacks is NOT filed here as a request row. The vocabulary is the
+-- union of what the agent files declare, so ADMITTING A NEW WORD IS WRITING THE AGENT FILE
+-- THAT DECLARES IT — there is no intermediate paperwork, and a request row that outlived
+-- its recruitment would only ever be bookkeeping about bookkeeping.
 --
 -- The gap itself is still visible, and louder than a request row was: the ticket that
 -- wanted the capability sits at `blocked` on the board, naming it.
@@ -634,11 +632,11 @@ CREATE TABLE IF NOT EXISTS inspection_coverage (
 --               which invariants the product promises. Written from the requirement
 --               interview, and the doc most likely to outlive the code that implements it.
 --   technical   how a subsystem actually works right now. Owned by whoever last changed it.
---   decision    AN ADR. One choice, its context, the alternatives, the consequences. This
---               is the kind that was homeless before v8 — decisions lived in plan prose
---               and in `gate.decision` JSON, where nothing could find them again.
+--   decision    AN ADR. One choice, its context, the alternatives, the consequences. Without
+--               this kind a decision lives in plan prose and in `gate.decision` JSON, where
+--               nothing can find it again.
 --   research    an external lookup the guild should not have to repeat. The researcher's
---               output, and the only kind that was really being written before v8.
+--               output.
 --   runbook     the steps for an operation somebody performs — deploy, rotate, restore.
 --   reference   everything else. The default, and deliberately boring.
 --
@@ -851,10 +849,9 @@ CREATE INDEX IF NOT EXISTS revision_by_doc ON doc_revision(slug, replaced_at DES
 --   the library  v_knowledge_ref · v_doc_current · v_doc_neighbors · v_doc_stale ·
 --                v_undocumented_work · v_decision_log · v_knowledge_dangling
 --
--- THERE IS NO MATCHER VIEW. `v_agent_eligible`, `v_agent_match` and `v_task_top_agent`
--- were dropped in v7 along with the roster tables they read. Matching a ticket to a
--- member is now the dispatcher's job, because the facts it needs — who exists, what they
--- declare — live in the agent files and never entered this database.
+-- THERE IS NO MATCHER VIEW. Matching a ticket to a member is the dispatcher's job, because
+-- the facts it needs — who exists, what they declare — live in the agent files and never
+-- enter this database.
 
 
 -- ------------------------------------------------------------------------------------
@@ -1044,14 +1041,13 @@ SELECT t1.id              AS task_id,
 -- ------------------------------------------------------------------------------------
 -- THE MATCHER IS GONE FROM SQL — v_agent_eligible, v_agent_match, v_task_top_agent
 -- ------------------------------------------------------------------------------------
--- These three views ranked every member against every ticket. They were dropped in v7,
--- together with the `agent` and `agent_capability` tables they read, because the roster
--- they queried was a mirror: the real answer to "who exists and what can they do" is the
--- frontmatter of the agent files, and a copy of it in here could only ever be as fresh as
--- the last sync somebody remembered to run.
+-- These three views ranked every member against every ticket, and a roster table in here
+-- would be a mirror: the real answer to "who exists and what can they do" is the frontmatter
+-- of the agent files, and a copy of it could only ever be as fresh as the last sync somebody
+-- remembered to run.
 --
--- THE RULE THEY ENCODED DID NOT DIE, IT MOVED. The dispatcher now applies it, in this
--- order, against every subagent available to the user:
+-- THE RULE THEY ENCODED IS THE DISPATCHER'S. It applies it in this order, against every
+-- subagent available to the user:
 --
 --   pin         `task.agent` is set — spawn it. The capability match is not run at all.
 --   capability  the ticket has `task_capability` rows — an agent is ELIGIBLE when its
@@ -1062,8 +1058,8 @@ SELECT t1.id              AS task_id,
 --   nobody      no pin and no eligible agent — the dispatcher writes `status = 'blocked'`,
 --               and the ticket says so on the board with the capability it is waiting for.
 --
--- THE DROPS BELOW ARE LOAD-BEARING. Re-applying this file over a v6 board is what removes
--- the stale views, and they must go before the tables do (see the migration).
+-- THE DROPS BELOW ARE LOAD-BEARING. Re-applying this file over a board that still carries
+-- these views is what removes them, and they must go before the tables do (see 007).
 DROP VIEW IF EXISTS v_task_top_agent;
 DROP VIEW IF EXISTS v_agent_match;
 DROP VIEW IF EXISTS v_agent_eligible;
@@ -1078,9 +1074,9 @@ DROP VIEW IF EXISTS v_agent_eligible;
 --   2. no unfinished deps  `v_task_deps` is empty for it
 --   3. it names what it wants — a pinned `agent`, or at least one `task_capability` row
 --
--- CONDITION 3 CHANGED IN v7 AND THE DIFFERENCE MATTERS. It used to mean "somebody can
--- take it", verified against the roster. The roster is not in this database any more, so
--- this view can only promise that the ticket ASKS FOR SOMEBODY — whether anybody answers
+-- CONDITION 3 IS NARROWER THAN IT LOOKS, AND THE DIFFERENCE MATTERS. It does not mean
+-- "somebody can take it" — the roster is not in this database, so this view can only
+-- promise that the ticket ASKS FOR SOMEBODY. Whether anybody answers
 -- is settled by the dispatcher reading the agent files. A row here is a candidate for
 -- dispatch, not a guarantee of one, and a ticket whose required capabilities nobody
 -- covers appears here once and then gets written to `blocked`.
@@ -1127,13 +1123,13 @@ SELECT t.id                                   AS id,
 -- unfinished dependencies, because the status was a human's decision and the dependency
 -- is a fact about the graph.
 --
--- WHAT LEFT IN v7: the `no-eligible-agent:rust,embedded` reason. This view could compute
--- it while the roster was a table; it cannot now. A ticket that declares capabilities
--- nobody covers is NOT listed here on its own — it sits in `v_open_bounties` until the
+-- THERE IS NO `no-eligible-agent:rust,embedded` REASON, because computing it would need the
+-- roster. A ticket that declares capabilities nobody covers is NOT listed here on its own —
+-- it sits in `v_open_bounties` until the
 -- dispatcher scans the agent files, finds nobody, and WRITES `status = 'blocked'`. It
 -- then appears here as `status-blocked`, with `who` naming the capabilities it wants.
 --
--- So the roster-gap query is now: this view, `status-blocked`, read `who`. The `needs:…`
+-- So the roster-gap query is: this view, `status-blocked`, read `who`. The `needs:…`
 -- it prints is the agent file somebody needs to write.
 DROP VIEW IF EXISTS v_blocked_tasks;
 CREATE VIEW v_blocked_tasks AS
@@ -1412,9 +1408,9 @@ SELECT p.id                            AS id,
 -- ------------------------------------------------------------------------------------
 -- v_goal_progress — the open goals, and what is runnable under each
 -- ------------------------------------------------------------------------------------
--- Through v6.1 this reported ONE "current phase" — the lowest-ordinal phase not yet done.
--- That column was a claim the schema can no longer make: several projects under one goal
--- may be in flight at once, so the view reports a COUNT and a LIST instead.
+-- This reports NO single "current" project. That would be a claim the schema cannot make:
+-- several projects under one goal may be in flight at once, so the view reports a COUNT and
+-- a LIST instead.
 --
 -- `runnable_project_ids` is a comma-joined list, which is a display convenience and NOT
 -- something to parse — join `v_projects_runnable` on `goal_id` when you need the rows.
@@ -1910,17 +1906,16 @@ SELECT ke.id, ke.rel, 'to', ke.to_type, ke.to_id, ke.from_type, ke.from_id,
 -- ------------------------------------------------------------------------------------
 -- THE ROSTER VIEWS ARE GONE — v_capability_vocabulary, v_capability_unknown, v_roster_gaps
 -- ------------------------------------------------------------------------------------
--- `v_capability_vocabulary` listed the words this guild knows. `v_capability_unknown`
--- audited tags outside it. `v_roster_gaps` listed capability requests nobody had acted
--- on. All three were dropped in v7 with the tables they read.
+-- A vocabulary view, an unknown-tag audit and a roster-gap list would all need roster
+-- tables, and there are none.
 --
--- WHERE EACH QUESTION GOES NOW:
+-- WHERE EACH QUESTION GOES:
 --
 --   "what words does this guild know?"
 --       The union of `capabilities:` across the frontmatter of every subagent available
---       to the user. Read the files. There is no seed list to keep in step any more, and
---       a word is legal exactly when some agent claims it — which was always the honest
---       definition, and the reason the old view's hand-maintained list drifted.
+--       to the user. Read the files. There is no seed list to keep in step, and a word is
+--       legal exactly when some agent claims it — which is the only definition that cannot
+--       drift.
 --
 --   "which tags match nobody?"
 --       The dispatcher answers it by scanning, and it answers LOUDLY: the ticket goes to
@@ -2565,11 +2560,11 @@ BEGIN
 END;
 
 
--- ---- the roster's triggers, removed in v7 -------------------------------------------
--- `capability_request` and `agent` are not tables any more, so recruiting, retiring and
--- requesting a member are not events this database can witness. They are commits to the
--- agent files. THE DROPS ARE LOAD-BEARING: re-applying this file over a v6 board is what
--- removes triggers that would otherwise fire against tables the migration is dropping.
+-- ---- the roster has no triggers ----------------------------------------------------
+-- `capability_request` and `agent` are not tables, so recruiting, retiring and requesting
+-- a member are not events this database can witness. They are commits to the agent files.
+-- THE DROPS ARE LOAD-BEARING: re-applying this file over a board that predates the change
+-- is what removes triggers that would otherwise fire against tables the migration drops.
 DROP TRIGGER IF EXISTS trg_capreq_created;
 DROP TRIGGER IF EXISTS trg_capreq_resolved;
 DROP TRIGGER IF EXISTS trg_agent_recruited;

@@ -1,29 +1,25 @@
-# Guild v6 — Architecture
+# Guild — Architecture
 
 **Status:** current
-**Supersedes:** [`v5-design.md`](./v5-design.md) — the CLI, not the model
-**Breaking:** yes — v6.0.0
+**Companion to:** [`expectations.md`](./expectations.md) (the spec), [`../schema.sql`](../schema.sql) (the tool)
+**Background:** [`v5-design.md`](./v5-design.md) records how the data model and its rules were reasoned out
 
 ---
 
-## 1. The pivot
+## 1. The schema is the tool
 
-v5 shipped a 31,348-line bash CLI. Every read and write to the board went through it, and it carried
-the guild's rules in its functions: which task is next, when a review may close, whether a node is
-ready, who is eligible for a ticket.
+`tursodb` already executes SQL, so the plugin does not ship a program that executes SQL for it.
+It ships a schema and a body of knowledge:
 
-v6 deletes it. The decision, from the guild master:
+> Templates, tables, how to access things should be in markdown, part of the skills, as knowledge.
+> We're giving our guild members the tool to access the library or guild warehouse, and a general
+> guide on how to access it. It's up to them to decide how best to update and retrieve the
+> information.
+>
+> — the guild master
 
-> When the turso CLI is already installed, we have a tool that can execute SQL. We don't need to
-> build another tool that does the same thing. Templates, tables, how to access things should be in
-> markdown, part of the skills, as knowledge. We're giving our guild members the tool to access the
-> library or guild warehouse, and a general guide on how to access it. It's up to them to decide how
-> best to update and retrieve the information.
-
-So `tursodb` **is** the tool. The plugin ships a schema and a body of knowledge, and nothing else
-executable.
-
-This is only sound if the rules stop living in the wrapper. They moved into the engine.
+That is only sound if the rules live in the engine rather than in a wrapper, which is what §3
+is about.
 
 ## 2. The warehouse
 
@@ -47,56 +43,52 @@ skills/warehouse/
         └── maintenance.md
 ```
 
-## 3. What the database now enforces
+## 3. What the database enforces
 
-`schema.sql` is 23 tables, 30 views and 44 triggers, at `schema_version = 8`. (24 / 29 / 45 through
-v6.2; v7 dropped the three roster tables and their six views, and v8 added the library's three
-tables and seven views — see [CHANGELOG.md](../CHANGELOG.md).)
+`schema.sql` is 23 tables, 30 views and 44 triggers, at `schema_version = 8`.
 
 **CHECK constraints are the vocabularies.** Every status and enum column carries its word list. A
-value outside it is rejected by the engine, on every connection, from every member, forever. v5's
-Stage-3 schema deliberately left `task.status` unchecked so the vocabulary could widen without
-rewriting the table — correct while a CLI policed the vocabulary in one function. With no CLI, an
-unpoliced column is an unpoliced column, and a typo'd status is a task that vanishes from every view
-at once. The cost flipped, so the CHECKs went in.
+value outside it is rejected by the engine, on every connection, from every member, forever. An
+unpoliced status column is one where a typo makes a task vanish from every view at once, which is
+why every one of them is checked.
 
 *The price is real:* SQLite cannot `ALTER` a CHECK in place. Widening a vocabulary means rebuilding
 the table (create / copy / drop / rename, `foreign_keys` off for the swap). **Adding a word is a
 migration.** Choose words you can live with.
 
 **Views are the derived rules.** This is the load-bearing one. The cursor rule, the review gate, node
-readiness, the agent matcher, the board and the brief each have exactly **one** definition, in
-`schema.sql`. A member SELECTs from `v_next_task` rather than writing its own idea of "next", so two
-members cannot get two answers to one question — and both look right when they disagree, which is
-what makes divergence expensive.
+readiness, the board and the brief each have exactly **one** definition, in `schema.sql`. A member
+SELECTs from `v_next_task` rather than writing its own idea of "next", so two members cannot get two
+answers to one question — and both look right when they disagree, which is what makes divergence
+expensive.
 
 **Triggers are the record.** Every meaningful mutation writes an `event` row and stamps `updated_at`
-without anyone remembering to. There is no journal in v6; `event` is the record, and it lives in the
-same database as everything else, which is why `guild.db` is the durable board rather than derived
-state that can be rebuilt.
+without anyone remembering to. There is no journal; `event` is the record, and it lives in the same
+database as everything else, which is why `guild.db` is the durable board rather than derived state
+that can be rebuilt.
 
 **A member can forget to call a command. A member cannot bypass a trigger or a CHECK.** That is the
-whole argument for the pivot.
+whole argument for putting the rules in the engine.
 
 ## 4. What is convention, not guarantee
 
-The honest half. These were bash guards in v5. Nothing enforces them now — they are documented in
-the `schema.sql` header, in `README.md`, and here, and nowhere else.
+The honest half. Nothing enforces these — they are documented in the `schema.sql` header, in
+`README.md`, and here, and nowhere else.
 
 1. **"The orchestrator owns every status transition."** SQL has no identity. Any connection can run
    any `UPDATE`. `guild_state.actor` is a courtesy label a member sets on itself; the triggers copy
    it into `event.actor` verbatim. It is not authentication — **a lying actor produces a lying
-   feed.** This is the single biggest thing v6 gave up.
+   feed.** This is the single biggest thing the engine cannot hold.
 2. **"A requirement may not close over a blocked task."** `v_requirement_progress.tasks_open` is the
    query that tells you. Closing anyway is one `UPDATE` away.
 3. **"A `failed` task is adjudicated when it is waived."** The waiver is a *prefix* on a work-log
    line, matched with `LIKE`. A marker, not a column. A stray log line can look like one.
 4. **"Concurrently dispatched tickets touch disjoint files."** `task.files` is a JSON array. The
    disjointness across a `parallel_group` is an assertion by the architect; nothing checks it.
-5. **"A ticket's capabilities name something a real agent declares."** Since v7 the vocabulary is
-   the agent files, so no SQL check can reach it at all — an unknown capability inserts fine and
-   matches nobody. The dispatcher makes it speak by writing the ticket `blocked`; skip that write
-   and the gap is silent.
+5. **"A ticket's capabilities name something a real agent declares."** The vocabulary is the agent
+   files, so no SQL check can reach it at all — an unknown capability inserts fine and matches
+   nobody. The dispatcher makes it speak by writing the ticket `blocked`; skip that write and the
+   gap is silent.
 6. **"A gate is decided by a human."** `gate.status` is a column. Anyone can write it.
 7. **The graph is not acyclic by construction.** `graph_edge` accepts any pair, and a cycle makes
    `v_ready_nodes` return nothing for the whole loop — a silent stall, not an error. With no
@@ -106,9 +98,8 @@ the `schema.sql` header, in `README.md`, and here, and nowhere else.
 9. **"Every `knowledge_edge` points at something that exists."** Its endpoints are polymorphic, so
    there is no foreign key on either end and **G1 cannot cover them**. The write-time shape stops
    you *creating* a dangling edge; nothing stops you creating one by deleting the other end later.
-   **G10** is the assertion that stands in. Through v8 the way to create one was a board clear
-   that forgot to cut the library's edges first; since v8.1 nothing in the guild deletes at all
-   (**G11**), so a dangling edge means somebody wrote raw SQL.
+   **G10** is the assertion that stands in. Nothing in the guild deletes at all (**G11**), so a
+   dangling edge means somebody wrote raw SQL.
 10. **"A document describes the code as it is now."** Nothing can know that. `v_doc_stale` is the
     honest approximation — a page whose subject has an `event` newer than the page — and it is a
     *signal*, never an invariant. A stale page is not a breach.
@@ -136,9 +127,9 @@ Verified against tursodb 0.7.2. Each of these shaped the schema.
   row's position, assigned by the reader (see `v_open_bounties`).
 - **STRICT** accepts only INT, INTEGER, REAL, TEXT, BLOB, ANY. Every column is TEXT or INTEGER.
 - **Working:** STRICT, RETURNING, ON CONFLICT DO UPDATE, printf(), plain CTEs, WAL, foreign_keys,
-  JSON functions, CHECK, VIEW, TRIGGER, `UPDATE OF <col>` triggers — and, added in v8:
-  `group_concat(col, sep)`, a `LEFT JOIN` onto a view, a correlated `NOT EXISTS` against a view
-  built from `UNION ALL`, and `AFTER DELETE` triggers.
+  JSON functions, CHECK, VIEW, TRIGGER, `UPDATE OF <col>` triggers, `group_concat(col, sep)`, a
+  `LEFT JOIN` onto a view, a correlated `NOT EXISTS` against a view built from `UNION ALL`, and
+  `AFTER DELETE` triggers.
 - **No polymorphic foreign key**, which is not a tursodb limitation but a SQLite one: `REFERENCES`
   names a table at declaration time. `knowledge_edge` endpoints may be a doc, a requirement, a task
   or a bug, so the constraint is replaced by a write-time shape
@@ -169,8 +160,8 @@ re-applying the file is the upgrade path for a corrected view or a new trigger. 
 by `WHERE NOT EXISTS`.
 
 One limit: `CREATE TABLE IF NOT EXISTS` sees an existing table and moves on. Applying this file over
-a database created by an **earlier v5 stage** lands the views and triggers but **not** the CHECK
-constraints. A board that wants them rebuilds.
+a board whose tables predate a CHECK constraint lands the views and triggers but **not** that
+constraint. A board that wants it rebuilds.
 
 ## 7. File layout
 
@@ -179,21 +170,21 @@ plugins/guild/
 ├── schema.sql              # THE TOOL — tables, CHECKs, views, triggers, and the rules in its header
 ├── migrations/             # one-shot scripts for what CREATE TABLE IF NOT EXISTS cannot reach:
 │                           # renamed tables and new columns. Run in order, once each, then re-apply schema.sql
-├── agents/                 # 14 members; frontmatter (name, model, capabilities, serial) IS the roster
+├── agents/                 # 15 members; frontmatter (name, model, capabilities, serial) IS the roster
 ├── skills/
 │   ├── warehouse/          # the guide to the board — every member loads this first
 │   ├── validate/           # runs docs/expectations.md against the live board
 │   ├── check-in/           # the orchestrator; references/ holds state-format & task-lifecycle
 │   ├── shift/              # the unattended loop
-│   ├── brief/ dashboard/ guild-status/
+│   ├── brief/ dashboard/
 │   ├── new-requirement/ qa/ qa-mindset/ qa-artifacts/
 │   ├── release/ comprehensive-review/ discuss/ verify-and-fix/ create-workflow/
 │   └── svelte-*/           # specialist reference skills
 └── docs/
-    ├── v6-architecture.md        # this file
+    ├── architecture.md           # this file
     ├── expectations.md           # THE SPEC a member's work is checked against — SQL assertions
     ├── expectations-fixtures.md  # the six known board states those assertions are run against
-    └── v5-design.md              # historical; the model and rules it reasons out are still in force
+    └── v5-design.md              # how the data model and its rules were reasoned out
 ```
 
 The board, in a repository:
@@ -213,24 +204,11 @@ The board, in a repository:
 machine-local** unless the guild runs in cloud mode. What git carries is the human-readable residue:
 `config.yaml`, `docs/`, `qa/`, `reviews/`, and the repo's `CHANGELOG.md`.
 
-## 8. What did not change
+## 8. Validation: not testing code, validating behavior
 
-Worth stating, because it bounds the blast radius. The data model, the ID scheme, the capability
-matcher's ranking rule, the two-gate structure, the execution graph, the shift's policy and budget,
-and the QA discipline are all exactly as reasoned out in `v5-design.md`. v6 changed **what enforces
-them and who writes the SQL** — not what they are.
-
-## 9. Status
-
-v6 is a fresh rewrite and should be treated as one. The v5 CLI had four adversarial review rounds and
-an 8,918-line, 2,278-check harness; **that code is deleted and none of its assurance transfers.**
-
-### Validation moved down a level: from testing code to validating behavior
-
-Deleting 31,348 lines of bash deleted its test harness with it, and nothing should have replaced it
-in kind — **there is no code left to unit-test.** Everything that used to be a function is now a
-CHECK, a view, a trigger, or a paragraph a member is expected to read and act on. So the thing that
-can fail changed. It is no longer "the function returned the wrong value". It is:
+**There is no code here to unit-test.** Every rule is a CHECK, a view, a trigger, or a paragraph a
+member is expected to read and act on. So the thing that can fail is not "the function returned the
+wrong value". It is:
 
 > An AI member read the schema and the process, understood some of it, and did something *adjacent*
 > to what was needed.
@@ -243,14 +221,13 @@ failure names its own cause. `docs/expectations-fixtures.md` supplies the six kn
 those assertions run against, because an assertion against an unknown state answers differently
 every time. `guild:validate` runs them; each process skill closes by running its own section.
 
-This is deliberately **not** the old harness at a lower line count. The harness proved a program's
-functions behaved; this proves a board is coherent after an agent touched it. It covers a strictly
-different surface, and it leaves the largest questions open on purpose — whether a plan is any good,
-whether the code was actually written, whether a human genuinely decided a gate, who really wrote a
-row. Each section names those under *Cannot be asserted* rather than faking a proxy check, because a
-weak assertion converts an open question into a green check.
+This proves a board is coherent after an agent touched it. It leaves the largest questions open on
+purpose — whether a plan is any good, whether the code was actually written, whether a human
+genuinely decided a gate, who really wrote a row. Each section names those under *Cannot be
+asserted* rather than faking a proxy check, because a weak assertion converts an open question into
+a green check.
 
-### What is and is not established
+## 9. Status
 
 Established: `schema.sql` applies cleanly and idempotently; the engine constraints in §5 are observed
 failures rather than guesses; every assertion in `expectations.md` and every fixture in
@@ -259,6 +236,6 @@ healthy board and — for the invariants — confirmed to *fire* on an injected 
 
 Not established: **nothing has exercised the guild end to end.** The expectations have never been run
 against the output of a real member doing real work; they have only been run against fixtures written
-alongside them, which is a weaker thing and shares an author with what it checks. No skill or agent
-has met a live board in this form. The conventions in §4 are precisely what a rewrite violates
-quietly, and the first real requirement is what will say whether these assertions catch it.
+alongside them, which is a weaker thing and shares an author with what it checks. The conventions in
+§4 are precisely what gets violated quietly, and a real requirement is what will say whether these
+assertions catch it.

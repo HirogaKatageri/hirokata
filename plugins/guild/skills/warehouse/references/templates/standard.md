@@ -1,7 +1,6 @@
 # The `standard` template — build a requirement
 
-**You are the architect. There is no parser.** This file used to be `standard.yaml`, read by
-`_graph_parse_template` in a bash CLI. That CLI is gone. You read this page and you write the
+**You are the architect. There is no parser.** You read this page and you write the
 `graph_node` / `graph_edge` / `gate` rows yourself, with the SQL at the bottom.
 
 **Shape:** approve the plan, then run to completion.
@@ -227,7 +226,7 @@ splitting `implement` into three sequential waves because the file sets are not 
 | node id uniqueness, edge uniqueness, one gate row per gate node | **the database**, via PRIMARY KEY |
 | the readiness rule, the review gate, the board | **the database**, via views — one definition, not one per reader |
 | "no third gate", "no dropped required node", "reason is non-empty" | **you**, by running §8's checks. A trigger can enforce the gate rule if the warehouse schema carries one — check `SELECT name FROM sqlite_schema WHERE type='trigger'`. Do not assume it does. |
-| "the orchestrator owns every status transition" | **nobody.** This was a bash guard in v4 and is now a convention. The schema has no identity concept, so it cannot tell an orchestrator's UPDATE from an agent's. Follow it because the board is incoherent otherwise, not because something will stop you. |
+| "the orchestrator owns every status transition" | **nobody.** It is a convention. The schema has no identity concept, so it cannot tell an orchestrator's UPDATE from an agent's. Follow it because the board is incoherent otherwise, not because something will stop you. |
 
 ---
 

@@ -14,11 +14,10 @@ that does the same thing. Every member reaches the warehouse the same way — lo
   config.yaml         # committed. version + storage mode; env var NAMES only, never a credential
   guild.db            # gitignored. THE BOARD
   docs/               # evergreen researcher knowledge (the `doc` table is the primary copy)
-  qa/                 # evergreen QA artifacts — charter, missions, bug ledger, session logs
+  qa/                 # evergreen QA artifacts — charter, missions, session logs
   reviews/REQ-NNN.md  # per-requirement review records, appended per round
   dashboard.html      # gitignored. regenerated wholesale by guild:dashboard
   templates/*.yaml    # optional. a project's override of the shipped execution templates
-  v4-archive*/        # a v4 board moved aside — never parsed, never deleted
 ```
 
 `config.yaml` is what says a guild exists here. Minimal form:
@@ -34,7 +33,7 @@ their values. The file is committed to git and must never hold a credential.
 
 ## The database is the durable board
 
-There is no journal any more. **`event` is the record**, written by triggers on every
+There is no journal. **`event` is the record**, written by triggers on every
 meaningful mutation, and it lives in the same database as everything else — so
 `guild.db` is not derived state that can be thrown away and rebuilt. It is gitignored because
 a binary file is a bad thing to merge, which means the board is **machine-local** unless the
@@ -56,8 +55,8 @@ so a corrected view or a new trigger lands on the next run. Seed rows are guarde
 `WHERE NOT EXISTS`.
 
 One honest limit: `CREATE TABLE IF NOT EXISTS` sees an existing table and moves on, so
-applying the file over a database created by an **earlier** v5 stage lands the views and
-triggers but **not** the CHECK constraints. A board that wants them rebuilds.
+applying the file over a board whose tables predate a CHECK constraint lands the views and
+triggers but **not** that constraint. A board that wants it rebuilds.
 
 ## Cloud mode
 

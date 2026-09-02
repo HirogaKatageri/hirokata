@@ -38,13 +38,13 @@ rather than prose to be interpreted. This skill runs them and reports what holds
 | process | section | process | section |
 |---|---|---|---|
 | `new-requirement` | §4 the build flow | `release` | §9 |
-| `brief` | §5 | `guild-status` | §10 |
-| `dashboard` | §6 | `qa` | §11 the maintenance cycle |
-| `check-in` | §7 | `shift` | §12 the unattended shift |
+| `brief` | §5 | `qa` | §10 the maintenance cycle |
+| `dashboard` | §6 | `shift` | §11 the unattended shift |
+| `check-in` | §7 | | |
 
-§8 names no process. `guild:clear-board` was removed in v8.1 and the section is what stands in its
-place — the anti-expectations for a board clear, and the fresh-file procedure that replaced it.
-Its assertion, *nothing was deleted*, is **G11** and runs with every other global.
+§8 names no process: it is the anti-expectations for emptying a board, and the fresh-file
+procedure that stands in for one. Its assertion, *nothing was deleted*, is **G11** and runs
+with every other global.
 
 `<name>` is one of `empty`, `planned`, `in-flight`, `review-ready`, `messy`, `maintenance` —
 `docs/expectations-fixtures.md`.

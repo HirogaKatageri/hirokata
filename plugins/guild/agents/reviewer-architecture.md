@@ -176,31 +176,12 @@ v=$(printf '%s' "Verdict: {PASS | ISSUES FOUND} — {N} finding(s). Clean: {area
 } | tursodb -q -m list "$DB"
 ```
 
-**There is no spool file any more — you write your rows straight into the board.** All four
+**You write your rows straight into the board.** All four
 reviewers run concurrently, and that is fine: findings are separate rows and the work log is
 append-only, so you never contend for the same row. Two writers can still collide on the database
 itself, which surfaces as a non-zero exit with the error text on **stdout**, not stderr. Check the
 exit code and retry once. Silence is not success — a successful INSERT with no `RETURNING` also
 prints nothing, which is why every mutation above carries one.
-
-For reference, the shape you are capturing (this is no longer written as markdown):
-
-```markdown
-### {today's date} — reviewer-architecture
-
-**Verdict:** {PASS | ISSUES FOUND}
-
-**Findings:**
-1. [{severity}] {file}:{line} — {description}
-   Expected: {what the plan/codebase conventions call for}
-   Recommendation: {how to fix}
-
-2. [{severity}] {file}:{line} — {description}
-   Expected: {what the plan/codebase conventions call for}
-   Recommendation: {how to fix}
-
-**Well done:** {patterns correctly followed, good decisions}
-```
 
 Severity levels:
 - **critical** — fundamental architectural violation, must fix
@@ -217,7 +198,7 @@ Your only job is accurate `review_finding` rows plus one clearly-labeled verdict
 Report completion in your final message (e.g. PASS/FAIL or done).
 
 **Do NOT set any status or move your ticket — the orchestrator owns status transitions, and
-nothing enforces that any more.** In v4 a bash guard refused you; now `UPDATE task SET status =
+nothing enforces that.** `UPDATE task SET status =
 'done'` is one statement any connection can run, and `guild_state.actor` is a label the triggers
 copy verbatim, not an identity. The rule holds only because you keep it. The same goes for
 `review_finding.disposition` and `fix_task_id` — those move when the gate is decided, not when you

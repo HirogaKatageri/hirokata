@@ -166,7 +166,7 @@ open. Do not announce empty categories, and do not invent one.
   exactly one thing in this guild: *this bounty has no taker*.
 - **A `status-blocked` row IS the roster gap, and `who` names it.** `needs:implement+rust`
   names the words that would fix it, which is to say it names the agent file somebody needs to
-  write. There is no separate gaps block any more — the ticket that is actually stuck *is* the
+  write. There is no separate gaps block — the ticket that is actually stuck *is* the
   gap, which is both louder and harder to leave lying around than a request row was.
 - **A gap disappears when somebody writes the agent file, and nothing else.** No sync, no
   approval, no row to close. So a `status-blocked` ticket that has been on the brief for a week

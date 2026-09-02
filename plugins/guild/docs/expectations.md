@@ -1,8 +1,8 @@
-# Guild v6 — Expectations
+# Guild — Expectations
 
 **Status:** current
-**Companion to:** [`v6-architecture.md`](./v6-architecture.md) (the pivot), [`v5-design.md`](./v5-design.md) (the data model), [`../schema.sql`](../schema.sql) (the tool)
-**Applies to:** tursodb 0.7.2, `schema_version = 6`
+**Companion to:** [`architecture.md`](./architecture.md) (the design), [`../schema.sql`](../schema.sql) (the tool)
+**Applies to:** tursodb 0.7.2
 
 ---
 
@@ -10,13 +10,10 @@
 
 ### What this document validates
 
-v6 deleted a 31,348-line bash CLI and the 8,918-line test harness that came with it. Nothing
-replaced the harness, and nothing should have — **there is no code left to unit-test.** The
-plugin ships a schema and a body of knowledge. Everything that used to be a function is now
-either a CHECK, a view, a trigger, or a paragraph a member is expected to read and act on.
+**There is no code here to unit-test.** The plugin ships a schema and a body of knowledge:
+every rule is a CHECK, a view, a trigger, or a paragraph a member is expected to read and act on.
 
-So the thing that can fail changed. The failure mode is no longer "the function returned the
-wrong value". It is:
+So the failure mode is not "the function returned the wrong value". It is:
 
 > **An AI member read the schema and the process, understood some of it, and did something
 > adjacent to what was needed.**
@@ -164,7 +161,7 @@ A note on why these exist at all, given that CHECK constraints and foreign keys 
 much of it: **`PRAGMA foreign_keys` is per-connection and is not remembered.** It is the single
 most commonly forgotten line in the system. A member that omits it writes orphans freely. And
 `CREATE TABLE IF NOT EXISTS` does not add CHECKs to a table that already exists, so a board
-carried forward from an earlier v5 stage has the views and triggers but *not* the constraints.
+whose tables predate a constraint has the views and triggers but *not* that constraint.
 These assertions catch rows that predate a constraint or arrived around one.
 
 ### G1 — Referential health
@@ -368,13 +365,10 @@ so a pinned ticket can never fail to find a member — if one is `blocked`, eith
 added after the block and nobody cleared it, or somebody blocked a ticket for a reason `blocked`
 does not mean.
 
-**Cannot be asserted, and this is the v7 trade:** *whether a declared capability is one some
-agent actually declares.* The roster is a directory of markdown files and this is SQL. The old
-G5 checked `capability-outside-vocabulary`, `uncovered-capability-no-request`,
-`stale-roster-gap`, `created-request-still-uncovered`, `dispatched-to-inactive-agent`,
-`pinned-agent-not-on-roster` and `top-agent-disagrees-with-match` — **every one of them read a
-roster table, and all seven are gone with those tables.** The replacement is not another query,
-it is a different check at a different time:
+**Cannot be asserted, and this is the trade the roster makes:** *whether a declared capability
+is one some agent actually declares.* The roster is a directory of markdown files and this is
+SQL, so no query can reach it. The check is not another query, it is a different check at a
+different time:
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers implement,rust
@@ -456,8 +450,8 @@ fix task returns `finding-fixing-without-task | 1 | fixing`.
 ### G7 — Event coverage
 
 The triggers write an `event` row on every meaningful mutation. A gap means something wrote
-around them — which, since `event` is the guild's entire memory in v6, means a mutation no
-surface can ever show.
+around them — and since `event` is the guild's entire memory, that means a mutation no surface
+can ever show.
 
 ```sql
 SELECT 'no-created-event' AS breach, 'goal' AS tbl, id AS row_id FROM goal g WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='goal' AND e.subject_id=g.id AND e.verb='created')
@@ -501,7 +495,7 @@ new assertion:
 
 The execution graph is connected, stays inside its requirement, and matches its template.
 
-**`document` joined the required set in v8** — it may be reshaped, never dropped, exactly like
+**`document` is in the required set** — it may be reshaped, never dropped, exactly like
 `review`. A `standard` graph missing it returns `dropped-required-node | REQ-nnn | document`,
 which is the loud version of a documentation gap: a node that may be dropped is a node that gets
 dropped, and the cost is invisible for months and then enormous. Note that the `maintenance`
@@ -568,10 +562,9 @@ asserted* below.
 
 Includes the `qa-execute` invariant: **more than one tester at a time is a breach.**
 
-**In v6 this keyed on `agent.serial = 1`** — the schema's own word for "never run concurrently
-with itself" — so the query could say breach or no breach on its own. `serial` now lives in the
-agent's frontmatter, so this clause reports **every** member holding two in-flight tickets and
-leaves the verdict to the roster:
+**This cannot key on a `serial` column** — `serial` lives in the agent's frontmatter, not in
+the database — so the clause reports **every** member holding two in-flight tickets and leaves
+the verdict to the roster:
 
 ```sql
 SELECT 'agent-double-booked' AS breach, t.claimed_by AS row_id, CAST(COUNT(*) AS TEXT) || ' in-flight' AS detail
@@ -592,8 +585,8 @@ parallel dispatch. Resolve it against the frontmatter:
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" | grep '| serial |'
 ```
 
-Any member on both lists is the breach. **Report the pair, not the query's verdict** — this
-clause got weaker in v7 and pretending otherwise is worse than saying so.
+Any member on both lists is the breach. **Report the pair, not the query's verdict** — SQL
+cannot close this one alone, and pretending otherwise is worse than saying so.
 
 *Verified to fire:* two tickets claimed by `qa-tester` simultaneously returns
 `agent-double-booked | qa-tester | 2 in-flight`, and `qa-tester` declares `serial: true`.
@@ -621,11 +614,9 @@ SELECT 'doc.superseded-but-current', d.slug, d.status
 
 Two clauses, two different failures:
 
-- **A dangling edge** means something an edge pointed at was deleted. Through v8 the usual cause
-  was a board clear that did not cut the library's edges into the work first. There is no board
-  clear since v8.1 and no supported procedure deletes anything, so the only cause left is a
-  hand-written `DELETE` — which **G11 catches directly, and one step earlier**: this clause now
-  reports the damage, G11 reports the act.
+- **A dangling edge** means something an edge pointed at was deleted. No supported procedure
+  deletes anything, so the only cause is a hand-written `DELETE` — which **G11 catches directly,
+  and one step earlier**: this clause reports the damage, G11 reports the act.
 - **A `current` doc with an inbound `supersedes` edge** is a cosmetic drift, not a broken read:
   `v_doc_current` already hides such a page, so no reader is misled. It fires because the two
   writes that retire a decision (the edge, then the status) are the same shape as the two writes
@@ -681,13 +672,12 @@ legitimately removes and rewrites `doc → doc` edges.
 the edge's *from* end into `subject_type`/`subject_id`, and that end is a doc in both the innocent
 and the guilty case, so a query reading the subject columns cannot tell them apart. The target is
 in `payload` as `to_type`/`to_id`, which is why this clause goes through `json_extract`: an edge
-deleted out of the library is fine, an edge deleted out of the *work* is the shape a board clear
-used to make.
+deleted out of the library is fine, an edge deleted out of the *work* is the damaging shape.
 
-**Rows already in the feed when you upgraded are history, not a breach.** A board that ran
-`guild:clear-board` before v8.1 carries its `deleted` events forever, and it should: they record
-something that really happened. Scope the query with `AND e.ts > '<the upgrade timestamp>'` when
-validating such a board, and say in the report that you did.
+**`deleted` events already in the feed when the rule arrived are history, not a breach.** They
+record something that really happened and they stay. Scope the query with
+`AND e.ts > '<the timestamp the board adopted the rule>'` when validating such a board, and say
+in the report that you did.
 
 **What to do when it fires.** Not delete anything else. The rows are gone and no query brings them
 back; what is left is finding out which member did it and whether the retired-file procedure in §8
@@ -718,7 +708,8 @@ Named honestly, because a proxy assertion here would convert an open question in
 
 - **Who actually wrote a row.** SQL has no identity. `guild_state.actor` is a courtesy label the
   writer sets on itself and the triggers copy verbatim, so a lying actor produces a lying feed and
-  every event in it passes G7. This is the largest thing v6 gave up and no query can recover it.
+  every event in it passes G7. This is the largest thing the schema cannot hold, and no query
+  recovers it.
 - **Whether a human decided a gate.** `gate.status` is a column. G4 asserts a decision was
   *recorded coherently* — never that a person made it.
 - **Cycles longer than two hops.** No `WITH RECURSIVE`. A longer cycle makes `v_ready_nodes`
@@ -767,8 +758,8 @@ SELECT id FROM graph_node WHERE requirement_id = 'REQ-NNN';
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py"
 ```
 
-**P4.b left SQL in v7** and that is the point of the change: it now reads the agent files
-directly, which is the only place the answer was ever true. An empty result means no subagent
+**P4.b is not SQL**, and that is the point: it reads the agent files directly, which is the
+only place the answer is true. An empty result means no subagent
 declares any capability — every unpinned ticket the architect writes will go `blocked`.
 
 P4.c must be a **separate round trip.** A failing statement does not stop a tursodb script and
@@ -818,8 +809,8 @@ UNION ALL SELECT 'graph-cannot-start', 'REQ-NNN', 'v_ready_nodes empty'
 ORDER BY breach, row_id;
 ```
 
-**`unmatched-ticket` and `unknown-capability-tag` were dropped from this list in v7.** Both read
-the roster tables, and neither can be expressed now. The equivalent check is per ticket and
+**`unmatched-ticket` and `unknown-capability-tag` are not on this list**, because both would
+need roster tables and neither can be expressed in SQL. The equivalent check is per ticket and
 outside SQL — read each unpinned ticket's `who` and put it to the scanner:
 
 ```sql
@@ -988,7 +979,7 @@ narration is obliged to carry and checking the narration against it.
 
 `guild:brief` — "brief me", "what's the status", "where are we", "what moved since last time",
 "what should I work on next", and every other read-only status phrasing. Also reached by the
-deprecated `/guild:guild-status` alias (§10). `guild:check-in` Step 2 opens with the same reads
+`guild:check-in` Step 2 opens with the same reads
 and is bound by §5.b and §5.c identically; the difference is that check-in then *acts*.
 
 ### Preconditions
@@ -1118,14 +1109,12 @@ done < /tmp/rollcall.txt
 [ $fail -eq 0 ] || exit 1
 ```
 
-**`blocked-needs` replaced `roster-gap` and `capability-unknown` in v7**, and it is a better
-row than either: it fires off `v_blocked_tasks.who`, which names the missing capability on the
-ticket that is actually stuck, rather than off a request table somebody had to remember to file
-into. It fires off `v_blocked_tasks.who`, which names the missing capability on the ticket that
-is actually stuck, rather than off a request table somebody had to remember to file into.
+**`blocked-needs` fires off `v_blocked_tasks.who`**, which names the missing capability on the
+ticket that is actually stuck — rather than off a request table somebody had to remember to file
+into.
 
-**v8 added two rows on `messy`, both `TASK-013`** — the librarian ticket every `standard` graph
-now carries, held at `deps:TASK-006`. A documentation ticket is exactly the kind of row a
+**Two rows on `messy` are `TASK-013`** — the librarian ticket every `standard` graph
+carries, held at `deps:TASK-006`. A documentation ticket is exactly the kind of row a
 narrator drops as unimportant, which is why it is in the roll call like any other blocked ticket.
 
 ```
@@ -1222,15 +1211,14 @@ Zero rows / no match when healthy.
 | An empty category was announced ("no bugs open") | judgment |
 | The rows were pasted instead of narrated | judgment |
 
-**The "almost caught up" case is worth its own fixture note, and v8 changed its shape.** It is
-**`review-ready`**, not `messy`. Every *building* ticket there is `done`,
+**The "almost caught up" case is worth its own fixture note.** It is **`review-ready`**, not
+`messy`. Every *building* ticket there is `done`,
 `v_requirement_progress` reads `7|6|1|0|0`, and the single open ticket is `TASK-013` — the
 librarian's. The roll call still returns 12 rows: a pending gate and four findings, two of them
 `critical`/`major`.
 
-Before v8 that board read `6|6|0|0|0` with `v_next_task` empty, and the trap was a brief saying
-"all caught up". **The trap is now sharper, not softer.** `v_next_task` confidently names
-`TASK-013`, so the tempting sentence is *"just the write-up left"* — on a board with an
+**The trap is not "all caught up".** `v_next_task` confidently names `TASK-013`, so the
+tempting sentence is *"just the write-up left"* — on a board with an
 undecided gate and an open critical SQL-injection finding, where the `document` node is two hops
 behind that gate and the code is about to change. A brief that says either thing has read four
 surfaces correctly and drawn the one conclusion the whole gate model exists to prevent. §5.b
@@ -1272,8 +1260,8 @@ catch about that phrasing.
 database — the board is unchanged by definition, so §5.a's fingerprint is the whole of the
 board-side expectation and is not restated.
 
-**Two of these are security, not cosmetics.** They are carried over from v5's review rounds, and
-they exist because the board holds text the guild master and four kinds of agent typed:
+**Two of these are security, not cosmetics.** They exist because the board holds text the
+guild master and four kinds of agent typed:
 requirement titles, bug reports, review findings, work logs. A page that executes a requirement
 title is a real defect, reachable by anyone who can file a bug.
 
@@ -1523,10 +1511,10 @@ SELECT 'running-node-no-claimed-ticket' AS breach, n.id AS row_id, COALESCE(n.ta
 ```
 
 P7.a is a **report**, not a stop: on `messy` it returns
-P7.a **left SQL in v7**, and the change is the point: it now reads the agent files, which is the
-only place the answer was ever true. It returns nothing on a machine with no subagents declaring
-capabilities — correct, and the reason Step 1.2's roster scan runs before anything else. It no
-longer has a `messy`-fixture failure to show, because a fixture cannot seed a roster any more.
+P7.a **is not SQL**, and that is the point: it reads the agent files, which is the only place
+the answer is true. It returns nothing on a machine with no subagents declaring capabilities —
+correct, and the reason Step 1.2's roster scan runs before anything else. It has no
+`messy`-fixture failure to show, because a fixture cannot seed a roster.
 
 P7.b returning rows is the crash-recovery case that Step 1.3 exists for: resolve it before
 Step 3, never by re-dispatching blind.
@@ -1634,13 +1622,13 @@ and fails C.a on `TASK-004` and `TASK-005` immediately. `messy` is the fixture t
 visible: `TASK-002` prefers `svelte` and goes to `developer-svelte`, while `TASK-001` and
 `TASK-003` go to `developer`, so one hardcoded name is wrong twice on one requirement.
 
-**C.a lost half its reach in v7, and it is worth being precise about which half.** It used to
-read `v_agent_match` and catch a ticket handed to somebody the matcher *never named at all* —
-including on the capability path, where the wrong developer is the likeliest mistake. That query
-needed the roster, so what survives is the pinned case: a ticket that names its member and was
-claimed by a different one. That is unambiguous and still worth catching.
+**C.a reaches the pinned case only, and it is worth being precise about which half that is.**
+Catching a ticket handed to somebody the match *never named at all* — including on the capability
+path, where the wrong developer is the likeliest mistake — would need the roster, and the roster
+is not in SQL. What C.a does catch is unambiguous and still worth catching: a ticket that names
+its member and was claimed by a different one.
 
-The capability path has no SQL assertion any more. Checking it means re-running the match:
+The capability path has no SQL assertion. Checking it means re-running the match:
 
 ```sql
 SELECT t.id, t.claimed_by, w.who FROM task t JOIN v_task_who w ON w.task_id = t.id
@@ -1690,9 +1678,9 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers qa-ex
 # qa-tester | sonnet | serial | guild | e2e, qa-execution, test-authoring
 ```
 
-The `serial` word in that line is the signal, and **it is now the only place the signal exists**
-— v6 carried it in the matcher's row. Nothing will stop the dispatch, and a dispatcher that
-skipped the roster scan cannot even see the problem.
+The `serial` word in that line is the signal, and **the frontmatter is the only place it
+exists.** Nothing will stop the dispatch, and a dispatcher that skipped the roster scan cannot
+even see the problem.
 
 ### Anti-expectations
 
@@ -1735,19 +1723,18 @@ skipped the roster scan cannot even see the problem.
 
 ---
 
-## 8. There is no board clear
+## 8. The guild deletes nothing
 
-**The guild deletes nothing.** `guild:clear-board` was removed in v8.1.0 and nothing took its
-place: there is no skill, no SQL recipe and no supported procedure that empties a board in place.
-This section is what remains of the process — an anti-expectation, and the assertion that catches
-a member who reaches for a `DELETE` anyway.
+**There is no skill, no SQL recipe and no supported procedure that empties a board in place.**
+This section is the anti-expectation, and the assertion that catches a member who reaches for a
+`DELETE` anyway.
 
 The reason is the one that made the board a database. `event` is written by triggers and is the
 guild's memory; `doc_revision` holds the body before every rewrite; `knowledge_edge` records which
 decision governed which requirement. All three exist to make the past readable, and a `DELETE`
 reaches through them at once — the row goes, and the record of why it was ever there goes with it.
-The old clear had to cut the library's edges into the work as its *first* statement or breach G10,
-which is a great deal of care to spend on losing information on purpose.
+Emptying a board in place would have to cut the library's edges into the work as its *first*
+statement or breach G10, which is a great deal of care to spend on losing information on purpose.
 
 ### A fresh board is a fresh file
 
@@ -1761,9 +1748,9 @@ The retired file stays on disk and stays readable — `tursodb` opens it like an
 so every id in git history and in `.guild/qa/` still resolves against the board it was written on.
 The new board starts empty, at `REQ-001`.
 
-**What that costs, stated plainly.** The old clear kept `coverage`, `doc`, `doc_revision`, the
-`doc → doc` edges and `event` *in place*. A new file keeps none of them — they are in the retired
-file, not the new one. Carrying them forward means `ATTACH`, and **`ATTACH` is experimental on
+**What that costs, stated plainly.** A new file keeps none of `coverage`, `doc`, `doc_revision`,
+the `doc → doc` edges or `event` — they are in the retired file, not the new one. Carrying them
+forward means `ATTACH`, and **`ATTACH` is experimental on
 tursodb 0.7.2**: it requires `--experimental-attach`, and the guild does not build a procedure on
 an experimental flag. So the trade is honest in both directions — nothing is destroyed, and
 nothing is migrated either. A board you mean to keep working on is a board you do not replace.
@@ -1773,7 +1760,7 @@ nothing is migrated either. A board you mean to keep working on is a board you d
 None of these is a thing a member may do, and each has been someone's shortcut:
 
 - **Emptying tables to "start fresh."** There is no confirmation prompt that makes this allowed.
-  A member asked to clear the board says the board is not clearable and offers the fresh file.
+  A member asked to empty the board says it is not emptiable and offers the fresh file.
 - **`DELETE FROM event`** to quiet a noisy brief. The feed is the memory; a brief that reads
   badly is a board that is in a bad state, and deleting the record does not change the state.
 - **Deleting `doc`, `doc_revision` or `coverage`** because they look like clutter. They describe
@@ -1787,7 +1774,7 @@ None of these is a thing a member may do, and each has been someone's shortcut:
 ### Postconditions
 
 **§8.a — nothing was deleted.** This is G11, asserted globally rather than here, because the rule
-does not only apply to a member who was asked to clear the board.
+does not only apply to a member who was asked to empty the board.
 
 **§8.b — a retired board is intact and readable.** After the fresh-file procedure, expect the old
 file to open and answer:
@@ -1900,10 +1887,9 @@ after the query changed. `requirement`, `task`, `plan`, `graph_node`, `gate`, `w
 byte-identical across the release. A third differing line means a release restatused,
 snapshotted-and-deleted, or "tidied" something.
 
-**This query carried `COUNT(*) FROM agent` until v8.1**, a v7 leftover that made the whole assertion
-error out on any board built since — `no such table: agent`, on *stdout*, where a member checking
-the exit code would not see it. The two library tables took its place: a release must not touch
-them either, and unlike the roster they are actually in this database.
+**The fingerprint must not name a table this database does not have.** A missing table errors the
+whole assertion out — `no such table: …`, on *stdout*, where a member checking the exit code would
+not see it. The two library tables are on the list because a release must not touch them either.
 
 Under `--dry-run` the correct diff is **empty**. Steps 2, 3 and 4 are reads and are safe; step 7's
 upsert is not and must not run.
@@ -1998,78 +1984,7 @@ a ticket nobody on the roster could take, and that is the loud case the skill sp
 
 ---
 
-## 10. `guild-status` — the deprecated alias
-
-A one-line section, because it is a one-line skill: it exists only to keep the typed
-`/guild:guild-status` working and must delegate to `guild:brief`.
-
-### Trigger
-
-The literal slash command `/guild:guild-status`, typed. **Nothing else.**
-
-### Preconditions
-
-None beyond §5's.
-
-### Expected sequence
-
-1. Load `guild:brief` and follow it. Do not re-implement, and do not substitute
-   `SELECT * FROM v_board` — the board view is correct and is *part* of what the brief reads, but
-   on its own it shows tasks only.
-2. Mention the new name once, in passing.
-
-### Postconditions
-
-**§10.a — everything in §5 applies unchanged.** The fingerprint (§5.a) and the roll call (§5.b)
-are the postconditions of this skill, because its output is the brief's output.
-
-**§10.b — it claims no natural-language trigger phrases.** Two skills advertising "guild status"
-makes every status request a coin flip. Mechanically checkable against the frontmatter:
-
-```bash
-comm -12 \
-  <(awk '/^---$/{n++;next} n==1' skills/brief/SKILL.md        | grep -oE '"[^"]+"' | sort -u) \
-  <(awk '/^---$/{n++;next} n==1' skills/guild-status/SKILL.md | grep -oE '"[^"]+"' | sort -u)
-```
-
-Expect **no output**. **This assertion currently FIRES:**
-
-```
-"board status"
-"guild status"
-"project status"
-"what's happening"
-```
-
-The four phrases appear in `guild-status`'s own description — inside the sentence that *disclaims*
-them: *"It claims NO natural-language trigger phrases; 'guild status', 'board status', ... belong
-to guild:brief and must route there."* A human reads that as a disclaimer. A router matching on
-the description string reads it as four claimed phrases, which is exactly the coin flip the
-rename was meant to end. The fix is to name the phrases without quoting them, or to drop the
-enumeration entirely and say only *"this skill claims no trigger phrases; every status phrasing
-belongs to `guild:brief`."*
-
-### Anti-expectations
-
-| Must not be true | Caught by |
-|---|---|
-| It narrates the board itself instead of delegating | not assertable |
-| It substitutes `v_board` for the brief | not assertable |
-| It writes anything | §5.a |
-| It advertises a phrase `guild:brief` also advertises | §10.b — **currently fires, 4 phrases** |
-
-### Cannot be asserted
-
-- **Whether the skill delegated or re-implemented.** Both produce a briefing. Only the second
-  produces a *different* briefing, and §5.b would catch that only if the difference happened to
-  be an omission.
-- **Which skill the router actually picked** for a given user phrase. §10.b measures the
-  collision in the descriptions, which is the cause; the effect is a runtime coin flip nothing
-  here observes.
-
----
-
-## 11. The maintenance cycle
+## 10. The maintenance cycle
 
 The `maintenance` template, end to end: `qa-check` → `qa-plan` → `qa-execute` → `qa-report` →
 `gate-repairs` → `repair`. Six nodes, five edges, **one** gate — invariant, whatever the
@@ -2108,9 +2023,8 @@ SELECT 'a-tester-already-holds-a-ticket', t.id, COALESCE(t.claimed_by,'') FROM t
 ORDER BY breach, row_id;
 ```
 
-**Three clauses left this precondition in v7** — `no-member-can-plan`, `no-member-can-execute`
-and `the-executor-is-not-serial` all read the roster tables. They are now one command, and it
-answers all three at once:
+**Three things this precondition needs are not in SQL** — that a member can plan, that a member
+can execute, and that the executor is serial all read the roster. One command answers all three:
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers qa-planning
@@ -2126,7 +2040,7 @@ nothing downstream will catch it.
 and is the honest version of it.
 
 **`no-area-is-due` is a precondition, not a failure.** It says the cycle should end at `qa-check`
-having cost nothing (§11.b), not that something is wrong. The others are failures: a cycle
+having cost nothing (§10.b), not that something is wrong. The others are failures: a cycle
 that cannot be staffed, or a second one starting on top of a tester that is already driving a
 browser.
 
@@ -2145,11 +2059,11 @@ wanted: **do not start a second cycle while one is under way.**
 3. **`qa-check`** reads `v_coverage_due`. It does not re-derive the interval policy by hand; the
    view is the one definition of "due" and its thresholds are 14 / 30 / 90 days by risk.
 4. **If nothing is due, end here** — `qa-check` `done`, everything downstream `skipped`, the
-   gate `approved` with a decision saying so (§11.b). Do not delete the nodes: an inspection that
+   gate `approved` with a decision saying so (§10.b). Do not delete the nodes: an inspection that
    correctly decided to do nothing is a record worth keeping, and deleting it reads as a drop.
 5. **`qa-plan`** writes the `inspection` row and its `inspection_coverage` rows, one per area in
    scope, `verdict` NULL. Each mission becomes a ticket under the `qa-execute` anchor.
-6. **`qa-execute`** dispatches those tickets **one at a time**. Run the guard in §11.c *before
+6. **`qa-execute`** dispatches those tickets **one at a time**. Run the guard in §10.c *before
    every dispatch*, board-wide — two inspections on two carriers still share one machine and one
    set of ports. The anchor moves `done` once, when the last mission returns.
 7. **`qa-report`** compiles observations into `bug` rows with a severity from the vocabulary,
@@ -2165,7 +2079,7 @@ verdict is recorded before the stamp; the stamp happens before the inspection is
 
 ### Postconditions
 
-**§11.a — the trigger was a person.** Expect **zero rows**:
+**§10.a — the trigger was a person.** Expect **zero rows**:
 
 ```sql
 SELECT 'inspection-not-manual' AS breach, i.id AS row_id, i."trigger" AS detail
@@ -2195,7 +2109,7 @@ an inspection nobody decided was due.
 `maintenance` fixture returns `inspection-before-qa-check | INSP-001 | in-progress` and
 `inspection-not-manual | INSP-001 | cron`.
 
-**§11.b — the cheap exit is a complete exit.** When `qa-check` finds nothing due, the graph closes
+**§10.b — the cheap exit is a complete exit.** When `qa-check` finds nothing due, the graph closes
 out cleanly rather than leaving a `repair` node nothing will ever release. Expect **zero rows**:
 
 ```sql
@@ -2227,11 +2141,10 @@ areas due) **and** zero rows on the same fixture after `maintenance.md` §7.5's 
 `early-end-with-mission-ticket`. Making every area fresh while `INSP-001` is still running
 returns `inspection-running-nothing-due | INSP-001 | v_coverage_due is empty`.
 
-**§11.c — one tester, board-wide.** This is the invariant the whole template is shaped around, so
-it is asserted directly against the graph rather than left to a `serial` flag — **and in v7 that
-is no longer a stylistic preference but the only assertion left in SQL.** G9's ticket-side clause
-can now only report a member holding two tickets; whether that member is serial lives in its
-frontmatter. These node-side and mission-side halves are the ones that still stand on their own:
+**§10.c — one tester, board-wide.** This is the invariant the whole template is shaped around, so
+it is asserted directly against the graph rather than left to a `serial` flag — **which is not a
+stylistic preference but the only assertion available in SQL.** G9's ticket-side clause can only
+report a member holding two tickets; whether that member is serial lives in its frontmatter. These node-side and mission-side halves are the ones that still stand on their own:
 
 ```sql
 SELECT 'two-qa-execute-running' AS breach, n.id AS row_id, n.requirement_id AS detail
@@ -2268,7 +2181,7 @@ excused by a `graph_deviation` row the way an added node would be.
 own `qa-execute` running returns `two-qa-execute-running` for **both** nodes plus
 `qa-execute-running-node-unbound | REQ-901/qa-execute`.
 
-**§11.d — the report was compiled and the stamp was made.** Expect **zero rows**:
+**§10.d — the report was compiled and the stamp was made.** Expect **zero rows**:
 
 ```sql
 SELECT 'qa-report-done-inspection-still-open' AS breach, i.id AS row_id, i.status AS detail
@@ -2316,7 +2229,7 @@ summariser will render as inspected when nobody looked at it.
 stamping adds `inspection-done-no-finished-at`, `inspection-done-with-unreported-area |
 INSP-001/auth-session | verdict IS NULL` and `reached-area-not-stamped | INSP-001/checkout-flow`.
 
-**§11.e — the shared tail, and this is the assertion that matters most in this section.** The
+**§10.e — the shared tail, and this is the assertion that matters most in this section.** The
 central simplification of the design is that QA does *not* get gates of its own: both templates
 converge on one `gate-repairs` → `repair` tail with identical semantics. That claim is
 checkable, so it is checked — **and this query is template-agnostic on purpose**, running over
@@ -2364,7 +2277,7 @@ REQ-900|maintenance|repair      |work|-              |
 `approve` returns `tail-gate-not-followed-by-repair | REQ-900/gate-repairs` and
 `tail-gate-not-select-findings | REQ-001/gate-repairs | approve`.
 
-**§11.f — the maintenance graph matches its template.** G4's `added-gate` / `dropped-gate` and
+**§10.f — the maintenance graph matches its template.** G4's `added-gate` / `dropped-gate` and
 G8's `node-key-not-in-template` are both guarded by `= 'standard'` and **do not fire on a
 maintenance graph at all.** These are their `maintenance` counterparts, and without them a
 maintenance carrier is unchecked. Expect **zero rows**:
@@ -2442,15 +2355,15 @@ Must be false after the cycle.
 
 | Must not be true | Caught by |
 |---|---|
-| An inspection nobody asked for | §11.a `inspection-not-manual`, `inspection-before-qa-check` |
+| An inspection nobody asked for | §10.a `inspection-not-manual`, `inspection-before-qa-check` |
 | An inspection started while a tester was already running | P11.c `a-tester-is-already-running` |
-| Two testers at once, from either side | §11.c, G9 `serial-agent-double-booked` |
-| A `parallel_group` on a `qa-execute` node or mission ticket | §11.c — a defect, not a deviation |
-| A `qa-check` that found nothing but left the graph half-open | §11.b `early-end-left-work-open` |
-| An inspection closed without stamping `last_inspected_at` | §11.d `reached-area-not-stamped` |
-| An inspection closed with a NULL verdict passed off as inspected | §11.d `inspection-done-with-unreported-area` |
-| A maintenance carrier that also carries a plan and feature tickets | §11.a `maintenance-carrier-has-a-plan` |
-| A second gate on a maintenance graph | §11.f `added-gate`, `gate-count-not-one` |
+| Two testers at once, from either side | §10.c, G9 `serial-agent-double-booked` |
+| A `parallel_group` on a `qa-execute` node or mission ticket | §10.c — a defect, not a deviation |
+| A `qa-check` that found nothing but left the graph half-open | §10.b `early-end-left-work-open` |
+| An inspection closed without stamping `last_inspected_at` | §10.d `reached-area-not-stamped` |
+| An inspection closed with a NULL verdict passed off as inspected | §10.d `inspection-done-with-unreported-area` |
+| A maintenance carrier that also carries a plan and feature tickets | §10.a `maintenance-carrier-has-a-plan` |
+| A second gate on a maintenance graph | §10.f `added-gate`, `gate-count-not-one` |
 | A maintenance graph advancing past its undecided gate | G4 `past-unresolved-gate` |
 | A bug in `fixing` with no fix task | G6 `bug-fixing-without-task` |
 | The carrier closed with the inspection still open | G6 `requirement-done-with-unfinished-node` |
@@ -2472,22 +2385,21 @@ Must be false after the cycle.
 - **Whether a filed bug is real,** whether its severity is right, and whether a `wontfix` was a
   judgement or an evasion.
 - **That the trigger really was a person.** `inspection."trigger" = 'manual'` is a value the
-  writer chose about itself. §11.a asserts the value and the ordering around it; it cannot
+  writer chose about itself. §10.a asserts the value and the ordering around it; it cannot
   reach the human.
 
 ---
 
-## 12. The unattended shift
+## 11. The unattended shift
 
 The highest-risk process in the guild: work runs with nobody watching, on somebody's working
 tree, spending real money. **Run until the next gate, then stop and notify.** The segment
 boundary and the stop boundary are the same line, which is what makes "how far may it go" a
 question that needs no separate answer.
 
-Its expectations matter more than any other section's, for a reason worth stating plainly: in v5
-the CLI locked four of these doors in code — `guild node` refused a gate node, `guild git` had no
-`push` verb. **That CLI is gone.** Nothing enforces any line of the MAY / MAY NOT table any more.
-The assertions below are what remains, and they run *after* the night, not during it.
+Its expectations matter more than any other section's, for a reason worth stating plainly:
+**nothing enforces any line of the MAY / MAY NOT table.** The assertions below are all there is,
+and they run *after* the night, not during it.
 
 ### The shift window
 
@@ -2604,7 +2516,7 @@ event as the last write of the shift.
 
 ### Postconditions
 
-**§12.a — it stopped at a gate and never past one.** The single most important assertion in this
+**§11.a — it stopped at a gate and never past one.** The single most important assertion in this
 document. Expect **zero rows**:
 
 ```sql
@@ -2653,7 +2565,7 @@ meaningful on a board whose history accumulated over hours and meaningless on on
 single second — a fixture loaded inside the window makes every `decided` event in it look like
 the shift's work. Open the shift *after* the board exists, which is what a real run does anyway.
 
-**§12.b — what it never touched.** Expect **zero rows**:
+**§11.b — what it never touched.** Expect **zero rows**:
 
 ```sql
 WITH w(t0, t1) AS ( /* the shift window, above */ )
@@ -2679,10 +2591,8 @@ SELECT 'shift-touched-the-direction', e.subject_type || ':' || e.subject_id, e.v
 ORDER BY breach, row_id;
 ```
 
-**Two clauses left this list in v7 and the rule they enforced did not.** `shift-recruited-or-
-retired-a-member` read `event` rows the `agent` table's triggers wrote, and
-`shift-filed-a-capability-request-and-created-the-member` read `capability_request`. Recruiting is
-now a **commit to the agent files**, which this database cannot witness at all. The assertion
+**"the shift did not recruit" is not on this list, and the rule still holds.** Recruiting is a
+**commit to the agent files**, which this database cannot witness at all. The assertion
 moves out of SQL and into the diff:
 
 ```bash
@@ -2704,7 +2614,7 @@ the window are all legal, and only the first move of the first node is not.
 Closing `GOAL-001` and `PROJ-001` mid-shift returns `shift-touched-the-direction` for both. The
 recruitment half is verified by `git status` returning a new file under `agents/`.
 
-**§12.c — the failure policy was followed and the shift did not deadlock.** Expect **zero rows**:
+**§11.c — the failure policy was followed and the shift did not deadlock.** Expect **zero rows**:
 
 ```sql
 WITH w(t0, t1) AS ( /* the shift window, above */ )
@@ -2765,7 +2675,7 @@ ticket stays `failed` returns `failed-ticket-live-node | TASK-005 | REQ-001/test
 Deleting the work log returns `failed-ticket-with-no-reason-logged` and
 `given-up-without-a-retry | TASK-005 | failed`.
 
-**§12.d — a blocked ticket became a roster gap, not a silent skip.** Expect **zero rows**:
+**§11.d — a blocked ticket became a roster gap, not a silent skip.** Expect **zero rows**:
 
 ```sql
 -- The shift ran and something it could not staff is still `todo`. SQL cannot tell WHICH
@@ -2793,22 +2703,21 @@ not available. The shift would select the same requirement next turn, emit the s
 spin all night — **marking it `blocked` is what makes the loop move on**, and `blocked` holding
 the review gate is deliberate, because a roster gap should be loud.
 
-**That write matters more in v7 than it did in v6.** No view derives "nobody covers this" any
-more, so `blocked` is the *only* record that the scan happened and came back empty. A shift that
+**That write is load-bearing.** No view derives "nobody covers this", so `blocked` is the
+*only* record that the scan happened and came back empty. A shift that
 skips it does not just leave a stale `todo` — it leaves a board on which nothing, anywhere, knows
 there is a gap.
 
-`blocked-with-a-pin` is the mirror, and it is what survives of `blocked-but-coverable`: a pin
-skips the capability match entirely, so a pinned ticket can never fail to find a member. If one
-is `blocked`, the status is a lie and a member is being denied work. (The capability-path half of
-that check needed the roster and is gone; re-running `roster.py --covers` against a blocked
-ticket's `who` is what replaces it.)
+`blocked-with-a-pin` is the mirror: a pin skips the capability match entirely, so a pinned ticket
+can never fail to find a member. If one is `blocked`, the status is a lie and a member is being
+denied work. (The capability-path half needs the roster, so it is not SQL — run
+`roster.py --covers` against a blocked ticket's `who` instead.)
 
 *Verified to fire:* reverting `TASK-010` to `todo` after the shift ended returns
 `uncoverable-ticket-left-todo | TASK-010 | needs:embedded`. Pinning a blocked ticket returns
 `blocked-with-a-pin | TASK-010 | developer`.
 
-**§12.e — the shift said why it stopped, every time.** Expect **zero rows**:
+**§11.e — the shift said why it stopped, every time.** Expect **zero rows**:
 
 ```sql
 SELECT 'shift-never-said-why-it-stopped' AS breach, eo.subject_id AS row_id, eo.ts AS detail
@@ -2870,7 +2779,7 @@ that is the point.
 `over-budget`, `shift-opened-without-a-budget` and `stop-reason-outside-the-vocabulary`
 together. An `ended` row with no matching `started` returns `shift-ended-that-never-started`.
 
-**§12.f — git safety.** *Asserted with `git`, not with SQL — the repository is not a table, and
+**§11.f — git safety.** *Asserted with `git`, not with SQL — the repository is not a table, and
 saying so is more useful than a proxy query that pretends otherwise.* Run these from the repo
 root after the shift. Each states its expected output exactly.
 
@@ -2935,22 +2844,22 @@ Must be false after a shift. These are the specific ways *this* process goes wro
 
 | Must not be true | Caught by |
 |---|---|
-| A gate moved from `pending` to decided during the shift | §12.a `gate-decided-during-shift`, `gate-approved-with-no-shift-boundary` |
-| Any node moved past an unresolved gate | §12.a `work-past-unresolved-gate`, G4 `past-unresolved-gate` |
+| A gate moved from `pending` to decided during the shift | §11.a `gate-decided-during-shift`, `gate-approved-with-no-shift-boundary` |
+| Any node moved past an unresolved gate | §11.a `work-past-unresolved-gate`, G4 `past-unresolved-gate` |
 | A requirement closed past an unresolved gate | G6 `requirement-done-with-pending-gate` |
-| An inspection *started* by the shift | §12.b `shift-started-an-inspection`, `shift-opened-an-inspection-row` |
+| An inspection *started* by the shift | §11.b `shift-started-an-inspection`, `shift-opened-an-inspection-row` |
 | A member created during a shift | **not in SQL.** `git status --porcelain agents/ .claude/agents/` after the run |
-| A goal or project moved | §12.b `shift-touched-the-direction` |
-| A ticket retried twice inside one shift | §12.c `retried-more-than-once` |
-| A failure recorded on only one of the ticket and the node | §12.c `failed-node-live-ticket`, `failed-ticket-live-node` |
+| A goal or project moved | §11.b `shift-touched-the-direction` |
+| A ticket retried twice inside one shift | §11.c `retried-more-than-once` |
+| A failure recorded on only one of the ticket and the node | §11.c `failed-node-live-ticket`, `failed-ticket-live-node` |
 | A ticket left `in-progress` by a crashed turn | G6 `in-progress-unclaimed`, `claimed-without-timestamp` |
-| A ticket nobody can take left `todo` | §12.d `uncoverable-ticket-left-todo` |
-| A ticket `blocked` that the matcher could staff | §12.d `blocked-but-coverable`, G6 |
-| A shift that ended without saying why | §12.e `shift-never-said-why-it-stopped` |
-| A stop reason nobody else can read | §12.e `stop-reason-outside-the-vocabulary` |
-| A ceiling raised from inside the loop | §12.e `budget-changed-mid-shift`, `over-budget` |
-| A commit on the default branch, or anything pushed | §12.f G-2, G-3, G-4 |
-| A commit for a failed task | §12.f G-6, G-8 |
+| A ticket nobody can take left `todo` | §11.d `uncoverable-ticket-left-todo` |
+| A ticket `blocked` that the matcher could staff | §11.d `blocked-but-coverable`, G6 |
+| A shift that ended without saying why | §11.e `shift-never-said-why-it-stopped` |
+| A stop reason nobody else can read | §11.e `stop-reason-outside-the-vocabulary` |
+| A ceiling raised from inside the loop | §11.e `budget-changed-mid-shift`, `over-budget` |
+| A commit on the default branch, or anything pushed | §11.f G-2, G-3, G-4 |
+| A commit for a failed task | §11.f G-6, G-8 |
 | An invented capability tag on a ticket the shift created | **not in SQL.** `roster.py --covers` against the ticket's `who` |
 | A dispatch to somebody the matcher would not have picked | G5 `top-agent-disagrees-with-match` |
 
@@ -2962,8 +2871,8 @@ list is longer than the others' and every item on it is load-bearing.
 - **Whether the shift, or a human, made any given change.** SQL has no identity and
   `guild_state.actor` is a label the writer sets on itself. Every window assertion above answers
   *"did this happen during the shift"*, never *"did the shift do it"*. A guild master who wakes at
-  4am and approves a gate produces exactly the row §12.a fires on. **This is the single largest
-  thing v6 gave up, and it is worst here**, because the shift is the one process where nobody is
+  4am and approves a gate produces exactly the row §11.a fires on. **This is the single largest
+  thing SQL cannot hold, and it is worst here**, because the shift is the one process where nobody is
   present to remember.
 - **A priority change is invisible.** Verified: `UPDATE task SET priority = 1` and
   `UPDATE requirement SET priority = 5` each write **no `event` row at all** — the `_touch`

@@ -6,7 +6,7 @@
 > `scripts/` — the 31,348-line bash CLI, all 17 lib modules and the test harness — and replaced it
 > with **schema plus knowledge**: `tursodb` is the tool, guild members write their own SQL, and the
 > guild's rules live in `schema.sql` as CHECK constraints, views and triggers. See
-> [`v6-architecture.md`](./v6-architecture.md).
+> [`architecture.md`](./architecture.md).
 >
 > **This file is kept deliberately.** It is the record of how the data model and the rules were
 > reasoned out, and that reasoning is still in force — v6 inherited the model wholesale and changed
@@ -46,7 +46,7 @@
 **Status:** Proposal, for review — *superseded by v6*
 **Author:** drafted with Claude, 2026-08-13
 **Supersedes:** guild v4.0.0 (directory-encoded board, hardcoded agent chain)
-**Superseded by:** [`v6-architecture.md`](./v6-architecture.md) — the CLI this document specifies was deleted
+**Superseded by:** [`architecture.md`](./architecture.md) — the CLI this document specifies was deleted
 **Breaking:** yes — v5.0.0
 
 ---

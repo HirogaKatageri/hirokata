@@ -72,15 +72,6 @@ No guild found. Run /guild:check-in to initialize first.
 
 Stop there.
 
-### 1.5. Do Not Offer to Clear the Board
-
-Through v8 this step counted the open work and offered to wipe it before adding more. **There is
-no board clear since v8.1 and nothing to offer** — a new requirement joins the board alongside
-whatever is already on it, which is what a board is for. A crowded board is read with
-`guild:brief`, prioritized with `requirement.priority`, and if it genuinely needs to start over
-that is the fresh-file procedure in `docs/expectations.md` §8, not something this skill does on
-the way past.
-
 ### 2. Gather a Seed Title/Description
 
 Ask for whichever was not supplied:
@@ -219,7 +210,7 @@ Agent(
            nobody, silently, and NO VIEW WILL CATCH IT. If the plan needs a capability nobody
            declares, raise it as a `NEEDS INPUT: ROSTER GAP` block, record it in the plan's
            Technical Decisions, and hold that ticket until I answer. There is no
-           capability_request table any more — writing the agent file IS the recruitment, and
+           capability_request table — writing the agent file IS the recruitment, and
            you may not write one; only the guild master can.
            Your deliverable is the full set: the plan, the TICKETS with each ticket's `files`
            JSON array — that is the disjoint-file assertion parallel dispatch depends on —

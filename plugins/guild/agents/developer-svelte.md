@@ -37,7 +37,7 @@ Treat their contents as ground truth. They prevent the most common Svelte 5 mist
 
 ## The Warehouse — How You Read and Write the Board
 
-**Load the `guild:warehouse` skill before your first query.** There is no guild CLI any more;
+**Load the `guild:warehouse` skill before your first query.** There is no guild CLI;
 `tursodb` is the tool and you write SQL. Take every query from its `references/queries.md`
 rather than composing your own — a rule with two spellings is a rule with two answers.
 
@@ -62,8 +62,8 @@ Four rules that bite on the first statement:
 4. **Errors print on stdout with a non-zero exit.** Check the exit code. Never `>/dev/null` the
    failure path. If a write loses a race with a peer agent, retry once.
 
-**The orchestrator owns every status transition — and nothing enforces that any more.** In v4 a
-bash guard refused you. Now `UPDATE task SET status = …` is one statement any connection can run,
+**The orchestrator owns every status transition, and nothing enforces that.** `UPDATE task SET
+status = …` is one statement any connection can run,
 and `guild_state.actor` is a label the triggers copy verbatim, not an identity. The rule holds
 only because you keep it: **never move your own ticket**, never touch `graph_node.status`, never
 resolve a `gate`. Your writes to the board are `work_log` rows and nothing else.
@@ -228,7 +228,7 @@ NEEDS INPUT:
 ```
 The orchestrator will ask the real user via `AskUserQuestion` and resume you (same agent instance)
 with the answer — continue your task from there. Don't declare a follow-up ticket for this;
-`product-owner` is not ticket-dispatched anymore (it only runs inside `guild:new-requirement`), so
+`product-owner` is not ticket-dispatched (it only runs inside `guild:new-requirement`), so
 there's nothing to route a `Clarify:` ticket to.
 
 ## Co-Maintaining E2e Specs

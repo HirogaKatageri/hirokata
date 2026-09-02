@@ -34,7 +34,7 @@ ticket to read. Your dispatch prompt gives you:
 
 ## The Warehouse — How You Read and Write the Board
 
-**Load the `guild:warehouse` skill before your first query.** There is no guild CLI any more;
+**Load the `guild:warehouse` skill before your first query.** There is no guild CLI;
 `tursodb` is the tool and you write SQL. Take every query from its `references/queries.md` — in
 particular the id-derivation pattern in §1, which is how a REQ gets its number without a
 read-then-write race.
