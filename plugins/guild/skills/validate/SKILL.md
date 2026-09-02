@@ -29,7 +29,7 @@ rather than prose to be interpreted. This skill runs them and reports what holds
 
 | invocation | what runs |
 |---|---|
-| `validate` | §3 — the nine global invariants. They hold whatever just ran. |
+| `validate` | §3 — the ten global invariants. They hold whatever just ran. |
 | `validate <process>` | §3, then that process's preconditions, postconditions and anti-expectations. |
 | `validate --fixture <name>` | Loads a fixture into a **scratch** database, then asserts against it. Writes. |
 
@@ -53,7 +53,7 @@ rather than prose to be interpreted. This skill runs them and reports what holds
 a boolean `FAIL` tells you to go looking. **Any output at all is a failure.**
 
 A handful state a count or a value instead — §4.b expects exactly the plan gate row, §4.c
-expects `N+9 | 2N+10 | 2`, P4.a expects version `6`. The sentence above each block says
+expects `N+10 | 2N+11 | 2`, P4.a expects version `8`. The sentence above each block says
 which. Read it; do not assume the zero-rows shape.
 
 **The exit code is not evidence.** tursodb has no `-bail`, a failing statement does not stop
@@ -141,6 +141,8 @@ Four things are mandatory:
    UNION ALL SELECT 'bug',         CAST(COUNT(*) AS TEXT) FROM bug         HAVING COUNT(*) > 0
    UNION ALL SELECT 'coverage',    CAST(COUNT(*) AS TEXT) FROM coverage    HAVING COUNT(*) > 0
    UNION ALL SELECT 'doc',         CAST(COUNT(*) AS TEXT) FROM doc         HAVING COUNT(*) > 0
+   UNION ALL SELECT 'knowledge_edge', CAST(COUNT(*) AS TEXT) FROM knowledge_edge HAVING COUNT(*) > 0
+   UNION ALL SELECT 'doc_revision', CAST(COUNT(*) AS TEXT) FROM doc_revision HAVING COUNT(*) > 0
    UNION ALL SELECT 'inspection',  CAST(COUNT(*) AS TEXT) FROM inspection  HAVING COUNT(*) > 0
    UNION ALL SELECT 'event',       CAST(COUNT(*) AS TEXT) FROM event       HAVING COUNT(*) > 0
    ORDER BY tbl;

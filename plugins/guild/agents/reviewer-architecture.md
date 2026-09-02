@@ -40,6 +40,22 @@ You will also be given:
 - The **plan ID** — this is your primary reference for intended architecture
 - The **requirement ID** — understand constraints
 
+**Read the decision log too. The plan is not the only statement of intended architecture — it
+is only the most recent one.** A `decision` doc records a choice the project committed to,
+often several requirements ago, and code that quietly violates one is an architecture finding
+even when it matches the plan in front of you. The plan's author may simply not have known.
+
+```bash
+printf "SELECT slug, title, status, area, governs FROM v_decision_log WHERE status='current';\n" \
+  | tursodb -q -m list "$DB"
+printf "SELECT body FROM doc WHERE slug='{adr-slug}';\n" | tursodb -q -m list "$DB"
+```
+
+**File the violation, do not resolve it.** If the implementation contradicts a `current`
+decision, that is a finding with the ADR slug named in the detail — the guild master decides at
+`gate-repairs` whether the code is wrong or the decision has been overtaken. You are not the one
+who supersedes an ADR, and neither is the developer.
+
 **Scope your reading to the diff.** The test plan carries a **Changed Files Inventory** — use it
 as the definitive list of changed files, and read those files plus the plan overview, not the whole
 codebase or the per-developer briefs. The test-planner puts the plan in its test-writer ticket's

@@ -16,7 +16,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [8.0.0] - 2026-09-02
+
+### Added
+- **The library becomes a knowledge graph.** `doc` was a flat pile: a slug, a title, a body and a
+  source, with nothing pointing at anything. Three things it could not do, each of which cost
+  something real. It could not say what a document was **for** — a domain rule, a subsystem
+  walkthrough and an API lookup were the same kind of row. It could not hold a **decision** at
+  all: architectural choices lived in `plan.body` prose and in `gate.decision` JSON, both attached
+  to a ticket and both archived when the ticket closed, which made *"why is it like this"* the
+  most expensive question the guild could be asked. And nothing related to anything, so nothing
+  could be derived — not which shipped work was undocumented, not which page went stale when its
+  subject moved, not what the project had decided and then un-decided.
+
+  Three tables now, and the nodes are mostly rows the board already had:
+
+  - **`doc`** gains `kind` (`business` · `technical` · `decision` · `research` · `runbook` ·
+    `reference`), `status` (`draft` → `current` → `superseded` | `rejected`), `area` and
+    `created_at`. One `status` vocabulary serves prose and ADRs both — for a decision, `draft`
+    reads as *proposed* and `current` as *accepted*. **Superseded and rejected rows are never
+    deleted**: they are how a project's evolution is read, and the options it did *not* take are
+    half of why it looks the way it does.
+  - **`knowledge_edge`** — typed, directed relations that may point at **any** board row, which
+    is what makes this a graph over the work rather than a second database beside it.
+    `describes` · `decides` (doc → work), `supersedes` · `refines` · `depends-on` · `contradicts`
+    (doc → doc), `derived-from` (provenance) and `evidence-for` (a bug or finding backing a
+    claim). The rel/type pairings are **CHECK constraints** — `supersedes` between two non-docs
+    is refused by the engine.
+  - **`doc_revision`** — the body before every change, written by `trg_doc_revised`. Documentation
+    history needs no discipline from anybody, and it has **no foreign key to `doc` on purpose**:
+    a revision must survive its document being deleted, or it is not history.
+
+- **Seven views, and two of them make the library maintain itself.** `v_doc_stale` reports any
+  page whose subject has an `event` newer than the page's own `updated_at` — documentation drift,
+  derived from a record the board was already keeping, so nobody has to file a "docs are out of
+  date" ticket. `v_undocumented_work` lists finished requirements nothing describes, in the same
+  idiom `v_coverage_due` uses for quality. Alongside them: `v_knowledge_ref` (the polymorphic
+  endpoint resolver the others stand on), `v_doc_current`, `v_doc_neighbors` (one hop, both
+  directions), `v_decision_log` and `v_knowledge_dangling`. `v_brief` gains `docs_current`,
+  `docs_stale` and `work_undocumented`.
+
+- **A `document` node, and a `librarian` to run it.** The `standard` template's last node, after
+  `repair` — so what gets written is what actually **shipped**, including the findings the guild
+  master waived, which are among the most useful things a later reader can learn. `required: true`
+  deliberately: a node that may be dropped is a node that gets dropped, and the cost is invisible
+  for months and then enormous. The count arithmetic moves to **N + 10 nodes, 2N + 11 edges** —
+  gates stay at exactly **2**, which was never negotiable.
+
+- **The whole chain writes the graph now, not just the librarian.** The **architect** extracts each
+  plan-time decision into a `decision` doc with a `decides` edge (step 4.5) and reads
+  `v_decision_log` *before* designing, so it stops designing past commitments it did not know
+  about; the **product-owner** records the domain rules an interview surfaces as `business` docs;
+  the **researcher** tags its rows `research` and links them; **`reviewer-architecture`** now reads
+  the decision log too, because code that quietly violates a recorded ADR is an architecture
+  finding even when it matches the plan in front of it.
+
+- **G10 — library integrity**, the tenth global invariant. `knowledge_edge` endpoints are
+  polymorphic, so SQLite cannot `REFERENCES` either end and **G1 cannot cover them**. G10 stands
+  in: every dangling edge, plus every `current` doc that something already claims to supersede.
+  Writes take the shape the rest of the guild uses for referential safety —
+  `INSERT … SELECT … FROM <target> WHERE id = …`, where the `FROM` clause *is* the check and a
+  missing endpoint yields zero rows instead of a broken edge.
+
+### Changed
+- **`guild:clear-board` cuts the library's edges into the work, first.** There is no cascade — an
+  edge has no foreign key — so a clear that left them behind would leave edges pointing at
+  requirements it had just deleted, breaching G10 on the next validate. `doc → doc` edges survive,
+  so the decision log and its chains come through a board reset intact. What is genuinely lost is
+  provenance, and nothing can rescue that: a decision that governed `REQ-004` cannot say so once
+  `REQ-004` is gone.
+- **A release names the decisions it shipped and copies none of them.** Slugs, not bodies — a
+  decision goes on evolving after the release that introduced it, and a frozen copy becomes a
+  second answer to a settled question.
+- **`guild:dashboard` gains a Decisions view and a Library view** (nine total). The decision view
+  renders each supersession chain rather than a flat list, and draws a superseded ADR struck
+  through instead of hiding it: the chain *is* the content.
+- **`guild:brief` reports the library in the risk beat, last and never first.** A documentation
+  gap blocks no ticket, and a count with no example is not a briefing.
+
+### Migration
+- **`migrations/008-the-library-becomes-a-graph.sql`**, then re-apply `schema.sql`. Schema version
+  **7 → 8**.
+- **Check `SELECT version FROM schema_version` reads 7 before running it.** A second run does
+  **not** fail safely — it resets `kind`, `status`, `area` and `created_at` on every document. The
+  rebuild ends in an unconditional `DROP TABLE doc` and **no guard inside the file can prevent
+  that**, because a failing statement does not stop a tursodb script (there is no `-bail`). A
+  `guild_state` tripwire makes a second run exit non-zero so you find out, but it tells you
+  afterwards. The version check tells you beforehand, and the backup is what undoes it.
+- **The backfill guesses two things and says so**: `created_at` copies `updated_at`, because the
+  old row carried no birth date and inventing a plausible one is worse than a visibly wrong one;
+  `kind` is `research` when `source = 'researcher'` and `reference` otherwise. Re-tag by hand
+  afterwards — `SELECT slug, title, kind FROM doc ORDER BY kind, slug`.
+- **No edges are invented.** An edge is an assertion about meaning and a script cannot make one, so
+  every finished requirement appears in `v_undocumented_work` on the first read after upgrading.
+  That number is the backlog becoming visible, not a fault.
+
+### Verified
+- Every construct against **tursodb 0.7.2**, including four the schema had not used before —
+  `group_concat(col, sep)`, a `LEFT JOIN` onto a view, a correlated `NOT EXISTS` against a view
+  built from `UNION ALL`, and `AFTER DELETE` triggers. All four now carry a row in §7 of
+  `tursodb-gotchas.md`.
+- Every new CHECK **rejects** its bad row (each rel/type pairing, self-edges, duplicate edges,
+  unknown `kind`); `trg_doc_revised` snapshots on a real body change and correctly skips a no-op
+  rewrite and a metadata-only update; `v_doc_stale` stays empty until its subject moves and fires
+  the moment it does; `v_knowledge_dangling` reports all four broken ends of a deleted doc; G10
+  fires on both clauses and clears when fixed; the migration round-trips a seeded v7 board with
+  `PRAGMA integrity_check` clean, and the `document` node becomes ready even when `repair` is
+  `skipped`.
 
 ### Fixed
 - **README caught up with v7.** The file structure block still claimed `schema.sql` held

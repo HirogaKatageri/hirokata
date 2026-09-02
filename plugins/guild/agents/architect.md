@@ -191,14 +191,29 @@ take it to the user.
 Before designing, understand what exists:
 
 1. **Read project docs**: `CLAUDE.md`, `README.md`, `ARCHITECTURE.md` if they exist
-2. **Check the guild's library**: it is the `doc` table, not `.guild/docs/*.md`. There is no
-   FTS5, so search with `LIKE` (the escaped form is in the warehouse skill's `queries.md`) or
-   just list it when the board is small:
+2. **Check the guild's library**: it is `doc` + `knowledge_edge`, not `.guild/docs/*.md`. There
+   is no FTS5, so search with `LIKE` (the escaped form is in the warehouse skill's
+   `queries.md`) or just list it when the board is small:
    ```bash
-   printf "SELECT slug, title FROM doc ORDER BY slug;\n"        | tursodb -q -m list "$DB"
+   # what stands right now, by kind. Superseded pages are hidden
+   printf "SELECT kind, slug, title, area FROM v_doc_current ORDER BY kind, area, slug;\n" \
+     | tursodb -q -m list "$DB"
    printf "SELECT body FROM doc WHERE slug='{topic-slug}';\n"   | tursodb -q -m list "$DB"
    ```
-   This is prior research the guild has already done — reuse it before triggering research
+   This is prior research the guild has already done — reuse it before triggering research.
+
+   **Read the decision log before you design.** It is the cheapest thing on this list and the
+   one most likely to change your plan: it tells you what this project already committed to,
+   what it rejected, and what it changed its mind about. Designing against a decision that was
+   made and recorded a year ago — without knowing it was made — is the most expensive mistake
+   available at this step.
+   ```bash
+   printf "SELECT slug, title, status, supersedes, governs FROM v_decision_log;\n" \
+     | tursodb -q -m list "$DB"
+   ```
+   **If your plan contradicts a `current` decision, that is not a blocker — it is a finding.**
+   Say so explicitly in the plan and write the superseding ADR at step 4.5. What you must not
+   do is design past it silently.
 3. **Identify project type**: Check `package.json`, `pubspec.yaml`, `requirements.txt`, etc.
 4. **Find related code**: Search for existing patterns related to the requirement
 5. **Map the architecture**: Understand directory structure, module organization, key abstractions
@@ -588,7 +603,87 @@ step 5, hexed from the file you wrote it to:
 - Base everything on actual codebase analysis, not assumptions.
 - Downstream agents (test-planner, reviewers) orient from the overview — keep it consistent with the tickets.
 
-### 5. Create the Developer, Test-Planner, and Reviewer Tickets Directly
+### 4.5 Record the Decisions as ADRs
+
+**The plan body is where architectural decisions go to die.** It is attached to a requirement,
+it is read once at `gate-plan`, and a quarter later nobody can find the sentence that explains
+why the system is shaped the way it is. So the decisions come **out** of the plan and into the
+library as their own rows, while you still have the reasoning in your head.
+
+**Which decisions.** One `decision` doc per choice where **a reasonable architect could have
+chosen otherwise**. Not "we used the existing logger". Yes to "sessions live in Redis rather
+than Postgres, accepting another service to run". If you cannot name the alternative and what
+the choice costs, it is an implementation detail — leave it in the plan body.
+
+Expect **one to three per requirement.** Zero is legitimate for a plan that only applies
+existing patterns, and you should say so in your report rather than manufacturing one. More
+than about four usually means you are recording details, not decisions.
+
+```bash
+hex=$(xxd -p < /tmp/adr-session-store.md | tr -d '\n')
+ttl=$(printf '%s' "Sessions live in Redis" | xxd -p | tr -d '\n')
+{ printf "PRAGMA foreign_keys = ON;\n"
+  printf "UPDATE guild_state SET value = 'architect' WHERE key = 'actor';\n"
+  printf "INSERT INTO doc (slug, title, body, kind, status, area, source, created_at, updated_at)
+          VALUES ('adr-session-store', CAST(x'$ttl' AS TEXT), CAST(x'$hex' AS TEXT),
+                  'decision', 'current', 'auth', 'architect',
+                  strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now'),
+                  strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now'))
+          ON CONFLICT(slug) DO UPDATE SET
+            title = excluded.title, body = excluded.body, kind = excluded.kind,
+            area = excluded.area, source = excluded.source,
+            updated_at = strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now')
+          RETURNING slug;\n"
+  # link it to the requirement it governs. The FROM clause IS the referential check —
+  # there is no foreign key on an edge, so zero rows back means REQ-NNN was not there
+  printf "INSERT INTO knowledge_edge (rel, from_type, from_id, to_type, to_id, note, created_by, created_at)
+          SELECT 'decides', 'doc', 'adr-session-store', 'requirement', r.id, '', 'architect',
+                 strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now')
+            FROM requirement r WHERE r.id = '$R' RETURNING id;\n"
+} | tursodb -q -m list "$DB"
+```
+
+**Check both `RETURNING` values.** A silently-skipped edge is the failure mode here, and it is
+invisible until somebody asks "what governs this requirement" and gets nothing back.
+
+**If this plan overturns an existing decision** (you found it at step 2), write the new ADR as
+its own row and add a `supersedes` edge to the old slug. **Never edit the old decision's body.**
+The old row staying, with its original reasoning intact, is the entire mechanism by which this
+project can explain its own evolution.
+
+```bash
+printf "INSERT INTO knowledge_edge (rel, from_type, from_id, to_type, to_id, note, created_by, created_at)
+        SELECT 'supersedes', 'doc', 'adr-session-store-v2', 'doc', d.slug,
+               CAST(x'<hex of why it changed>' AS TEXT), 'architect',
+               strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now')
+          FROM doc d WHERE d.slug = 'adr-session-store' RETURNING id;\n" \
+  | tursodb -q -m list "$DB"
+```
+
+The ADR body shape — and the sections people skip are the ones with the value:
+
+```markdown
+# {State the decision, not the topic}
+
+## Context
+{What was true that forced a choice. The constraint, not the feature.}
+
+## Decision
+{What we are doing, present tense, one or two sentences.}
+
+## Alternatives considered
+- **{Option}** — {why not}
+
+## Consequences
+{What it costs. What it makes easy. What it makes hard.
+ An ADR with no negative consequence has not been thought about.}
+```
+
+**This does not replace the `document` node.** You record the decisions taken *at plan time*,
+while they are fresh. The librarian's sweep at the end of the requirement records what the code
+actually turned out to be, and catches the decisions that got made during implementation.
+
+### 5. Create the Developer, Test-Planner, Reviewer and Librarian Tickets Directly
 
 Unlike a ticket-dispatched agent, you have no "Follow-up Tasks" section to declare into — create
 the tickets yourself, right now, in this same session.
@@ -639,7 +734,20 @@ Repeat per implement ticket, then the tail:
 - **the test-planner ticket** — `agent` NULL, required capability `test-planning`, empty `files`,
   no `parallel_group`, `node_key = 'test-plan'`;
 - **the reviewer ticket** — `agent = 'reviewer'` (the literal string, because the review gate is
-  keyed on it), required capability `review`, no `parallel_group`, `node_key = 'review'`.
+  keyed on it), required capability `review`, no `parallel_group`, `node_key = 'review'`;
+- **the librarian ticket** — `agent` NULL, required capability `document`, empty `files`, no
+  `parallel_group`, `node_key = 'document'`. Its `objective` says **what this requirement is
+  likely to have produced worth writing down** — the domain area it touches, the decisions you
+  recorded at step 4.5, and anything you deliberately left undecided for the implementation to
+  settle. The librarian re-reads the sources itself; your objective is the pointer, not the
+  content.
+
+**The librarian ticket is not optional, and forgetting it stalls the requirement.** The
+`document` node is unbound at instantiation, exactly like `test-plan` and `review` — the
+orchestrator resolves it by finding the requirement's open bounty whose `needs:` matches the
+node's key. With no `needs:document` ticket there is no bounty, the node reads as an anchor for
+a fan-out that never comes, and the requirement sits at 95% with nothing to dispatch. That is a
+quiet failure, not a loud one.
 
 **`agent` and the capability rows are both optional to the schema, but a ticket with neither is a
 ticket nobody will ever be matched to.** In v4 the CLI refused it and named both alternatives;
@@ -650,8 +758,8 @@ The id is derived **in the same statement as the insert**, so there is no read-t
 zero-padding to three digits is what keeps text order equal to numeric order — which the cursor
 relies on. `node_key` records which template node produced the ticket.
 
-**Create the developer tickets first (lower IDs), then the test-planner, then the reviewer** — the
-cursor runs in ID order, so the test-planner is reached only after every developer ticket is
+**Create the developer tickets first (lower IDs), then the test-planner, then the reviewer, then
+the librarian last** — the cursor runs in ID order, so the test-planner is reached only after every developer ticket is
 `done`, and the reviewer only after the test-planner's declared test-writer ticket(s) are `done`
 (its N/N gate). The test-planner declares the `test-writer` ticket(s) itself once it runs — do NOT
 create those yourself.
@@ -729,7 +837,7 @@ same script as the writes is not a guard, because a failing statement does not s
 `COMMIT` still commits what landed. If the graph exists, adopt it and change its shape with a
 deviation instead.
 
-With *N* implement tickets the template gives **N + 9 nodes, 2N + 10 edges, and exactly 2 gate rows**.
+With *N* implement tickets the template gives **N + 10 nodes, 2N + 11 edges, and exactly 2 gate rows**.
 Check your INSERT against that count (§8 of the template has the query) — it is the cheapest way to
 catch a fan-out that silently produced nothing.
 
@@ -744,6 +852,7 @@ The shape you get, and what each node means for your plan:
 | `review` | `fanout: fixed`, four reviewers, `parallel: all` | Required. Reshapeable, never droppable |
 | `gate-repairs` | gate, required, `select-findings` | Findings are COLLECTED during the run and judged here, together |
 | `repair` | `fanout: per-approved-finding` | Created from what the guild master approves at gate 2 |
+| `document` | one node, required | The librarian writes the requirement down and links it into the library. Runs last, after `repair`, so it records what actually shipped |
 
 **6b. Deviate where the work genuinely calls for it — with a reason, every time.** A deviation is
 the node/edge change **plus** a `graph_deviation` row recording it. Write both:
@@ -851,8 +960,11 @@ Report completion in your final message:
 - the **ticket IDs** you created (developer(s), test-planner, reviewer) with their `parallel-group`
   waves noted **and the capabilities each one declares**;
 - the **graph**: which template, how many nodes / edges / gates against the expected
-  N + 9 / 2N + 10 / 2, **every deviation with its reason**, and the validation result — name the
+  N + 10 / 2N + 11 / 2, **every deviation with its reason**, and the validation result — name the
   checks you ran and say plainly that each returned zero rows;
+- the **decisions you recorded** (step 4.5): each ADR slug, what it governs, and any decision it
+  supersedes. **If you recorded none, say so and say why** — "this plan only applies existing
+  patterns" is a fine answer and a silent zero is not;
 - the fact that the requirement now **stops at `gate-plan`**, and that nothing will be built until
   the guild master approves it.
 
@@ -882,11 +994,21 @@ gate and the plan is the only part of this that the guild master still has in fr
 - Don't put implementation detail in the overview — that belongs in the task briefs
 - Don't omit `files` from developer tickets — it is the disjointness assertion the waves rest on,
   and the slug is how the graph binds the node to the ticket
+- **Don't forget the `needs:document` ticket.** The `document` node has no ticket to bind to
+  without it, and the requirement stalls after `repair` with nothing dispatchable
 - Don't design in the abstract — ground everything in the actual codebase
 - Don't propose unnecessary complexity — simpler is better
 - Don't skip the codebase analysis — it's what makes your plan actionable
 - Don't queue a separate researcher ticket — call `guild:researcher` inline and keep planning in
   the same session
+- **Don't leave the decisions only in the plan body.** A plan is read once, at the gate, and then
+  archived with its requirement. An ADR row outlives it and is what answers "why is it like this"
+  a year from now. Step 4.5 is not optional bookkeeping
+- **Don't edit an existing decision to reflect a new one.** New row, `supersedes` edge, old row
+  untouched. Overwriting it destroys the only record of what the project believed at the time —
+  which is the thing that makes the library worth having
+- **Don't design past a `current` decision silently.** If your plan contradicts one, name it in
+  the plan and supersede it deliberately
 - **Don't INSERT a `goal` or `project`, don't set `requirement.project_id`, and don't touch
   `project.concurrent`, `project.isolation` or `project.worktree_path`** — flag the mismatch in
   your report and let the guild master decide. Nothing refuses those writes any more

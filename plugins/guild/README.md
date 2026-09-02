@@ -159,11 +159,45 @@ guild member can claim, carrying the file set it owns in `files`.
 `migrations/006-project-and-plan-approval.sql` — run it before re-applying `schema.sql`.
 
 Alongside them: `graph_node` / `graph_edge` / `gate` (the execution graph), `task_capability`
-(what each ticket needs), `bug`, `coverage`, `review_finding`, `work_log`, `doc`, and `event` —
-the activity feed the triggers write.
+(what each ticket needs), `bug`, `coverage`, `review_finding`, `work_log`, and `event` — the
+activity feed the triggers write.
 
 The roster left the database in v7. Existing boards migrate with
 `migrations/007-roster-leaves-the-database.sql` — run it before re-applying `schema.sql`.
+
+### The library is a knowledge graph
+
+`doc` + `knowledge_edge` + `doc_revision`. A `doc` is a page with a **`kind`** — `business` (the
+domain's own rules), `technical` (how a subsystem works), **`decision`** (an ADR), `research`,
+`runbook`, `reference` — and a lifecycle (`draft` → `current` → `superseded` | `rejected`).
+
+**A `knowledge_edge` can point at any row on the board**, which is what makes this a graph over
+the work rather than a second database beside it: `describes` and `decides` (doc → requirement,
+task, project), `supersedes` / `refines` / `depends-on` / `contradicts` (doc → doc),
+`derived-from` (provenance) and `evidence-for` (a bug backing a claim). The rel/type pairings are
+CHECK constraints; **the endpoints have no foreign key**, because SQLite cannot `REFERENCES` a
+table chosen at runtime — `v_knowledge_dangling` is the invariant that stands in, and
+`guild:validate` runs it.
+
+Three things fall out of that, and they are the reason it is worth the tables:
+
+- **Decisions have a home.** They used to live in plan prose and `gate.decision` JSON, both
+  archived with the ticket. `v_decision_log` is now "what did this project choose, what did it
+  replace, and what replaced it" — including the rejected options, which are half of why a
+  codebase looks the way it does. **A decision is never overwritten**: the new ADR is its own row
+  with a `supersedes` edge, and the old one stays readable.
+- **Drift is a query.** `v_doc_stale` reports any page whose subject has an `event` newer than
+  the page itself, and `v_undocumented_work` lists finished requirements nothing describes.
+  Nobody files a "docs are out of date" ticket.
+- **History is automatic.** `trg_doc_revised` snapshots the old body on every change, so
+  `doc_revision` accumulates without anybody remembering to.
+
+Every requirement documents itself: the `standard` template's last node is **`document`**, run by
+the `librarian` after `repair`, so what gets written is what actually shipped.
+
+Existing boards migrate with `migrations/008-the-library-becomes-a-graph.sql` — run it before
+re-applying `schema.sql`, and **check `SELECT version FROM schema_version` reads 7 first**: a
+second run resets every document's tagging.
 
 **`event` is the record.** There is no journal any more. `guild.db` is not derived state that can be
 thrown away and rebuilt; it is the board. It is gitignored because a binary file is a bad thing to
@@ -189,6 +223,9 @@ Read the view; do not re-derive the rule. The ones you will use most:
 | `v_project_progress` | Every project with its counters, isolation and worktree. |
 | `v_requirement_progress` / `v_goal_progress` | How far along. |
 | `v_failed_tasks`, `v_open_findings`, `v_open_bugs`, `v_coverage_due` | What still needs attention. |
+| `v_doc_current` / `v_decision_log` | The library as it stands, and every decision in order — including the superseded ones. |
+| `v_doc_neighbors` | What a page relates to. One hop: there is no `WITH RECURSIVE`. |
+| `v_doc_stale` / `v_undocumented_work` | Which pages went stale, and which shipped work nobody wrote down. |
 | `v_blocked_tasks` | What cannot move, and why — a `status-blocked` row's `who` names the capability nobody has. |
 | `v_recent_activity` | What moved. |
 
@@ -253,7 +290,7 @@ the price of moving the vocabulary into the engine, and it is a real one.
 | `guild:clear-board` | Deletes every unit of work, keeping the things that outlive a board. **There is no journal to replay any more** — a `DELETE` is final. Back the file up first. |
 | `guild:discuss` | Surfaces the subjects in the current context and drives a focused discussion. |
 | `guild:create-workflow` | Generates a CI or script workflow file. |
-| `guild:validate` | **Runs `docs/expectations.md` against the live board** — the nine global invariants by default, a named process's postconditions on request. Reports each failure with the offending rows. Read-only unless you ask it to load a fixture. |
+| `guild:validate` | **Runs `docs/expectations.md` against the live board** — the ten global invariants by default, a named process's postconditions on request. Reports each failure with the offending rows. Read-only unless you ask it to load a fixture. |
 | `guild:warehouse` | **The reference every member loads before touching guild data.** |
 
 Agent-facing skills that specialists pre-load rather than users invoking: `guild:qa-mindset`,
@@ -290,6 +327,7 @@ to first.
 | `reviewer-business-logic` | Haiku | `review`, `business-logic` | Acceptance criteria, business rules, testability. |
 | `reviewer-edge-case` | Haiku | `review`, `edge-case` | Boundary conditions, null handling, error scenarios. |
 | `researcher` | Haiku | `research` | Technology research, API investigation, documentation lookup. |
+| `librarian` | Sonnet | `document` | Writes the finished requirement into the library — business rules, technical pages, ADRs — and links them into the knowledge graph. Repairs stale and unlinked pages. |
 | `qa-strategist` | Sonnet | `qa-planning` | Risk map as `coverage` rows, adversarial what-if missions. |
 | `qa-tester` | Sonnet | `qa-execution`, `test-authoring`, `e2e` | **`serial: true`** — runs the product and authors e2e specs; Playwright collides on ports, so two may never run concurrently. |
 
@@ -322,10 +360,10 @@ The plugin:
 
 ```
 plugins/guild/
-├── schema.sql              # THE TOOL. 21 tables, 23 views, 40 triggers, and the guild's rules
+├── schema.sql              # THE TOOL. 23 tables, 30 views, 44 triggers, and the guild's rules
 ├── migrations/             # one-shot upgrades for what IF NOT EXISTS cannot reach —
 │                           # renamed tables and new columns. Run, then re-apply schema.sql
-├── agents/                 # 14 roster members; frontmatter is the roster source
+├── agents/                 # 15 roster members; frontmatter is the roster source
 ├── skills/
 │   ├── warehouse/          # how to reach the board — the skill every member loads
 │   │   └── references/     # schema.md, queries.md, tursodb-gotchas.md, templates/
@@ -374,7 +412,7 @@ expected result**:
 
 | | |
 |---|---|
-| **§3 — nine global invariants** | Hold at all times, whatever just ran: referential health, vocabulary, id shape, gate integrity, ticket routing, closure, event coverage, graph structure, concurrency. |
+| **§3 — ten global invariants** | Hold at all times, whatever just ran: referential health, vocabulary, id shape, gate integrity, ticket routing, closure, event coverage, graph structure, concurrency, library integrity. |
 | **§4–§12 — one section per process** | Trigger, preconditions, expected sequence, postconditions, anti-expectations, and *cannot be asserted* — for `new-requirement`, `brief`, `dashboard`, `check-in`, `clear-board`, `release`, `guild-status`, `qa` and `shift`. |
 | **`expectations-fixtures.md`** | Six known board states — `empty`, `planned`, `in-flight`, `review-ready`, `messy`, `maintenance` — because an assertion run against an unknown state answers differently every time. |
 
@@ -443,7 +481,7 @@ What *is* verified:
   authored.
 - **Every assertion in `docs/expectations.md` and every fixture in `docs/expectations-fixtures.md`
   was executed** against a real tursodb 0.7.2 database — confirmed to pass on a healthy board, and,
-  for the nine invariants, confirmed to *fire* on a deliberately injected breach. An assertion that
+  for the ten invariants, confirmed to *fire* on a deliberately injected breach. An assertion that
   has never been seen to fail is not an assertion, it is a wish.
 - **The v6.2 `project` rename and plan approval** were verified the same way: the schema applies to a
   fresh board at version 6, `migrations/006-project-and-plan-approval.sql` was run end to end against
@@ -454,7 +492,18 @@ What *is* verified:
   `migrations/007-roster-leaves-the-database.sql` followed by `schema.sql` lands **21 tables, 23
   views, 40 triggers, `schema_version = 7`**, with data and history intact and
   `PRAGMA integrity_check` clean.
-- **Both migrations have been run against seeded boards only, never against a board with real
+- **The v8 library graph** was verified the same way: `schema.sql` applies clean to a fresh board
+  and is idempotent on re-apply; `migrations/008-the-library-becomes-a-graph.sql` followed by
+  `schema.sql` takes a seeded v7 board to **23 tables, 30 views, 44 triggers,
+  `schema_version = 8`** with `PRAGMA integrity_check` clean; every new CHECK was shown to reject
+  its bad row; `trg_doc_revised` snapshots a real body change and correctly skips a no-op rewrite;
+  `v_doc_stale` stays empty until its subject moves and fires the moment it does; **G10 fires on
+  both clauses and clears when fixed**, and G8 fires on a dropped `document` node; all six
+  fixtures reload and every one of the ten invariants returns zero rows on each. Four SQL
+  constructs new to the schema — `group_concat(col, sep)`, a `LEFT JOIN` onto a view, a
+  correlated `NOT EXISTS` against a `UNION ALL` view, and `AFTER DELETE` triggers — were each
+  verified and carry a row in `tursodb-gotchas.md` §7.
+- **All three migrations have been run against seeded boards only, never against a board with real
   history.**
 
 What is **not**:

@@ -155,7 +155,7 @@ deleting the heading.
 ## 3. Global invariants
 
 **These hold at all times, whatever just ran.** They are not tied to a process, they are the
-definition of a coherent board. Run all nine after every skill.
+definition of a coherent board. Run all ten after every skill.
 
 Every query below returns **zero rows** when healthy. Each has been verified to pass on a
 correct board and to fire on an injected breach; the demonstrated breach is noted with each one.
@@ -501,6 +501,13 @@ new assertion:
 
 The execution graph is connected, stays inside its requirement, and matches its template.
 
+**`document` joined the required set in v8** — it may be reshaped, never dropped, exactly like
+`review`. A `standard` graph missing it returns `dropped-required-node | REQ-nnn | document`,
+which is the loud version of a documentation gap: a node that may be dropped is a node that gets
+dropped, and the cost is invisible for months and then enormous. Note that the `maintenance`
+template's key list below does **not** carry it: an inspection produces bugs and specs, not new
+subsystem knowledge.
+
 ```sql
 SELECT 'orphan-node' AS breach, n.id AS row_id, 'no edge in or out' AS detail
   FROM graph_node n
@@ -517,7 +524,8 @@ SELECT 'two-cycle', e1.from_node || ' <-> ' || e1.to_node, 'mutual edge'
 UNION ALL
 SELECT 'dropped-required-node', r.id, k.k
   FROM requirement r JOIN (SELECT 'gate-plan' AS k UNION ALL SELECT 'implement'
-                           UNION ALL SELECT 'review' UNION ALL SELECT 'gate-repairs') k
+                           UNION ALL SELECT 'review' UNION ALL SELECT 'gate-repairs'
+                           UNION ALL SELECT 'document') k
  WHERE (SELECT value FROM guild_state WHERE key = 'graph-template:' || r.id) = 'standard'
    AND NOT EXISTS (SELECT 1 FROM graph_node n WHERE n.requirement_id = r.id AND n.node_key = k.k)
 UNION ALL
@@ -533,7 +541,7 @@ UNION ALL
 SELECT 'node-key-not-in-template', n.id, n.node_key
   FROM graph_node n
  WHERE (SELECT value FROM guild_state WHERE key = 'graph-template:' || n.requirement_id) = 'standard'
-   AND n.node_key NOT IN ('gate-plan','implement','test-plan','test-write','review','gate-repairs','repair')
+   AND n.node_key NOT IN ('gate-plan','implement','test-plan','test-write','review','gate-repairs','repair','document')
    AND NOT EXISTS (SELECT 1 FROM graph_deviation d WHERE d.requirement_id = n.requirement_id AND d.kind = 'add-node' AND d.node_key = n.node_key)
 UNION ALL
 SELECT 'work-node-done-without-task', n.id, n.node_key
@@ -590,6 +598,58 @@ clause got weaker in v7 and pretending otherwise is worse than saying so.
 *Verified to fire:* two tickets claimed by `qa-tester` simultaneously returns
 `agent-double-booked | qa-tester | 2 in-flight`, and `qa-tester` declares `serial: true`.
 
+### G10 — Library integrity
+
+**The foreign key the engine cannot give us.** A `knowledge_edge` endpoint is polymorphic —
+`to_id` may name a doc, a requirement, a task or a bug — and SQLite cannot `REFERENCES` a table
+chosen at runtime, so there is no constraint on either end. G1 cannot cover it for the same
+reason. This is the assertion that stands in for both.
+
+```sql
+SELECT 'knowledge_edge.' || broken_side AS ref,
+       CAST(edge_id AS TEXT)            AS row_id,
+       rel || ' ' || missing_type || ':' || missing_id AS missing
+  FROM v_knowledge_dangling
+UNION ALL
+SELECT 'doc.superseded-but-current', d.slug, d.status
+  FROM doc d
+ WHERE d.status = 'current'
+   AND EXISTS (SELECT 1 FROM knowledge_edge ke
+                WHERE ke.rel = 'supersedes' AND ke.to_type = 'doc' AND ke.to_id = d.slug)
+ ORDER BY ref, row_id;
+```
+
+Two clauses, two different failures:
+
+- **A dangling edge** means something an edge pointed at was deleted. The usual cause is a board
+  clear that did not cut the library's edges into the work first — `guild:clear-board` deletes
+  `WHERE from_type <> 'doc' OR to_type <> 'doc'` as its first statement precisely to avoid this.
+  The other cause is a hand-written `DELETE FROM requirement`.
+- **A `current` doc with an inbound `supersedes` edge** is a cosmetic drift, not a broken read:
+  `v_doc_current` already hides such a page, so no reader is misled. It fires because the two
+  writes that retire a decision (the edge, then the status) are the same shape as the two writes
+  that resolve a gate, and the second one gets forgotten the same way. Fix it with
+  `UPDATE doc SET status = 'superseded'`.
+
+**The second clause is deliberately not the reverse.** A `superseded` doc with *no* inbound edge
+is legitimate — a page can be retired because it is simply wrong, with nothing replacing it.
+
+*Verified to fire:* deleting a `doc` that four edges pointed at returns four rows, one per broken
+end, including the edge that was broken at both ends reported twice.
+
+### Cannot be asserted — G10's honest limits
+
+- **Whether a document is true.** Nothing can check prose against code. `v_doc_stale` is the
+  approximation the board can actually compute — a doc whose subject has an `event` newer than
+  the doc's own `updated_at` — and it is a *signal*, not an invariant. A stale page is not a
+  breach and must never be asserted as one.
+- **Whether the right things were documented.** `v_undocumented_work` counts finished
+  requirements nothing describes. That number is expected to be non-zero on a healthy board and
+  is a backlog, not a failure.
+- **Whether an edge's claim is correct.** `contradicts` between two pages that agree, or
+  `supersedes` pointing the wrong way, are meaning errors. The CHECKs enforce the *shape* of a
+  relation (`supersedes` is doc → doc), never its truth.
+
 ### Cannot be asserted — globally
 
 Named honestly, because a proxy assertion here would convert an open question into a green check.
@@ -633,7 +693,7 @@ is what releases the rest of the flow to `guild:check-in` or `guild:shift`.
 The schema is applied and the roster has been read. Before the flow may begin:
 
 ```sql
--- P4.a  the schema is current — expect exactly one row, version 7
+-- P4.a  the schema is current — expect exactly one row, version 8
 SELECT version FROM schema_version WHERE id = 1;
 
 -- P4.c  this requirement has no graph already — expect ZERO ROWS
@@ -667,15 +727,15 @@ P4.c must be a **separate round trip.** A failing statement does not stop a turs
    `agent`, `files` as a JSON array — the disjointness assertion that parallel dispatch depends
    on — and `parallel_group` where the architect declared a wave.
 6. **Instantiate the graph** from `templates/standard.md`: nodes, edges, two gate rows, and the
-   `guild_state` key `graph-template:REQ-NNN`. With *N* implement tickets this is **N + 9 nodes
-   and 2N + 10 edges** — for two tickets, 11 and 14.
+   `guild_state` key `graph-template:REQ-NNN`. With *N* implement tickets this is **N + 10 nodes
+   and 2N + 11 edges** — for two tickets, 12 and 15.
 7. **Validate the graph read-only** and send failures back to the architect. Do not patch a graph
    by hand: deviations are its record, and a graph the orchestrator patched has a shape nobody
    justified.
 8. **Present `gate-plan` and stop.** On approval, two writes in this order: the `gate` row, then
    `graph_node.status = 'done'`. Setting the gate does not move the node.
 9. Then, and only then: implement → test-plan → test-write → review (×4) → `gate-repairs` →
-   repair. Each work node moves `pending → running → done` as its ticket moves
+   repair → `document`. Each work node moves `pending → running → done` as its ticket moves
    `todo → in-progress → done`.
 
 ### Postconditions
@@ -722,7 +782,7 @@ This is the strongest single statement that nothing can be built yet. `v_ready_n
 schema's one definition of readiness, and at plan time it offers a human decision and nothing
 else.
 
-**§4.c — node, edge and gate counts.** For a plan with *N* implement tickets, expect `N + 9`, `2N + 10`, and
+**§4.c — node, edge and gate counts.** For a plan with *N* implement tickets, expect `N + 10`, `2N + 11`, and
 **exactly 2**:
 
 ```sql
@@ -999,28 +1059,33 @@ done < /tmp/rollcall.txt
 **`blocked-needs` replaced `roster-gap` and `capability-unknown` in v7**, and it is a better
 row than either: it fires off `v_blocked_tasks.who`, which names the missing capability on the
 ticket that is actually stuck, rather than off a request table somebody had to remember to file
-into. The roll call is still exactly **27 rows** on `messy`, which is the useful coincidence to
-notice — the same facts survived the table's removal, attached to the ticket instead.
+into. It fires off `v_blocked_tasks.who`, which names the missing capability on the ticket that
+is actually stuck, rather than off a request table somebody had to remember to file into.
+
+**v8 added two rows on `messy`, both `TASK-013`** — the librarian ticket every `standard` graph
+now carries, held at `deps:TASK-006`. A documentation ticket is exactly the kind of row a
+narrator drops as unimportant, which is why it is in the roll call like any other blocked ticket.
 
 ```
-blocked-because|deps:TASK-003            failed-unadjudicated|TASK-007
-blocked-because|deps:TASK-004            failed-waived|TASK-008
-blocked-because|status-blocked           in-flight|TASK-003
-blocked-needs|needs:embedded             moved|BUG-001
-blocked-needs|needs:rust                 moved|BUG-002
-blocked-task|TASK-004                    moved|REQ-001/gate-plan
-blocked-task|TASK-005                    moved|TASK-001
-blocked-task|TASK-009                    moved|TASK-002
-blocked-task|TASK-010                    moved|TASK-003
-blocked-task|TASK-011                    moved|TASK-007
-bug-open|BUG-001                         moved|TASK-008
-bug-open|BUG-002                         moved|TASK-009
-coverage-stale|auth-session              moved|TASK-010
-coverage-stale|checkout-flow
+blocked-because|deps:TASK-003     coverage-stale|checkout-flow
+blocked-because|deps:TASK-004     failed-unadjudicated|TASK-007
+blocked-because|deps:TASK-006     failed-waived|TASK-008
+blocked-because|status-blocked    in-flight|TASK-003
+blocked-needs|needs:embedded      moved|BUG-001
+blocked-needs|needs:rust          moved|BUG-002
+blocked-task|TASK-004             moved|REQ-001/gate-plan
+blocked-task|TASK-005             moved|TASK-001
+blocked-task|TASK-009             moved|TASK-002
+blocked-task|TASK-010             moved|TASK-003
+blocked-task|TASK-011             moved|TASK-007
+blocked-task|TASK-013             moved|TASK-008
+bug-open|BUG-001                  moved|TASK-009
+bug-open|BUG-002                  moved|TASK-010
+coverage-stale|auth-session
 ```
 
 Row counts per fixture, so a harness can sanity-check its own load: `empty` **0**, `planned`
-**5**, `in-flight` **9**, `review-ready` **12**, `maintenance` **8**, `messy` **27**.
+**7**, `in-flight` **11**, `review-ready` **12**, `maintenance` **8**, `messy` **29**.
 
 **A brief that omits a failed task is a FAILURE.** Nothing crashed, no query errored, the exit
 code was 0, and the deliverable is wrong — `TASK-007` failed with 12k of 480k rows backfilled and
@@ -1095,13 +1160,24 @@ Zero rows / no match when healthy.
 | An empty category was announced ("no bugs open") | judgment |
 | The rows were pasted instead of narrated | judgment |
 
-The `next = none` case is worth its own fixture note. It is **`review-ready`**, not `messy`:
-there, `v_next_task` is empty, `v_open_bounties` is empty, every ticket is `done`, and
-`v_requirement_progress` reads `6|6|0|0|0`. The roll call still returns 12 rows — a pending gate
-and four findings, two of them `critical`/`major`. A brief that says "all caught up" on that
-board has read four surfaces correctly and drawn the one conclusion the whole gate model exists
-to prevent. §5.b catches it *only* because the gate and the findings are in the roll call; it
-does not catch the sentence itself.
+**The "almost caught up" case is worth its own fixture note, and v8 changed its shape.** It is
+**`review-ready`**, not `messy`. Every *building* ticket there is `done`,
+`v_requirement_progress` reads `7|6|1|0|0`, and the single open ticket is `TASK-013` — the
+librarian's. The roll call still returns 12 rows: a pending gate and four findings, two of them
+`critical`/`major`.
+
+Before v8 that board read `6|6|0|0|0` with `v_next_task` empty, and the trap was a brief saying
+"all caught up". **The trap is now sharper, not softer.** `v_next_task` confidently names
+`TASK-013`, so the tempting sentence is *"just the write-up left"* — on a board with an
+undecided gate and an open critical SQL-injection finding, where the `document` node is two hops
+behind that gate and the code is about to change. A brief that says either thing has read four
+surfaces correctly and drawn the one conclusion the whole gate model exists to prevent. §5.b
+catches it *only* because the gate and the findings are in the roll call; it does not catch the
+sentence itself.
+
+**`next = none` is now reachable only on `empty`**, where the roll call is 0 rows and every
+brief passes trivially — which is the honest statement of what these fixtures can and cannot
+catch about that phrasing.
 
 ### Cannot be asserted
 
@@ -1631,13 +1707,33 @@ comparison, so there has to be a *before*:
 -- keep.sql — run BEFORE the clear, and again after
 SELECT 'coverage'         AS t, COUNT(*) AS n FROM coverage
 UNION ALL SELECT 'doc',              COUNT(*) FROM doc
+UNION ALL SELECT 'doc_revision',     COUNT(*) FROM doc_revision
+UNION ALL SELECT 'doc-doc-edges',    (SELECT COUNT(*) FROM knowledge_edge
+                                       WHERE from_type = 'doc' AND to_type = 'doc')
 UNION ALL SELECT 'event',            COUNT(*) FROM event
 UNION ALL SELECT 'state-actor',      (SELECT COUNT(*) FROM guild_state WHERE key = 'actor')
 UNION ALL SELECT 'state-checkin',    (SELECT COUNT(*) FROM guild_state WHERE key = 'last-checkin')
 ORDER BY t;
 ```
 
-On `messy` this reads `coverage|3`, `doc|0`, `event|47`, `state-actor|1`, `state-checkin|1`.
+On `messy` this reads `coverage|3`, `doc|0`, `doc_revision|0`, `doc-doc-edges|0`, `event|47`,
+`state-actor|1`, `state-checkin|1`.
+
+**`doc-doc-edges` is on the keep list and edges into the WORK are not**, which is the one part
+of a clear that is not simply "delete the board". A `knowledge_edge` has no foreign key — its
+endpoints are polymorphic, so nothing cascades — and a clear that left them behind would leave
+edges pointing at requirements it just deleted, breaching **G10** on the very next validate. So
+`guild:clear-board` deletes `WHERE from_type <> 'doc' OR to_type <> 'doc'` as its FIRST
+statement, and the library's own chains — `supersedes`, `refines`, `depends-on`,
+`contradicts` — come through untouched.
+
+**What is genuinely lost is provenance**, and no assertion can rescue it: a decision that
+governed `REQ-004` cannot say so once `REQ-004` is gone. Add this to the post-clear checks:
+
+```sql
+-- expect ZERO ROWS after a clear — G10 in miniature
+SELECT edge_id, rel, broken_side, missing_type, missing_id FROM v_knowledge_dangling;
+```
 
 **`agent|14` and `agent_capability|26` used to head this list**, and their absence is the point
 of the v7 change: the roster is the agent files, so a board reset was never able to reach it and
@@ -2056,7 +2152,7 @@ otherwise carry two graphs and one ambiguous `graph-template:` key.
 ### Preconditions
 
 ```sql
--- P11.a  the schema is current — expect exactly one row, version 7
+-- P11.a  the schema is current — expect exactly one row, version 8
 SELECT version FROM schema_version WHERE id = 1;
 
 -- P11.b  the carrier has no graph already — expect ZERO ROWS, in its own round trip

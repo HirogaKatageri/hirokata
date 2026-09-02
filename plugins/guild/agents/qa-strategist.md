@@ -138,12 +138,29 @@ this order — use what's available, fall through when it isn't:
       FROM requirement ORDER BY id;\n" | tursodb -q -m list "$DB"
    printf "SELECT body FROM requirement WHERE id='REQ-NNN';\n" | tursodb -q -m list "$DB"
 
-   printf "SELECT slug, title FROM doc ORDER BY slug;\n" | tursodb -q -m list "$DB"
+   printf "SELECT kind, slug, title, area FROM v_doc_current ORDER BY kind, area, slug;\n" \
+     | tursodb -q -m list "$DB"
    printf "SELECT body FROM doc WHERE slug='{topic-slug}';\n" | tursodb -q -m list "$DB"
    ```
    To search the library rather than list it, there is **no FTS5** — use `LIKE` with the
    wildcards escaped in SQL (the form is in the warehouse skill's `queries.md`), and refuse an
    empty query, which escapes to `%%` and quietly answers "everything".
+
+   **`kind = 'business'` is the oracle you want, and `kind = 'decision'` is the one that saves
+   you filing a bug against a deliberate choice.** A business doc states what the product
+   PROMISES — the closest thing to a specification this guild has. A decision doc states what
+   was chosen and what it costs, which is exactly how you tell a defect from an accepted
+   trade-off. Read both before you call anything wrong:
+   ```bash
+   printf "SELECT slug, title, area FROM v_doc_current WHERE kind='business';\n" \
+     | tursodb -q -m list "$DB"
+   printf "SELECT slug, title, status, governs FROM v_decision_log WHERE status='current';\n" \
+     | tursodb -q -m list "$DB"
+   ```
+
+   **A stale page is not an oracle.** `SELECT slug, subject_id FROM v_doc_stale` names the pages
+   whose subject has moved since they were written — treat those as evidence of intent, not as a
+   statement of current behavior, and say which you relied on when you file.
 2. **External board** — if a board MCP connector (Linear, Jira, etc.) is
    available to you as a tool, query it for the relevant tickets/acceptance
    criteria. If no connector is configured, skip this layer (note it).

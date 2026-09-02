@@ -93,6 +93,24 @@ SELECT replace(replace(replace(json_object(
               'spec',COALESCE(spec_path,''),'last',COALESCE(last_inspected_at,''),
               'notes',COALESCE(notes,'')))
             FROM (SELECT * FROM coverage ORDER BY id)),
+  'docs', (SELECT json_group_array(json_object('slug',slug,'title',title,'kind',kind,
+              'status',status,'area',area,'source',source,'created',created_at,
+              'updated',updated_at,'revisions',revisions,'edges',edges))
+            FROM (SELECT * FROM v_doc_current)),
+  'decisions', (SELECT json_group_array(json_object('slug',slug,'title',title,'status',status,
+              'area',area,'created',created_at,'supersedes',supersedes,
+              'superseded_by',superseded_by,'governs',governs,'revisions',revisions))
+            FROM (SELECT * FROM v_decision_log)),
+  'links', (SELECT json_group_array(json_object('rel',rel,'from_type',from_type,'from',from_id,
+              'to_type',to_type,'to',to_id,'note',note,'by',created_by))
+            FROM (SELECT * FROM knowledge_edge ORDER BY id)),
+  'docs_stale', (SELECT json_group_array(json_object('slug',slug,'title',title,'kind',kind,
+              'rel',rel,'subject_type',subject_type,'subject',subject_id,
+              'doc_updated',doc_updated_at,'subject_moved',subject_moved_at))
+            FROM (SELECT * FROM v_doc_stale)),
+  'undocumented', (SELECT json_group_array(json_object('id',id,'title',title,
+              'project',COALESCE(project_id,''),'finished',finished_at,'tasks',tasks_done))
+            FROM (SELECT * FROM v_undocumented_work)),
   'activity', (SELECT json_group_array(json_object('ts',ts,'actor',actor,'verb',verb,
               'type',subject_type,'subject',subject_id,'title',subject_title,'phrase',phrase))
             FROM (SELECT * FROM v_recent_activity LIMIT 200))
@@ -180,7 +198,7 @@ Nothing printed is the passing result.
   `fetch`, no network of any kind — it works offline and from `file://`.
 - **Theme-aware and readable at a glance.** Severity and status carry colour; nothing depends on
   colour alone.
-- **Seven views**, switched client-side:
+- **Nine views**, switched client-side:
 
   | View | Answers | From |
   |------|---------|------|
@@ -190,6 +208,8 @@ Nothing printed is the passing result.
   | **Bugs** | open defects by severity, linked to their fix tasks | `bugs` |
   | **Findings** | what reviewers flagged and whether it was ever fixed — grouped by severity, unresolved first, filterable to the resolved | `findings` |
   | **Coverage** | quality areas by risk, and how long since anyone looked | `coverage` |
+  | **Decisions** | the ADR log, newest first — what this project chose, what each one replaced and what replaced it, and which work it governs. A superseded decision renders struck through rather than hidden: the chain **is** the content | `decisions` |
+  | **Library** | every current page by `kind` and `area`, with its revision and edge counts; stale pages flagged with the subject that moved, and finished requirements nobody documented listed beside them | `docs`, `links`, `docs_stale`, `undocumented` |
   | **Activity** | the event feed, newest first | `activity` |
 
 - **Every summary tile is a link to the view behind it.** `Open findings` lands on Findings,
@@ -197,6 +217,15 @@ Nothing printed is the passing result.
   to a list of names is the failure this page exists to fix.
 - **An area with no `last` is "never inspected", not "0 days ago".** Rendering it as fresh lies
   about the state of the product.
+- **Draw the decision chain, not just the list.** A `decision` row carries `supersedes` and
+  `superseded_by` as space-separated slugs, which is enough to render each chain in order with
+  no layout engine — the same way the graph view renders predecessors. The reason this view
+  exists is that "we tried X, then moved to Y, for this reason" is the single hardest thing to
+  recover from a repository, and it is one `json` field away here.
+- **`links` carries every edge, including the ones into the work.** That is what lets the
+  Library view answer "what governs REQ-004" by filtering client-side, with no second query.
+- **A stale page is a warning, never an error.** Amber, not red — nothing is broken, a page just
+  needs re-reading. Red is for defects.
 - **Roster gaps belong on the Board view, next to the blocked tasks they explain** — the two are
   one story.
 

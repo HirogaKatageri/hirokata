@@ -77,7 +77,8 @@ You're spawned in one of two ways:
 
 Before any web search, search the library. **There is no FTS5** — search is `LIKE`, and the query
 must have its wildcards escaped in SQL (escape the backslash *first*, so nothing introduced later
-gets double-escaped):
+gets double-escaped). Search `doc` rather than `v_doc_current` here: a superseded page can still
+be the fastest route to the current one, via its `supersedes` edge.
 
 ```bash
 q=$(printf '%s' "stripe webhook" | xxd -p | tr -d '\n')
@@ -144,17 +145,46 @@ the shell that way, and command substitution would eat its trailing newlines:
 hex=$(xxd -p < doc-body.md | tr -d '\n')
 ttl=$(printf '%s' "{Human-readable title}" | xxd -p | tr -d '\n')
 { printf "PRAGMA foreign_keys = ON;\n"
-  printf "INSERT INTO doc (slug, title, body, source, updated_at)
-          VALUES ('$slug', CAST(x'$ttl' AS TEXT), CAST(x'$hex' AS TEXT), 'researcher',
+  printf "INSERT INTO doc (slug, title, body, kind, status, area, source, created_at, updated_at)
+          VALUES ('$slug', CAST(x'$ttl' AS TEXT), CAST(x'$hex' AS TEXT),
+                  'research', 'current', '$area', 'researcher',
+                  strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now'),
                   strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now'))
           ON CONFLICT(slug) DO UPDATE SET
             title      = excluded.title,
             body       = excluded.body,
+            kind       = excluded.kind,
+            area       = excluded.area,
             source     = excluded.source,
             updated_at = strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now')
           RETURNING slug;\n"
 } | tursodb -q -m list "$DB"
 ```
+
+**`kind` is `research` and you do not choose otherwise.** That is what your rows are, and it is
+how the architect filters the library down to "things somebody looked up" without reading the
+domain rules and the ADRs on the way past. `area` is a free key ('auth', 'billing') — set it when
+the topic clearly belongs to one, leave it `''` when it does not.
+
+**`created_at` and `status` are absent from the `DO UPDATE` list on purpose.** A birth date must
+survive a re-save, and a lifecycle is moved deliberately, never as a side effect of an upsert.
+
+**Then link it to the requirement it was researched for**, if you were given one. A document
+nobody linked is invisible to `v_doc_stale` and counts for nothing in `v_undocumented_work` —
+it is in the library, but the library cannot maintain it.
+
+```bash
+{ printf "PRAGMA foreign_keys = ON;\n"
+  printf "INSERT INTO knowledge_edge (rel, from_type, from_id, to_type, to_id, note, created_by, created_at)
+          SELECT 'describes', 'doc', '$slug', 'requirement', r.id, '', 'researcher',
+                 strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now')
+            FROM requirement r WHERE r.id='$R' RETURNING id;\n"
+} | tursodb -q -m list "$DB"
+```
+
+**There is no foreign key on an edge** — its endpoints are polymorphic and the engine cannot
+check them. The `FROM requirement r WHERE r.id='$R'` clause **is** the check, and **zero rows
+back means the requirement was not there and nothing was written.** Look at the output.
 
 **The upsert replaces the whole body** — it is not a merge. That is why the update-in-place rule
 below has you read the existing body first and compose the merged document, then write once.
@@ -264,6 +294,11 @@ is a label the triggers copy verbatim, not an identity. The rule holds only beca
   are still in the repo, read them as history and migrate a topic into a row the first time you
   touch it.
 - Don't create near-duplicate rows — update the existing slug in place if the topic overlaps
+- **Don't leave the row unlinked** when you were given a requirement. One `describes` edge is the
+  difference between a page the library can maintain and a page it cannot see
+- **Don't write a `decision` doc.** Recording what the guild chose is the architect's job at plan
+  time and the librarian's at the end. You record what is TRUE OF THE WORLD — an API's shape, a
+  library's constraints — which is `kind = 'research'` and nothing else
 - Don't overwrite existing doc content — the upsert replaces `body` wholesale, so read, merge,
   then write once
 - **Don't write to `event` by hand.** The triggers write it. It is the guild's memory, and a

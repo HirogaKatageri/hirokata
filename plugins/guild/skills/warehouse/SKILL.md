@@ -3,15 +3,19 @@ name: warehouse
 description: >
   The guild's warehouse — how to read and write guild data with SQL. Load this
   before touching anything in the guild database: tasks, requirements, plans,
-  goals, projects, bugs, review findings, work logs, docs, coverage, the execution
+  goals, projects, bugs, review findings, work logs, coverage, the execution
   graph, gates, ticket capabilities, or the event feed. Also load it for the
+  LIBRARY — documentation, decisions and ADRs, how a page relates to the work it
+  describes, what superseded what, and which pages went stale. Also for the
   board, the brief, bounties, "what's next", "what moved", roster gaps, or a
   capability match — the roster itself lives in the agent files, and this skill
   says where. Trigger phrases include "guild board", "guild brief", "next task",
   "claim a task", "open bounties", "file a bug", "log work", "review finding",
   "ready nodes", "resolve a gate", "the roster", "match an agent", "guild.db",
-  "tursodb", "warehouse", "guild database", "guild SQL".
-version: 1.0.0
+  "tursodb", "warehouse", "guild database", "guild SQL", "write a doc",
+  "the library", "knowledge graph", "decision record", "ADR", "link a doc",
+  "supersede a decision", "stale docs", "undocumented work".
+version: 1.1.0
 allowed-tools: Bash(tursodb *)
 ---
 
@@ -54,7 +58,8 @@ The schema lives at `${CLAUDE_PLUGIN_ROOT}/schema.sql`. Applying it is idempoten
    `json_object(...)`, or select exactly one column when you need a value byte-exact, or
    flatten in SQL before it leaves the engine.
 4. **Read the view, do not re-derive the rule.** `v_next_task`, `v_open_bounties`,
-   `v_task_actionable`, `v_ready_nodes`, `v_board`, `v_brief` and the rest each hold ONE
+   `v_task_actionable`, `v_ready_nodes`, `v_board`, `v_brief`, `v_doc_current`,
+   `v_doc_stale` and the rest each hold ONE
    definition of a rule. Two members writing their own version of "which task is next"
    gives the guild two answers to one question, and both look right. **The one rule with
    no view is the agent match** — the roster is not in this database — and its single
@@ -70,6 +75,26 @@ Set your name once per script so the triggers attribute the events to you:
 `UPDATE guild_state SET value = 'developer-svelte' WHERE key = 'actor';`
 It is a label, not an identity — nothing authenticates it.
 
+## The library is a graph, not a pile
+
+`doc` rows are nodes, `knowledge_edge` rows are typed relations between them **and any other
+row on the board**, and `doc_revision` is the history a trigger writes for you. Three habits
+make it work, and skipping any of them turns it back into a pile:
+
+1. **Tag the `kind`.** `business` / `technical` / `decision` / `research` / `runbook` /
+   `reference`. Every reader branches on it, and `reference` is what you pick when you have
+   not decided.
+2. **Link it to something.** A document with no edge is invisible to `v_doc_stale` (nothing
+   to compare against) and counts for nothing in `v_undocumented_work`. Find the orphans with
+   `SELECT slug FROM v_doc_current WHERE edges = 0`.
+3. **Supersede — never overwrite — a decision.** Write the new ADR as its own row and add a
+   `supersedes` edge. The old one stays and `v_doc_current` hides it. Editing the old body to
+   say "we don't do this any more" destroys the only record of what was believed.
+
+**There is no traversal.** `WITH RECURSIVE` is a parse error on tursodb, so a chain is one
+query per hop, looped in the caller and **capped** — unlike the execution graph, this one may
+legitimately contain a cycle.
+
 ## References — load what the task needs
 
 - **`references/schema.md`** — what every table is FOR, how the tables relate, and which
@@ -77,10 +102,13 @@ It is a label, not an identity — nothing authenticates it.
   it when you are deciding *where a piece of information belongs*, or when you need to
   know whether something is actually guaranteed.
 - **`references/queries.md`** — the canonical, verified queries: creating a requirement /
-  plan / task / bug / doc with derived ids, moving something through status, the
+  plan / task / bug with derived ids, moving something through status, the
   daily reads (board, brief, bounties, what moved), the execution graph, and §5 on the
-  roster — which is where to find it, since it is not in SQL. Load it when you are about
-  to write SQL. Copy from it rather than improvising.
+  roster — which is where to find it, since it is not in SQL. **§1 also carries the whole
+  library**: writing a typed doc, linking it with the write-time check that stands in for
+  the missing foreign key, superseding a decision, walking the graph one hop at a time,
+  and the two drift reads. Load it when you are about to write SQL. Copy from it rather
+  than improvising.
 - **`references/tursodb-gotchas.md`** — the traps, each reproduced against the real
   binary: the statement splitter, invalid UTF-8, `-m list` forgery, no `WITH RECURSIVE`,
   no FTS5, `LIKE` escaping, output-channel injection, non-atomic scripts, and the

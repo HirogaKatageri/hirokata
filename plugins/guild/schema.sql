@@ -16,12 +16,14 @@
 -- and moves on, so a RENAMED table or a NEW COLUMN never reaches a live board from this
 -- file. Those ship as one-shot scripts in `migrations/`, run in order, once each:
 --
---   tursodb .guild/guild.db < migrations/007-roster-leaves-the-database.sql
+--   tursodb .guild/guild.db < migrations/008-the-library-becomes-a-graph.sql
 --   tursodb .guild/guild.db < schema.sql
 --
 -- Check `SELECT version FROM schema_version` against the number seeded below. This file
--- is at version 7. A board reporting 6 has not been migrated, and applying this file over
--- it leaves the roster tables and their views behind.
+-- is at version 8. A board reporting 7 has not been migrated, and applying this file over
+-- it leaves the OLD `doc` shape standing — `CREATE TABLE IF NOT EXISTS` sees a table and
+-- moves on, so `kind`, `status`, `area` and `created_at` never arrive, and every view and
+-- trigger below that reads them fails at runtime. A board reporting 6 must run 007 first.
 --
 -- ------------------------------------------------------------------------------------
 -- WHAT THIS FILE IS
@@ -103,6 +105,19 @@
 --      columns on two tables and approving the plan is TWO WRITES, exactly as moving a
 --      gate's node is. `plan.gate_node_id` ties them together for a reader; it does not
 --      keep them in step. `v_plans_pending_approval` is what tells you they drifted.
+--  11. "EVERY `knowledge_edge` POINTS AT SOMETHING THAT EXISTS." Its endpoints are
+--      POLYMORPHIC — `to_id` may name a doc, a requirement, a task or a bug — and SQLite
+--      cannot REFERENCE a table chosen at runtime, so there is no foreign key on either
+--      end. What stands in for it: write the edge with `INSERT ... SELECT ... FROM
+--      <target> WHERE id = ...` so a missing endpoint yields zero rows, and read
+--      `v_knowledge_dangling`, which is a global invariant `guild:validate` runs. Deleting
+--      a requirement therefore ORPHANS its edges silently. The CHECKs that ARE enforced
+--      are the rel/type pairings — `supersedes` between two non-docs is refused.
+--  12. "A DOCUMENT DESCRIBES THE CODE AS IT IS NOW." Nothing can know that.
+--      `v_doc_stale` is the honest approximation: it reports a doc whose subject has an
+--      `event` newer than the doc's own `updated_at`. That catches "the work moved and
+--      nobody revisited the page" and misses "the code changed under a doc nobody linked
+--      to anything" — which is why `v_undocumented_work` exists beside it.
 --
 -- ------------------------------------------------------------------------------------
 -- ENGINE CONSTRAINTS — verified on tursodb 0.7.2, and every one of them cost a round
@@ -116,6 +131,10 @@
 --     is TEXT or INTEGER. Keep it that way.
 --   * WORKING: STRICT, RETURNING, ON CONFLICT DO UPDATE, printf(), plain CTEs, WAL,
 --     foreign_keys, JSON functions, CHECK, VIEW, TRIGGER, `UPDATE OF <col>` triggers.
+--   * ALSO WORKING, and added in v8 because the library's views lean on them — verified on
+--     0.7.2, see references/tursodb-gotchas.md §7: `group_concat(col, sep)`, a LEFT JOIN
+--     onto a VIEW, a correlated `NOT EXISTS` against a VIEW built from `UNION ALL`, and
+--     `AFTER DELETE` triggers.
 --
 -- HOW TO SEND SQL WITHOUT CORRUPTING IT. The tursodb stdin splitter ends a statement at a
 -- `;` that terminates a line — EVEN INSIDE AN OPEN STRING LITERAL. So any free text you
@@ -173,7 +192,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 ) STRICT;
 
 INSERT INTO schema_version (id, version, applied_at)
-SELECT 1, 7, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+SELECT 1, 8, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE id = 1);
 
 
@@ -538,7 +557,7 @@ CREATE TABLE IF NOT EXISTS bug (
 
 
 -- =====================================================================================
--- MAINTENANCE — coverage, inspection, inspection_coverage, doc
+-- MAINTENANCE — coverage, inspection, inspection_coverage
 -- =====================================================================================
 
 -- What the product is made of, from a quality standpoint. EVERGREEN: it survives releases
@@ -583,14 +602,161 @@ CREATE TABLE IF NOT EXISTS inspection_coverage (
   PRIMARY KEY (inspection_id, coverage_id)
 ) STRICT;
 
--- The library. Long-lived knowledge the guild looked up once and should not look up
--- again. Search it with LIKE — there is no FTS5.
+-- =====================================================================================
+-- THE LIBRARY, WHICH IS A GRAPH — doc, knowledge_edge, doc_revision
+-- =====================================================================================
+-- Long-lived knowledge: what the business rules ARE, how a subsystem works, what was
+-- DECIDED and why, and how each of those changed. EVERGREEN — the library survives
+-- releases and board resets, exactly like `coverage`, because a decision does not stop
+-- being true when the ticket that caused it ships.
+--
+-- THREE TABLES, THREE DIFFERENT JOBS, AND THEY ARE NOT INTERCHANGEABLE:
+--
+--   doc             THE NODES. One row per topic, keyed by `slug`.
+--   knowledge_edge  THE RELATIONS. Typed, directed, and able to point at ANY board row —
+--                   which is what makes this a graph over the work and not a second
+--                   database sitting beside it. Most of the nodes already exist as
+--                   requirements, plans, tasks and bugs.
+--   doc_revision    THE HISTORY. Written by a TRIGGER on every body change, so a member
+--                   cannot forget to snapshot, and "what did we believe in March" is a
+--                   query rather than a git archaeology session.
+--
+-- WHY EDGES RATHER THAN MORE COLUMNS. `supersedes`, `contradicts` and `describes` are all
+-- many-to-many and all carry a `note`. As columns they would be three nullable foreign
+-- keys that could each only hold one value, and the fourth relation somebody needs next
+-- year would be a table rebuild.
+
+-- ---- doc ----------------------------------------------------------------------------
+-- `kind` IS WHAT THE DOCUMENT IS FOR, and the vocabulary is closed on purpose because
+-- every reader branches on it:
+--
+--   business    the domain's own rules. What a refund IS, when an account is dormant,
+--               which invariants the product promises. Written from the requirement
+--               interview, and the doc most likely to outlive the code that implements it.
+--   technical   how a subsystem actually works right now. Owned by whoever last changed it.
+--   decision    AN ADR. One choice, its context, the alternatives, the consequences. This
+--               is the kind that was homeless before v8 — decisions lived in plan prose
+--               and in `gate.decision` JSON, where nothing could find them again.
+--   research    an external lookup the guild should not have to repeat. The researcher's
+--               output, and the only kind that was really being written before v8.
+--   runbook     the steps for an operation somebody performs — deploy, rotate, restore.
+--   reference   everything else. The default, and deliberately boring.
+--
+-- `status` IS THE DOCUMENT'S OWN LIFECYCLE, and one vocabulary serves prose and ADRs both:
+--
+--   draft       being written, or — for a decision — PROPOSED and not yet agreed.
+--   current     live. For a decision, ACCEPTED.
+--   superseded  replaced. The row STAYS: a superseded decision is how you read the
+--               project's evolution, and deleting it is how you lose it. `v_doc_current`
+--               is what hides it from ordinary reads.
+--   rejected    considered and declined. Also stays, for the same reason — the decisions
+--               a project did NOT take are half of why it looks the way it does.
+--
+-- `area` is a FREE key ('auth', 'billing') and deliberately not CHECKed. It is how the
+-- graph clusters, and a vocabulary that has to be migrated to add a subsystem is a
+-- vocabulary people route around. Overlap it with `coverage.id` where it makes sense.
 CREATE TABLE IF NOT EXISTS doc (
-  slug       TEXT PRIMARY KEY,                -- 'sveltekit-form-actions'
+  slug       TEXT PRIMARY KEY,                -- 'sveltekit-form-actions', 'adr-session-store'
   title      TEXT NOT NULL,
   body       TEXT NOT NULL,
+  kind       TEXT NOT NULL DEFAULT 'reference'
+             CHECK (kind IN ('business', 'technical', 'decision',
+                             'research', 'runbook', 'reference')),
+  status     TEXT NOT NULL DEFAULT 'current'
+             CHECK (status IN ('draft', 'current', 'superseded', 'rejected')),
+  area       TEXT NOT NULL DEFAULT '',        -- free key: 'auth', 'billing'. Not CHECKed
   source     TEXT NOT NULL DEFAULT '',        -- who/what produced it
+  created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
+) STRICT;
+
+-- ---- knowledge_edge -----------------------------------------------------------------
+-- ONE ROW IS ONE ASSERTION: <from> --rel--> <to>, with an optional note saying why.
+--
+-- THE RELATION VOCABULARY, AND WHAT EACH ONE IS FOR:
+--
+--   describes     doc -> work   "this document explains that requirement/task/project."
+--                               The edge `v_undocumented_work` looks for, and the edge
+--                               `v_doc_stale` follows to notice the subject moved.
+--   decides       doc -> work   "this DECISION governs that work." Narrower than
+--                               `describes` on purpose: a reader asking "what were we
+--                               committed to here" wants the ADRs, not the tutorials.
+--   supersedes    doc -> doc    "this replaces that." THE EVOLUTION EDGE. Follow it
+--                               backwards and you have the project's change of mind,
+--                               in order, with both sides still readable.
+--   refines       doc -> doc    "this is a narrower topic under that." The tree.
+--   depends-on    doc -> doc    "read that first, or this will not make sense."
+--   contradicts   doc -> doc    "these two disagree and somebody should resolve it."
+--                               RECORDING drift beats pretending the library is coherent.
+--   derived-from  doc -> any    provenance. Which plan, review finding or bug this
+--                               document came out of. It is how a decision keeps its
+--                               receipts after the ticket is archived.
+--   evidence-for  any -> doc    the reverse: this bug/finding/coverage row is empirical
+--                               support for that document's claim.
+--
+-- THE ENDPOINTS ARE POLYMORPHIC, WHICH COSTS US THE FOREIGN KEY. `to_id` may name a doc,
+-- a requirement, a task or a bug, and SQLite cannot REFERENCE a table chosen at runtime.
+-- Two things stand in for the constraint, and NEITHER is the engine refusing a bad write:
+--
+--   1. THE WRITE-TIME CHECK. Insert with `SELECT ... FROM <target table> WHERE id = ...`
+--      so a missing endpoint yields zero rows instead of a dangling edge. queries.md has
+--      the exact form. This is the same trick the rest of the guild uses for referential
+--      safety inside a non-atomic script.
+--   2. `v_knowledge_dangling`, which lists every edge whose endpoint is gone. It is a
+--      global invariant in docs/expectations.md, so `guild:validate` runs it.
+--
+-- See "what this file cannot enforce", item 11.
+--
+-- THE rel/TYPE CHECKS BELOW ARE REAL CONSTRAINTS. They are what stops the vocabulary
+-- becoming decorative: `supersedes` between a task and a bug would be meaningless, and
+-- meaningless edges are how a knowledge graph turns into noise nobody trusts.
+CREATE TABLE IF NOT EXISTS knowledge_edge (
+  id         INTEGER PRIMARY KEY,
+  rel        TEXT NOT NULL
+             CHECK (rel IN ('describes', 'decides', 'supersedes', 'refines',
+                            'depends-on', 'contradicts', 'derived-from', 'evidence-for')),
+  from_type  TEXT NOT NULL
+             CHECK (from_type IN ('doc', 'goal', 'project', 'requirement', 'plan',
+                                  'task', 'bug', 'coverage', 'review_finding')),
+  from_id    TEXT NOT NULL,
+  to_type    TEXT NOT NULL
+             CHECK (to_type IN ('doc', 'goal', 'project', 'requirement', 'plan',
+                                'task', 'bug', 'coverage', 'review_finding')),
+  to_id      TEXT NOT NULL,
+  note       TEXT NOT NULL DEFAULT '',
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (rel, from_type, from_id, to_type, to_id),
+  -- A self-edge is never an assertion, it is a typo
+  CHECK (from_type <> to_type OR from_id <> to_id),
+  -- doc-to-doc relations are doc-to-doc
+  CHECK (rel NOT IN ('supersedes', 'refines', 'depends-on', 'contradicts')
+         OR (from_type = 'doc' AND to_type = 'doc')),
+  -- a document describes or decides something. Nothing describes a document
+  CHECK (rel NOT IN ('describes', 'decides', 'derived-from') OR from_type = 'doc'),
+  -- evidence points AT a document
+  CHECK (rel <> 'evidence-for' OR to_type = 'doc')
+) STRICT;
+
+-- ---- doc_revision -------------------------------------------------------------------
+-- THE BODY AS IT WAS BEFORE A CHANGE, written by `trg_doc_revised`. Append-only, and
+-- treated like `event`: you do not INSERT here by hand and you never UPDATE or DELETE.
+--
+-- NO FOREIGN KEY TO `doc`, DELIBERATELY. A revision has to survive its document being
+-- deleted, or it is not history — it is a footnote that disappears with the thing it was
+-- meant to outlive. `slug` is therefore a plain TEXT column, and a revision whose doc is
+-- gone is CORRECT rather than dangling. `v_knowledge_dangling` does not look at this table.
+--
+-- The row stores the OLD body, so the newest revision is the second-newest text and the
+-- live text is in `doc` itself. That ordering trips people up exactly once.
+CREATE TABLE IF NOT EXISTS doc_revision (
+  id          INTEGER PRIMARY KEY,
+  slug        TEXT NOT NULL,                  -- no REFERENCES, on purpose. See above
+  title       TEXT NOT NULL,
+  body        TEXT NOT NULL,                  -- the body BEFORE this change
+  kind        TEXT NOT NULL,
+  status      TEXT NOT NULL,
+  replaced_at TEXT NOT NULL
 ) STRICT;
 
 
@@ -647,6 +813,14 @@ CREATE INDEX IF NOT EXISTS task_cap_by_cap  ON task_capability(capability, requi
 CREATE INDEX IF NOT EXISTS dep_by_pred      ON task_dependency(depends_on);
 CREATE INDEX IF NOT EXISTS edge_by_to       ON graph_edge(to_node);
 
+-- The library's graph. `ke_out` and `ke_in` are the two directions of a one-hop
+-- neighbourhood, which is every traversal this engine can do — there is no WITH RECURSIVE.
+CREATE INDEX IF NOT EXISTS ke_out          ON knowledge_edge(from_type, from_id, rel);
+CREATE INDEX IF NOT EXISTS ke_in           ON knowledge_edge(to_type, to_id, rel);
+CREATE INDEX IF NOT EXISTS doc_by_kind     ON doc(kind, status);
+CREATE INDEX IF NOT EXISTS doc_by_area     ON doc(area, kind);
+CREATE INDEX IF NOT EXISTS revision_by_doc ON doc_revision(slug, replaced_at DESC);
+
 
 -- =====================================================================================
 -- =====================================================================================
@@ -674,6 +848,8 @@ CREATE INDEX IF NOT EXISTS edge_by_to       ON graph_edge(to_node);
 --   the briefing v_brief · v_in_flight · v_failed_tasks · v_open_findings ·
 --                v_open_bugs · v_recent_activity
 --   quality      v_coverage_due
+--   the library  v_knowledge_ref · v_doc_current · v_doc_neighbors · v_doc_stale ·
+--                v_undocumented_work · v_decision_log · v_knowledge_dangling
 --
 -- THERE IS NO MATCHER VIEW. `v_agent_eligible`, `v_agent_match` and `v_task_top_agent`
 -- were dropped in v7 along with the roster tables they read. Matching a ticket to a
@@ -1466,6 +1642,271 @@ SELECT c.id                AS id,
  ORDER BY CASE c.risk WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, c.id;
 
 
+
+
+-- ------------------------------------------------------------------------------------
+-- v_knowledge_ref — EVERY ROW A knowledge_edge IS ALLOWED TO POINT AT, WITH A TITLE
+-- ------------------------------------------------------------------------------------
+-- The helper the rest of the library's views stand on. It exists because an edge endpoint
+-- is POLYMORPHIC: `('requirement','REQ-004')` and `('doc','adr-session-store')` live in
+-- different tables, and every reader would otherwise re-type the same eight-branch
+-- COALESCE that `v_recent_activity` already carries once.
+--
+-- It answers two questions at once, and that is the whole trick:
+--   DOES THIS ENDPOINT EXIST?   a missing row is a dangling edge -> `v_knowledge_dangling`
+--   WHAT IS IT CALLED?          so a neighbourhood reads as prose, not as ids
+--
+-- `coverage` contributes its `area` and `review_finding` its `summary`, because those are
+-- what those tables call their human-readable column. `review_finding.id` is an INTEGER,
+-- so it is CAST here — an edge's `to_id` is TEXT and '42' is what a STRICT column stores.
+--
+-- THE TITLE IS RAW FREE TEXT. It can contain pipes and newlines, exactly like every other
+-- title in this file, and flattening it is the READER's job (gotcha 3). No view here
+-- flattens, so that the value stays byte-exact for a reader that asks for one column.
+DROP VIEW IF EXISTS v_knowledge_ref;
+CREATE VIEW v_knowledge_ref AS
+SELECT 'doc'            AS ref_type, slug              AS ref_id, title   AS title FROM doc
+UNION ALL SELECT 'goal',           id,                 title   FROM goal
+UNION ALL SELECT 'project',        id,                 title   FROM project
+UNION ALL SELECT 'requirement',    id,                 title   FROM requirement
+UNION ALL SELECT 'plan',           id,                 title   FROM plan
+UNION ALL SELECT 'task',           id,                 title   FROM task
+UNION ALL SELECT 'bug',            id,                 title   FROM bug
+UNION ALL SELECT 'coverage',       id,                 area    FROM coverage
+UNION ALL SELECT 'review_finding', CAST(id AS TEXT),   summary FROM review_finding;
+
+
+-- ------------------------------------------------------------------------------------
+-- v_doc_current — THE LIBRARY AS IT STANDS, WITH THE HISTORY STILL BEHIND IT
+-- ------------------------------------------------------------------------------------
+-- A document is current when it is not `superseded`, not `rejected`, and NOTHING claims to
+-- supersede it. The second half matters: `supersedes` is written by the NEW document, and
+-- the old one's `status` is a second write somebody has to remember. This view does not
+-- depend on them remembering — an inbound `supersedes` edge is enough to retire a page.
+--
+-- `draft` is INCLUDED. A draft is the current state of a topic somebody is actively
+-- writing, and hiding it produces the worst outcome available: two people drafting the
+-- same page because neither could see the other's.
+DROP VIEW IF EXISTS v_doc_current;
+CREATE VIEW v_doc_current AS
+SELECT d.slug       AS slug,
+       d.title      AS title,
+       d.kind       AS kind,
+       d.status     AS status,
+       d.area       AS area,
+       d.source     AS source,
+       d.created_at AS created_at,
+       d.updated_at AS updated_at,
+       (SELECT COUNT(*) FROM doc_revision v WHERE v.slug = d.slug)      AS revisions,
+       (SELECT COUNT(*) FROM knowledge_edge k
+         WHERE (k.from_type = 'doc' AND k.from_id = d.slug)
+            OR (k.to_type   = 'doc' AND k.to_id   = d.slug))            AS edges
+  FROM doc d
+ WHERE d.status IN ('draft', 'current')
+   AND NOT EXISTS (SELECT 1 FROM knowledge_edge ke
+                    WHERE ke.rel = 'supersedes'
+                      AND ke.to_type = 'doc' AND ke.to_id = d.slug)
+ ORDER BY d.kind, d.area, d.slug;
+
+
+-- ------------------------------------------------------------------------------------
+-- v_doc_neighbors — ONE HOP, BOTH DIRECTIONS. THE ONLY TRAVERSAL THIS ENGINE HAS
+-- ------------------------------------------------------------------------------------
+--   SELECT * FROM v_doc_neighbors WHERE slug = 'adr-session-store'
+--
+-- This is what a member reads BEFORE writing a document, so it links into the graph
+-- instead of landing beside it as another orphan.
+--
+-- ONE HOP IS NOT A LIMITATION OF THE MODEL, IT IS A LIMITATION OF THE ENGINE. There is no
+-- `WITH RECURSIVE` on tursodb, so a supersession chain three deep is THREE QUERIES, each
+-- feeding the next — the same concession `v_ready_nodes` makes for the execution graph,
+-- and for the same reason. Do not try to write the closure. Loop in the caller, and cap
+-- the loop, because `contradicts` and `depends-on` can legitimately form a cycle here in
+-- a way `graph_edge` may not.
+--
+-- `direction` is 'out' for an edge this doc asserts and 'in' for one asserted about it.
+-- Both are in the same view because "what does this page relate to" never meant one of them.
+DROP VIEW IF EXISTS v_doc_neighbors;
+CREATE VIEW v_doc_neighbors AS
+SELECT ke.from_id            AS slug,
+       'out'                 AS direction,
+       ke.rel                AS rel,
+       ke.to_type            AS other_type,
+       ke.to_id              AS other_id,
+       COALESCE(r.title, '') AS other_title,
+       ke.note               AS note,
+       ke.created_by         AS created_by,
+       ke.created_at         AS created_at
+  FROM knowledge_edge ke
+  LEFT JOIN v_knowledge_ref r ON r.ref_type = ke.to_type AND r.ref_id = ke.to_id
+ WHERE ke.from_type = 'doc'
+UNION ALL
+SELECT ke.to_id, 'in', ke.rel, ke.from_type, ke.from_id,
+       COALESCE(r.title, ''), ke.note, ke.created_by, ke.created_at
+  FROM knowledge_edge ke
+  LEFT JOIN v_knowledge_ref r ON r.ref_type = ke.from_type AND r.ref_id = ke.from_id
+ WHERE ke.to_type = 'doc'
+ ORDER BY 1, 2, 3, 5;
+
+
+-- ------------------------------------------------------------------------------------
+-- v_doc_stale — THE WORK MOVED AND THE PAGE DID NOT
+-- ------------------------------------------------------------------------------------
+-- Documentation drift, derived rather than declared. A document is stale when something it
+-- `describes` or `decides` has an `event` NEWER than the document's own `updated_at`.
+--
+-- This is why the edges are worth writing. `event` is already a complete record of every
+-- mutation on the board, so the moment a doc names its subject, the database can tell you
+-- the subject changed underneath it. Nobody files a "docs are out of date" ticket — the
+-- ticket is a SELECT.
+--
+-- TWO HONEST LIMITS, both stated rather than hidden:
+--   * IT CANNOT SEE THE CODE. Only board events. A refactor that touched no row moves
+--     nothing here. `v_undocumented_work` and a human reading the diff cover that half.
+--   * AN UNLINKED DOC IS NEVER STALE. No edge, no subject, no signal. That is the correct
+--     failure direction — the fix is to link it, and `v_doc_current.edges = 0` finds it.
+--
+-- TIMESTAMPS ARE COMPARED AT SECOND PRECISION, via `substr(ts, 1, 19)`. The triggers write
+-- `event.ts` with MILLISECONDS ('...T10:00:00.123Z') and every `updated_at` without
+-- ('...T10:00:00Z'), and a raw string comparison of those two puts '.' before 'Z' — so the
+-- millisecond form sorts EARLIER than the second form at the same instant, and a doc would
+-- read as fresh for up to a second after its subject moved. Truncating both to 19
+-- characters is what makes the comparison mean what it says.
+--
+-- ONE ROW PER (doc, stale subject). A doc describing three moved requirements is three
+-- rows, so COUNT DISTINCT the slug when you want "how many pages need attention".
+DROP VIEW IF EXISTS v_doc_stale;
+CREATE VIEW v_doc_stale AS
+SELECT d.slug                AS slug,
+       d.title               AS title,
+       d.kind                AS kind,
+       d.area                AS area,
+       ke.rel                AS rel,
+       ke.to_type            AS subject_type,
+       ke.to_id              AS subject_id,
+       substr(d.updated_at, 1, 19) AS doc_updated_at,
+       (SELECT MAX(substr(e.ts, 1, 19)) FROM event e
+         WHERE e.subject_type = ke.to_type AND e.subject_id = ke.to_id) AS subject_moved_at
+  FROM doc d
+  JOIN knowledge_edge ke
+    ON ke.from_type = 'doc' AND ke.from_id = d.slug
+   AND ke.rel IN ('describes', 'decides')
+ WHERE d.status = 'current'
+   AND (SELECT MAX(substr(e.ts, 1, 19)) FROM event e
+         WHERE e.subject_type = ke.to_type AND e.subject_id = ke.to_id)
+       > substr(d.updated_at, 1, 19)
+ ORDER BY subject_moved_at DESC, d.slug;
+
+
+-- ------------------------------------------------------------------------------------
+-- v_undocumented_work — SHIPPED, AND NOBODY WROTE IT DOWN
+-- ------------------------------------------------------------------------------------
+-- Every `done` requirement with no `current` or `draft` document claiming to describe or
+-- decide it. Documentation coverage, in exactly the idiom `v_coverage_due` already uses
+-- for quality coverage: the gap is a QUERY, not somebody's recollection.
+--
+-- ONLY `done` REQUIREMENTS. Documenting work in flight is documenting a moving target, and
+-- the `document` node in the standard template runs after `repair` for that reason.
+--
+-- A `rejected` document does not count as coverage. A `draft` one does — somebody is on it.
+DROP VIEW IF EXISTS v_undocumented_work;
+CREATE VIEW v_undocumented_work AS
+SELECT r.id         AS id,
+       r.title      AS title,
+       r.project_id AS project_id,
+       r.updated_at AS finished_at,
+       CAST((SELECT COUNT(*) FROM task t
+              WHERE t.requirement_id = r.id AND t.status = 'done') AS INTEGER) AS tasks_done
+  FROM requirement r
+ WHERE r.status = 'done'
+   AND NOT EXISTS (SELECT 1
+                     FROM knowledge_edge ke
+                     JOIN doc d ON d.slug = ke.from_id
+                    WHERE ke.from_type = 'doc'
+                      AND ke.to_type = 'requirement' AND ke.to_id = r.id
+                      AND ke.rel IN ('describes', 'decides')
+                      AND d.status <> 'rejected')
+ ORDER BY r.updated_at DESC, r.id;
+
+
+-- ------------------------------------------------------------------------------------
+-- v_decision_log — WHAT THIS PROJECT DECIDED, IN ORDER, INCLUDING WHAT IT UNDECIDED
+-- ------------------------------------------------------------------------------------
+-- The ADR log. `kind = 'decision'` documents, newest first, each carrying what it replaced,
+-- what it governs, and how many times it has been rewritten.
+--
+-- SUPERSEDED AND REJECTED DECISIONS ARE INCLUDED ON PURPOSE. A decision log that shows only
+-- the decisions still standing is not a history, it is a snapshot wearing a history's name —
+-- and the question this view exists to answer ("why is it like this") is usually answered by
+-- the option that was dropped. Filter on `status` if you want only the live ones.
+--
+-- `supersedes` and `governs` are space-separated id lists built with `group_concat`. Ids are
+-- a closed alphabet, so they are safe in a whitespace-separated column — which is exactly
+-- why the columns carry ids and not titles.
+DROP VIEW IF EXISTS v_decision_log;
+CREATE VIEW v_decision_log AS
+SELECT d.slug       AS slug,
+       d.title      AS title,
+       d.status     AS status,
+       d.area       AS area,
+       d.source     AS source,
+       d.created_at AS created_at,
+       d.updated_at AS updated_at,
+       COALESCE((SELECT group_concat(k.to_id, ' ') FROM knowledge_edge k
+                  WHERE k.rel = 'supersedes' AND k.from_type = 'doc' AND k.from_id = d.slug),
+                '')                                                       AS supersedes,
+       COALESCE((SELECT group_concat(k.from_id, ' ') FROM knowledge_edge k
+                  WHERE k.rel = 'supersedes' AND k.to_type = 'doc' AND k.to_id = d.slug),
+                '')                                                       AS superseded_by,
+       COALESCE((SELECT group_concat(k.to_type || ':' || k.to_id, ' ') FROM knowledge_edge k
+                  WHERE k.rel = 'decides' AND k.from_type = 'doc' AND k.from_id = d.slug),
+                '')                                                       AS governs,
+       (SELECT COUNT(*) FROM doc_revision v WHERE v.slug = d.slug)         AS revisions
+  FROM doc d
+ WHERE d.kind = 'decision'
+ ORDER BY d.created_at DESC, d.slug;
+
+
+-- ------------------------------------------------------------------------------------
+-- v_knowledge_dangling — THE FOREIGN KEY THE ENGINE CANNOT GIVE US
+-- ------------------------------------------------------------------------------------
+-- Every edge with an endpoint that no longer exists, one row per broken END, so an edge
+-- broken at both ends reports twice and neither is hidden by the other.
+--
+-- THIS VIEW IS A GLOBAL INVARIANT — see docs/expectations.md. It must return ZERO ROWS at
+-- all times, and `guild:validate` checks it. It is not a report you run when curious.
+--
+-- It exists because `knowledge_edge` endpoints are polymorphic and SQLite cannot REFERENCE
+-- a table chosen at runtime (item 11). The write-time check —
+-- `INSERT ... SELECT ... FROM <target> WHERE id = ...` — stops you CREATING a dangling
+-- edge. Nothing stops you creating one by DELETING the other end later, and that is the
+-- case this view is here for.
+--
+-- `doc_revision` is deliberately NOT checked. A revision outliving its document is history
+-- working correctly, not a dangling reference.
+DROP VIEW IF EXISTS v_knowledge_dangling;
+CREATE VIEW v_knowledge_dangling AS
+SELECT ke.id         AS edge_id,
+       ke.rel        AS rel,
+       'from'        AS broken_side,
+       ke.from_type  AS missing_type,
+       ke.from_id    AS missing_id,
+       ke.to_type    AS other_type,
+       ke.to_id      AS other_id,
+       ke.created_by AS created_by,
+       ke.created_at AS created_at
+  FROM knowledge_edge ke
+ WHERE NOT EXISTS (SELECT 1 FROM v_knowledge_ref r
+                    WHERE r.ref_type = ke.from_type AND r.ref_id = ke.from_id)
+UNION ALL
+SELECT ke.id, ke.rel, 'to', ke.to_type, ke.to_id, ke.from_type, ke.from_id,
+       ke.created_by, ke.created_at
+  FROM knowledge_edge ke
+ WHERE NOT EXISTS (SELECT 1 FROM v_knowledge_ref r
+                    WHERE r.ref_type = ke.to_type AND r.ref_id = ke.to_id)
+ ORDER BY 1, 3;
+
+
 -- ------------------------------------------------------------------------------------
 -- THE ROSTER VIEWS ARE GONE — v_capability_vocabulary, v_capability_unknown, v_roster_gaps
 -- ------------------------------------------------------------------------------------
@@ -1536,6 +1977,11 @@ UNION ALL SELECT 24, 'plans_pending_approval', CAST((SELECT COUNT(*) FROM v_plan
 UNION ALL SELECT 25, 'events_since_checkin',
   CAST((SELECT COUNT(*) FROM event
          WHERE ts >= COALESCE(NULLIF((SELECT value FROM guild_state WHERE key = 'last-checkin'), 'null'), '')) AS TEXT)
+-- The library's three facts. `docs_stale` counts PAGES, not (page, subject) pairs, which
+-- is why it is a COUNT DISTINCT — `v_doc_stale` emits one row per stale subject
+UNION ALL SELECT 26, 'docs_current',        CAST((SELECT COUNT(*) FROM v_doc_current) AS TEXT)
+UNION ALL SELECT 27, 'docs_stale',          CAST((SELECT COUNT(DISTINCT slug) FROM v_doc_stale) AS TEXT)
+UNION ALL SELECT 28, 'work_undocumented',   CAST((SELECT COUNT(*) FROM v_undocumented_work) AS TEXT)
  ORDER BY ord;
 
 
@@ -1570,6 +2016,13 @@ UNION ALL SELECT 25, 'events_since_checkin',
 --     something moved.
 --   * `graph_edge`, `task_dependency`, `inspection_coverage` — structure,
 --     written once at creation time alongside a parent that IS instrumented.
+--
+-- `knowledge_edge` IS THE EXCEPTION TO THAT LAST LINE, and the exception is the point: it
+-- looks like a structure table and is not one. A `graph_edge` is written wholesale beside
+-- an instrumented node. A `knowledge_edge` is an ASSERTION a member made about what
+-- relates to what, arriving a few rows at a time, and who claimed it when is exactly what
+-- the feed is for. It carries both an INSERT and a DELETE trigger — retracting a claim is
+-- as much a decision as making one.
 --
 -- THE ACTOR IS `guild_state.actor`, defaulting to 'orchestrator'. Set it at the top of
 -- your script. It is a label, not an identity — item 1 of "what this file cannot enforce".
@@ -1984,6 +2437,83 @@ CREATE TRIGGER trg_doc_touch AFTER UPDATE ON doc
 WHEN new.updated_at IS old.updated_at
 BEGIN
   UPDATE doc SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE slug = new.slug;
+END;
+
+-- A doc's LIFECYCLE is an event too. Retiring a decision — 'current' -> 'superseded', or a
+-- proposal declined as 'rejected' — is one of the few things on this board that is pure
+-- judgment, and it belongs in the feed beside the work it explains.
+DROP TRIGGER IF EXISTS trg_doc_moved;
+CREATE TRIGGER trg_doc_moved AFTER UPDATE OF status ON doc
+WHEN old.status IS NOT new.status
+BEGIN
+  INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
+  VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+          COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
+          'moved', 'doc', new.slug,
+          json_object('from', old.status, 'to', new.status, 'kind', new.kind));
+END;
+
+-- THE DOCUMENTATION'S OWN HISTORY, and the reason `doc_revision` needs no discipline from
+-- anybody. A member can forget to snapshot a page before rewriting it. A member cannot
+-- bypass this.
+--
+-- IT STORES `old.body`, NOT THE NEW ONE. The live text is in `doc`, and the newest revision
+-- row is the text that came before it. Reading them the other way round is the one mistake
+-- this table invites, which is why the column is commented in both places.
+--
+-- `UPDATE OF body` plus `WHEN old.body <> new.body` is two guards for one job on purpose:
+-- the first keeps it off updates that never touch the body (a status change, a re-tag), and
+-- the second keeps it off an update that rewrites the body with identical text. Neither is
+-- a change worth a revision row, and a history full of no-ops is a history nobody reads.
+--
+-- IT CANNOT RECURSE with `trg_doc_touch`. That trigger updates only `updated_at`, which is
+-- not `body`, so `UPDATE OF body` does not fire for it — and this trigger writes to a table
+-- that has no triggers of its own. Both halves hold even under `PRAGMA recursive_triggers = ON`.
+DROP TRIGGER IF EXISTS trg_doc_revised;
+CREATE TRIGGER trg_doc_revised AFTER UPDATE OF body ON doc
+WHEN old.body <> new.body
+BEGIN
+  INSERT INTO doc_revision (slug, title, body, kind, status, replaced_at)
+  VALUES (old.slug, old.title, old.body, old.kind, old.status,
+          strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+END;
+
+
+-- ---- knowledge_edge -----------------------------------------------------------------
+-- INSTRUMENTED, UNLIKE `graph_edge` AND `task_dependency` — and the difference is worth
+-- stating, because the header says structure tables are deliberately silent.
+--
+-- `graph_edge` is STRUCTURE: it is written once, wholesale, alongside a `graph_node` that
+-- is itself instrumented, and dozens of rows land in a breath. A `knowledge_edge` is an
+-- ASSERTION somebody made — "this decision supersedes that one", "these two contradict" —
+-- and it arrives a few at a time, from a member who is claiming something. When a link
+-- appeared, and who claimed it, is exactly the kind of question the feed is for.
+--
+-- The subject is the edge's FROM end, so a doc's links show up in that doc's own history.
+DROP TRIGGER IF EXISTS trg_edge_linked;
+CREATE TRIGGER trg_edge_linked AFTER INSERT ON knowledge_edge
+BEGIN
+  INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
+  VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+          COALESCE(NULLIF(new.created_by, ''),
+                   (SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
+          'linked', new.from_type, new.from_id,
+          json_object('rel', new.rel, 'to_type', new.to_type, 'to_id', new.to_id,
+                      'note', new.note));
+END;
+
+-- RETRACTING an assertion is as much a decision as making one, and a graph that silently
+-- forgets its retractions cannot be audited. This is the only DELETE in the library that
+-- leaves a trace, which is fine — deleting a `doc` is meant to be rare, and its revisions
+-- survive it by design.
+DROP TRIGGER IF EXISTS trg_edge_unlinked;
+CREATE TRIGGER trg_edge_unlinked AFTER DELETE ON knowledge_edge
+BEGIN
+  INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
+  VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+          COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
+          'unlinked', old.from_type, old.from_id,
+          json_object('rel', old.rel, 'to_type', old.to_type, 'to_id', old.to_id));
 END;
 
 

@@ -198,9 +198,30 @@ Check the exit status of every `q` and do not send its output to `/dev/null` on 
 — tursodb writes errors to **stdout**, so a failed query would otherwise land in the snapshot
 looking like content.
 
-**Never snapshot the library or the QA discipline.** `doc` rows, `coverage` rows, `.guild/docs/`
-and `.guild/qa/` are evergreen: researcher findings, the risk map and the regression manifest all
-persist across releases so the next architect can reuse them.
+**Point at the decisions, do not copy them.** A requirement's snapshot should name the ADRs
+that governed it, so a reader of `v1.2.0` a year from now can find the reasoning without
+guessing at slugs:
+
+```bash
+q "SELECT '### Decisions' || char(10) || char(10)
+        || group_concat('- \`' || d.slug || '\` — '
+             || replace(replace(d.title, char(10), ' '), '|', '!')
+             || ' (' || d.status || ')', char(10))
+     FROM knowledge_edge ke JOIN doc d ON d.slug = ke.from_id
+    WHERE ke.rel = 'decides' AND ke.from_type = 'doc'
+      AND ke.to_type = 'requirement' AND ke.to_id = '$REQ'
+      AND d.kind = 'decision';" >> "$OUT"
+```
+
+**The slug, not the body.** A decision keeps evolving after the release that introduced it —
+that is the whole point of `supersedes` — and a copied body freezes it at the wrong moment and
+then disagrees with the live one. The slug always resolves to the current thinking, and
+`v_decision_log` shows what replaced it.
+
+**Never snapshot the library or the QA discipline.** `doc` rows, `doc_revision` rows,
+`knowledge_edge` rows, `coverage` rows, `.guild/docs/` and `.guild/qa/` are evergreen:
+researcher findings, business rules, the decision log, the risk map and the regression manifest
+all persist across releases so the next architect can reuse them.
 
 ## Step 7 — record the release on the board
 
@@ -324,8 +345,10 @@ and are safe to run; step 7's upsert is not, and must not run.
   snapshot as content.
 - **IDs are derived, never counters** — nothing is reset at a release.
 - **CHANGELOG.md lives at repo root**, not inside `.guild/`.
-- **`doc`, `coverage`, `.guild/docs/` and `.guild/qa/` are evergreen** — never snapshotted, never
-  touched.
+- **`doc`, `doc_revision`, `knowledge_edge`, `coverage`, `.guild/docs/` and `.guild/qa/` are
+  evergreen** — never snapshotted, never touched. A release **names** the decision slugs a
+  requirement was governed by and copies none of them: a decision goes on evolving after the
+  release that introduced it, and a frozen copy is a second answer to a settled question.
 - **`.guild/reviews/REQ-NNN.md` is COPIED into the snapshot** — it is per-requirement history,
   not cross-cutting knowledge. The original stays where it is.
 - **One commit, one tag**, both created in step 8.

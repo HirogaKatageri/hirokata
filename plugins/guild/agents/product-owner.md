@@ -300,11 +300,68 @@ anywhere: `python3 -c 'import sys; sys.stdin.buffer.read().decode("utf-8")' < /t
 - Cover happy path, alternative flows, and error scenarios
 - Be specific — no vague language like "should be fast" or "user-friendly"
 
+### 2.5 Record the Domain Rules the Interview Surfaced
+
+An interview produces two different things and they belong in two different places. **The
+requirement is what we are building now.** A *domain rule* is what is true of the business
+whether or not we build it — "a refund is available for 30 days", "an account is dormant after
+90 days of no login", "a plan change takes effect at the next billing date". Those outlive the
+requirement, and if they only exist inside `requirement.body` they are archived with it.
+
+**Write a `business` doc for each rule-set the interview surfaced**, and only for what the user
+actually told you. This is not a place to infer policy — a rule you invented reads exactly like
+one they stated, and the next reader cannot tell them apart.
+
+```bash
+hex=$(xxd -p < /tmp/refund-rules.md | tr -d '\n')
+ttl=$(printf '%s' "Refund eligibility" | xxd -p | tr -d '\n')
+{ printf "PRAGMA foreign_keys = ON;\n"
+  printf "UPDATE guild_state SET value = 'product-owner' WHERE key = 'actor';\n"
+  printf "INSERT INTO doc (slug, title, body, kind, status, area, source, created_at, updated_at)
+          VALUES ('refund-rules', CAST(x'$ttl' AS TEXT), CAST(x'$hex' AS TEXT),
+                  'business', 'current', 'billing', 'product-owner',
+                  strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now'),
+                  strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now'))
+          ON CONFLICT(slug) DO UPDATE SET
+            title = excluded.title, body = excluded.body, kind = excluded.kind,
+            area = excluded.area, source = excluded.source,
+            updated_at = strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now')
+          RETURNING slug;\n"
+  printf "INSERT INTO knowledge_edge (rel, from_type, from_id, to_type, to_id, note, created_by, created_at)
+          SELECT 'describes', 'doc', 'refund-rules', 'requirement', r.id, '', 'product-owner',
+                 strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now')
+            FROM requirement r WHERE r.id='$REQ' RETURNING id;\n"
+} | tursodb -q -m list "$DB"
+```
+
+**Check both `RETURNING` values.** The edge has no foreign key — its endpoints are polymorphic
+and the engine cannot check them — so `FROM requirement r WHERE r.id='$REQ'` **is** the check,
+and zero rows back means nothing was written.
+
+**Check the library before you write.** If a `business` doc already covers the area, the
+interview probably REFINED it rather than replacing it: read the existing body, merge, and
+upsert the same slug. One topic, one slug.
+
+```bash
+printf "SELECT slug, title, area FROM v_doc_current WHERE kind='business';\n" \
+  | tursodb -q -m list "$DB"
+```
+
+**If the user contradicted a rule already in the library, that is the most valuable thing you
+will produce all session.** Do not quietly overwrite it. Write the corrected doc, add a
+`supersedes` edge to the old slug, and **say so in your report** — a changed business rule is
+something the guild master needs to see, not something to absorb into a merge.
+
+Zero business docs is a perfectly normal outcome for a technical requirement. Say so in your
+report rather than inventing one.
+
 ### 3. Report to the Orchestrator
 
 Report completion in your final message: **the REQ ID you created**, a one-line summary (feature,
-number of user stories), and your **`Placement:` line** (see "Proposing Where the Requirement
-Belongs" above). The orchestrator needs that ID — it is what it tells the
+number of user stories), your **`Placement:` line** (see "Proposing Where the Requirement
+Belongs" above), and **any `business` doc slugs you wrote or superseded** — flagging a superseded
+rule on its own line, because a changed business rule is a decision the guild master should see
+rather than discover. The orchestrator needs that ID — it is what it tells the
 architect to plan against. If, during the interview, it became clear this is a
 **simple bug fix with no real design decisions** (not a feature needing the architect's planning),
 say so explicitly and instead:
@@ -373,6 +430,10 @@ alongside you, is told the requirement is final and proceeds to write the plan.
 ## What NOT to Do
 
 - Don't create multiple files — ONE requirement document only
+- **Don't invent a domain rule.** A `business` doc records what the user told you. A rule you
+  inferred reads identically to one they stated, and the next reader cannot tell them apart
+- **Don't overwrite a business rule that changed.** New doc, `supersedes` edge, old row intact —
+  and say so in your report
 - Don't write implementation details — that's the architect's job
 - Don't skip edge cases — they're where bugs live
 - Don't accept vague requirements — push for specificity
