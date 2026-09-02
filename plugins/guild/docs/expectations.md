@@ -155,7 +155,7 @@ deleting the heading.
 ## 3. Global invariants
 
 **These hold at all times, whatever just ran.** They are not tied to a process, they are the
-definition of a coherent board. Run all ten after every skill.
+definition of a coherent board. Run all eleven after every skill.
 
 Every query below returns **zero rows** when healthy. Each has been verified to pass on a
 correct board and to fire on an injected breach; the demonstrated breach is noted with each one.
@@ -621,10 +621,11 @@ SELECT 'doc.superseded-but-current', d.slug, d.status
 
 Two clauses, two different failures:
 
-- **A dangling edge** means something an edge pointed at was deleted. The usual cause is a board
-  clear that did not cut the library's edges into the work first — `guild:clear-board` deletes
-  `WHERE from_type <> 'doc' OR to_type <> 'doc'` as its first statement precisely to avoid this.
-  The other cause is a hand-written `DELETE FROM requirement`.
+- **A dangling edge** means something an edge pointed at was deleted. Through v8 the usual cause
+  was a board clear that did not cut the library's edges into the work first. There is no board
+  clear since v8.1 and no supported procedure deletes anything, so the only cause left is a
+  hand-written `DELETE` — which **G11 catches directly, and one step earlier**: this clause now
+  reports the damage, G11 reports the act.
 - **A `current` doc with an inbound `supersedes` edge** is a cosmetic drift, not a broken read:
   `v_doc_current` already hides such a page, so no reader is misled. It fires because the two
   writes that retire a decision (the edge, then the status) are the same shape as the two writes
@@ -649,6 +650,67 @@ end, including the edge that was broken at both ends reported twice.
 - **Whether an edge's claim is correct.** `contradicts` between two pages that agree, or
   `supersedes` pointing the wrong way, are meaning errors. The CHECKs enforce the *shape* of a
   relation (`supersedes` is doc → doc), never its truth.
+
+### G11 — Nothing is deleted
+
+**The guild does not delete records, and this is the assertion that says so.** `goal`, `project`,
+`requirement`, `plan`, `task` and `bug` each carry an `AFTER DELETE` trigger that writes an
+`event` row with `verb = 'deleted'`, so a removal cannot happen quietly — the act writes its own
+evidence, and that evidence is what this query reads.
+
+```sql
+SELECT 'row-deleted' AS breach, e.subject_type || ':' || e.subject_id AS row_id,
+       e.ts || ' by ' || e.actor AS detail
+  FROM event e WHERE e.verb = 'deleted'
+UNION ALL
+SELECT 'edge-unlinked',
+       e.subject_type || ':' || e.subject_id || ' -> '
+         || json_extract(e.payload, '$.to_type') || ':' || json_extract(e.payload, '$.to_id'),
+       e.ts || ' by ' || e.actor
+  FROM event e
+ WHERE e.verb = 'unlinked'
+   AND json_extract(e.payload, '$.to_type') <> 'doc'
+ ORDER BY breach, row_id;
+```
+
+Two clauses, and the second is narrower on purpose. A `deleted` event is always a breach: nothing
+in the guild is supposed to produce one. An `unlinked` event is **not** — retiring a decision
+legitimately removes and rewrites `doc → doc` edges.
+
+**The `to` end is what separates them, and it is only in the payload.** `trg_edge_unlinked` writes
+the edge's *from* end into `subject_type`/`subject_id`, and that end is a doc in both the innocent
+and the guilty case, so a query reading the subject columns cannot tell them apart. The target is
+in `payload` as `to_type`/`to_id`, which is why this clause goes through `json_extract`: an edge
+deleted out of the library is fine, an edge deleted out of the *work* is the shape a board clear
+used to make.
+
+**Rows already in the feed when you upgraded are history, not a breach.** A board that ran
+`guild:clear-board` before v8.1 carries its `deleted` events forever, and it should: they record
+something that really happened. Scope the query with `AND e.ts > '<the upgrade timestamp>'` when
+validating such a board, and say in the report that you did.
+
+**What to do when it fires.** Not delete anything else. The rows are gone and no query brings them
+back; what is left is finding out which member did it and whether the retired-file procedure in §8
+was what they actually wanted. If G10 is also firing, fix the cause named here first — a dangling
+edge is the symptom of this.
+
+*Verified,* against the `messy` fixture on tursodb 0.7.2 — empty on the fixture as loaded, then
+one breach per injected act:
+
+```
+DELETE FROM bug WHERE id = 'BUG-002'
+  → row-deleted|bug:BUG-002|2026-09-02T13:04:59.008Z by orchestrator
+DELETE FROM knowledge_edge WHERE rel = 'supersedes'   (doc -> doc)
+  → (no rows — a legitimate retirement)
+DELETE FROM knowledge_edge WHERE rel = 'describes'    (doc -> requirement)
+  → edge-unlinked|doc:adr-a -> requirement:REQ-001|…  by orchestrator
+```
+
+`v_knowledge_dangling` stayed **0** through the bug delete, because nothing pointed at that bug —
+G10 and G11 catch different halves of the same mistake, and only G11 catches the half that leaves
+no wreckage behind. Note also what the fixture proves about reach: `DELETE FROM task WHERE
+id = 'TASK-011'` does not get as far as the trigger — it fails on an immediate foreign key — so
+the rows this invariant actually protects are the ones nothing else points at.
 
 ### Cannot be asserted — globally
 
@@ -1673,209 +1735,77 @@ skipped the roster scan cannot even see the problem.
 
 ---
 
-## 8. Clearing the board
+## 8. There is no board clear
 
-`guild:clear-board`. Genuinely destructive, no undo, and the expectations are symmetrical: what
-must be **gone**, and what must be **untouched**. The second half is the one that matters — a
-clear that also took the coverage map or a roster member has destroyed something a board reset
-was never supposed to reach.
+**The guild deletes nothing.** `guild:clear-board` was removed in v8.1.0 and nothing took its
+place: there is no skill, no SQL recipe and no supported procedure that empties a board in place.
+This section is what remains of the process — an anti-expectation, and the assertion that catches
+a member who reaches for a `DELETE` anyway.
 
-### Trigger
+The reason is the one that made the board a database. `event` is written by triggers and is the
+guild's memory; `doc_revision` holds the body before every rewrite; `knowledge_edge` records which
+decision governed which requirement. All three exist to make the past readable, and a `DELETE`
+reaches through them at once — the row goes, and the record of why it was ever there goes with it.
+The old clear had to cut the library's edges into the work as its *first* statement or breach G10,
+which is a great deal of care to spend on losing information on purpose.
 
-`guild:clear-board` — "clear the board", "reset the guild", "start fresh", "wipe the board".
-
-### Preconditions
-
-```sql
--- P8.a  there is something to clear — expect AT LEAST ONE non-zero row
-SELECT 'requirements' AS what, COUNT(*) AS n FROM requirement
-UNION ALL SELECT 'tasks', COUNT(*) FROM task
-UNION ALL SELECT 'graph_nodes', COUNT(*) FROM graph_node
-UNION ALL SELECT 'plans', COUNT(*) FROM plan;
-```
-
-All zero → `The guild board is already empty — nothing to clear.` and stop.
-
-**P8.b — the backup exists, and it was taken BEFORE the confirmation was asked.** A filesystem
-check, not SQL, and not optional: `ls .guild/guild.db.bak-*` must name a file newer than the
-session. This is the only undo there is.
-
-**P8.c — the keep fingerprint is captured before the deletes.** Everything §8.b asserts is a
-comparison, so there has to be a *before*:
-
-```sql
--- keep.sql — run BEFORE the clear, and again after
-SELECT 'coverage'         AS t, COUNT(*) AS n FROM coverage
-UNION ALL SELECT 'doc',              COUNT(*) FROM doc
-UNION ALL SELECT 'doc_revision',     COUNT(*) FROM doc_revision
-UNION ALL SELECT 'doc-doc-edges',    (SELECT COUNT(*) FROM knowledge_edge
-                                       WHERE from_type = 'doc' AND to_type = 'doc')
-UNION ALL SELECT 'event',            COUNT(*) FROM event
-UNION ALL SELECT 'state-actor',      (SELECT COUNT(*) FROM guild_state WHERE key = 'actor')
-UNION ALL SELECT 'state-checkin',    (SELECT COUNT(*) FROM guild_state WHERE key = 'last-checkin')
-ORDER BY t;
-```
-
-On `messy` this reads `coverage|3`, `doc|0`, `doc_revision|0`, `doc-doc-edges|0`, `event|47`,
-`state-actor|1`, `state-checkin|1`.
-
-**`doc-doc-edges` is on the keep list and edges into the WORK are not**, which is the one part
-of a clear that is not simply "delete the board". A `knowledge_edge` has no foreign key — its
-endpoints are polymorphic, so nothing cascades — and a clear that left them behind would leave
-edges pointing at requirements it just deleted, breaching **G10** on the very next validate. So
-`guild:clear-board` deletes `WHERE from_type <> 'doc' OR to_type <> 'doc'` as its FIRST
-statement, and the library's own chains — `supersedes`, `refines`, `depends-on`,
-`contradicts` — come through untouched.
-
-**What is genuinely lost is provenance**, and no assertion can rescue it: a decision that
-governed `REQ-004` cannot say so once `REQ-004` is gone. Add this to the post-clear checks:
-
-```sql
--- expect ZERO ROWS after a clear — G10 in miniature
-SELECT edge_id, rel, broken_side, missing_type, missing_id FROM v_knowledge_dangling;
-```
-
-**`agent|14` and `agent_capability|26` used to head this list**, and their absence is the point
-of the v7 change: the roster is the agent files, so a board reset was never able to reach it and
-now cannot even be asked about it. Nothing to fingerprint, nothing to lose.
-
-### Expected sequence
-
-1. Inventory, and show it.
-2. **Back up before asking**, not after answering.
-3. Confirm, stating both what dies and what survives.
-4. The deletes, **in the order the skill gives**, with `PRAGMA foreign_keys = ON`.
-5. Read the counts back and report what they actually say.
-6. The `event` feed is a **second** question, asked separately.
-
-**The order is load-bearing.** `plan.task_id ↔ task.plan_id`, `review_finding.fix_task_id` and
-`bug.fix_task_id` are nulled first; everything after is a child-to-parent sweep. *Verified to
-fire:* deleting `task` without nulling `plan.task_id` first returns
-`Error: Runtime error: immediate foreign key constraint failed`, exit 1, **on stdout**, and
-leaves all 12 tasks in place. That is the good case; the bad one is a member that did not check
-and reported success.
-
-### Postconditions
-
-**§8.a — every board table is empty.** Expect **zero rows**:
-
-```sql
-SELECT 'not-cleared' AS breach, t.tbl AS row_id, CAST(t.n AS TEXT) AS detail FROM (
-  SELECT 'goal' AS tbl, COUNT(*) AS n FROM goal
-  UNION ALL SELECT 'project', COUNT(*) FROM project
-  UNION ALL SELECT 'requirement', COUNT(*) FROM requirement
-  UNION ALL SELECT 'plan', COUNT(*) FROM plan
-  UNION ALL SELECT 'task', COUNT(*) FROM task
-  UNION ALL SELECT 'task_dependency', COUNT(*) FROM task_dependency
-  UNION ALL SELECT 'task_capability', COUNT(*) FROM task_capability
-  UNION ALL SELECT 'graph_node', COUNT(*) FROM graph_node
-  UNION ALL SELECT 'graph_edge', COUNT(*) FROM graph_edge
-  UNION ALL SELECT 'graph_deviation', COUNT(*) FROM graph_deviation
-  UNION ALL SELECT 'gate', COUNT(*) FROM gate
-  UNION ALL SELECT 'work_log', COUNT(*) FROM work_log
-  UNION ALL SELECT 'review_finding', COUNT(*) FROM review_finding
-  UNION ALL SELECT 'bug', COUNT(*) FROM bug
-  UNION ALL SELECT 'inspection', COUNT(*) FROM inspection
-  UNION ALL SELECT 'inspection_coverage', COUNT(*) FROM inspection_coverage
-  UNION ALL SELECT 'guild_state:graph-template', COUNT(*) FROM guild_state WHERE key LIKE 'graph-template:%'
-) t WHERE t.n > 0
-UNION ALL
--- referential health survived the sweep
-SELECT 'orphan-after-clear', 'inspection_coverage', ic.coverage_id FROM inspection_coverage ic
- WHERE NOT EXISTS (SELECT 1 FROM coverage c WHERE c.id = ic.coverage_id)
-ORDER BY breach, row_id;
-```
-
-**Eighteen things, and `guild_state`'s `graph-template:REQ-NNN` keys are the eighteenth.** They
-are the easiest to forget because they are not a table, and without them G4's
-`graph-without-template` fires on the *next* requirement built on this board.
-
-*Verified:* the skill's exact delete script, run against `messy`, exits 0 with silent stdout and
-this assertion returns zero rows. G1's referential-health clauses are also clean afterwards.
-
-**That verification caught a real defect, and the fix is load-bearing.** `plan.gate_node_id`
-points forward into `graph_node`, so the script's cycle-breaking block must NULL it alongside
-`plan.task_id` — without that line `DELETE FROM graph_node` fails the foreign key and every
-delete after it fails too. And because tursodb has no `-bail`, **the script runs to the end and
-the clear silently does not happen.** This is exactly the failure §0.3's both-channels load check
-exists to catch, and it is why "it exited 0" is never the assertion.
-
-**§8.b — the evergreen survived, unchanged.** `diff` the keep fingerprint:
+### A fresh board is a fresh file
 
 ```bash
-diff /tmp/keep.before /tmp/keep.after
+export PATH="$HOME/.turso:$PATH"
+mv .guild/guild.db ".guild/guild.db.retired-$(date -u +%Y%m%dT%H%M%SZ)"
+tursodb .guild/guild.db < "${CLAUDE_PLUGIN_ROOT}/schema.sql"
 ```
 
-Expect **exactly one differing line**, and it must be `event`, and it must have **increased**.
-On `messy` the verified transcript is `event|47` → `event|66`: nineteen rows deleted, each firing
-the trigger that records it. Every other line is byte-identical — `coverage|3`, `doc|0`,
-`state-actor|1`, `state-checkin|1`.
+The retired file stays on disk and stays readable — `tursodb` opens it like any other database —
+so every id in git history and in `.guild/qa/` still resolves against the board it was written on.
+The new board starts empty, at `REQ-001`.
 
-That the count *rises* is the assertion, not an artifact: a board that vanished with no trace is
-indistinguishable from a corrupted one. A clear that left `event` unchanged means the deletes ran
-around the triggers.
-
-**§8.c — the views still answer on a cleared board.** *Verified* on the cleared `messy`:
-
-```
-SELECT COUNT(*) FROM v_brief;                    -- 25
-SELECT value FROM v_brief WHERE fact = 'next';   -- none
-SELECT value FROM v_brief WHERE fact = 'tasks_todo';       -- 0
-SELECT value FROM v_brief WHERE fact = 'tasks_blocked';    -- 0
-SELECT value FROM v_brief WHERE fact = 'coverage_due';     -- 2
-```
-
-**`v_brief` is an unconditional `UNION ALL` of 25 facts**, so the count is 25 on every board,
-cleared or not — it is asserting that the view still *answers*, not that it is empty. (This line
-read `23` from v6.1 and was never restated: v6.2 took it to 27, and v7 dropped `roster_gaps` and
-`capability_unknown` to leave 25.)
-
-**`coverage_due` is 2 on a freshly cleared board, and that is correct.** The coverage map describes
-the *product*, which did not go away. A member that reads it as a bug — or that "tidies up" by
-deleting the coverage rows to make the brief quiet — has destroyed the QA discipline's memory to
-fix a number that was telling the truth.
-
-**`roster_gaps` is gone, not zero.** It counted open `capability_request` rows, and v7 dropped the
-table along with `v_roster_gaps`. A ticket nobody covers is now `tasks_blocked`, and the detail is
-`SELECT id, who FROM v_blocked_tasks WHERE reason = 'status-blocked'`.
-
-**§8.d — the event purge, only if asked a second time.** After Step 5:
-
-```sql
-SELECT 'event-not-purged' AS breach, CAST(COUNT(*) AS TEXT) FROM event HAVING COUNT(*) > 0
-UNION ALL SELECT 'checkin-not-reset', value FROM guild_state
- WHERE key = 'last-checkin' AND value <> 'null';
-```
-
-Both halves, because a purge that leaves `last-checkin` pointing into a feed that no longer
-exists gives the next brief a cutoff with nothing behind it.
+**What that costs, stated plainly.** The old clear kept `coverage`, `doc`, `doc_revision`, the
+`doc → doc` edges and `event` *in place*. A new file keeps none of them — they are in the retired
+file, not the new one. Carrying them forward means `ATTACH`, and **`ATTACH` is experimental on
+tursodb 0.7.2**: it requires `--experimental-attach`, and the guild does not build a procedure on
+an experimental flag. So the trade is honest in both directions — nothing is destroyed, and
+nothing is migrated either. A board you mean to keep working on is a board you do not replace.
 
 ### Anti-expectations
 
-| Must not be true | Caught by |
-|---|---|
-| An agent row deleted rather than deactivated | §8.b — `agent` line changed |
-| `coverage` or `doc` deleted | §8.b — those lines changed |
-| `event` deleted as part of Step 4 | §8.b — `event` must *rise*, not fall |
-| `guild_state.actor` or `last-checkin` deleted | §8.b — the two `state-*` lines |
-| `graph-template:*` keys left behind | §8.a — the nineteenth row |
-| The clear left no trace | §8.b — `event` unchanged |
-| `.guild/docs/`, `.guild/qa/`, `.guild/reviews/` removed | filesystem check; not SQL |
-| An `rm -rf` anywhere inside `.guild/` | not assertable after the fact |
-| One `yes` destroyed both the board and the feed | not assertable — it is a conversation |
+None of these is a thing a member may do, and each has been someone's shortcut:
+
+- **Emptying tables to "start fresh."** There is no confirmation prompt that makes this allowed.
+  A member asked to clear the board says the board is not clearable and offers the fresh file.
+- **`DELETE FROM event`** to quiet a noisy brief. The feed is the memory; a brief that reads
+  badly is a board that is in a bad state, and deleting the record does not change the state.
+- **Deleting `doc`, `doc_revision` or `coverage`** because they look like clutter. They describe
+  the product and the project's decisions, neither of which stopped being true.
+- **Deleting `knowledge_edge` rows** to clear a G10 breach. A dangling edge means something it
+  pointed at is already gone; the fix is finding out what, not cutting the evidence.
+- **`rm -rf` inside `.guild/`.** `.guild/docs/`, `.guild/qa/` and `.guild/reviews/` are evergreen
+  and a shell glob does not know that. Moving `guild.db` aside is the only removal in this
+  section, and it moves rather than deletes.
+
+### Postconditions
+
+**§8.a — nothing was deleted.** This is G11, asserted globally rather than here, because the rule
+does not only apply to a member who was asked to clear the board.
+
+**§8.b — a retired board is intact and readable.** After the fresh-file procedure, expect the old
+file to open and answer:
+
+```bash
+tursodb -q -m list ".guild/guild.db.retired-<stamp>" \
+  "SELECT (SELECT COUNT(*) FROM requirement), (SELECT COUNT(*) FROM doc), (SELECT COUNT(*) FROM event);"
+```
+
+Non-zero counts on a board that had them. An unreadable or truncated retired file means `mv` was
+`rm` in disguise — the one failure this procedure can still have.
 
 ### Cannot be asserted
 
-- **Whether the backup was taken before the question was asked.** The file's mtime proves it
-  exists, not that the ordering held.
-- **Whether the user understood what they said yes to.** The skill's confirmation text names what
-  survives precisely because a user who thinks their coverage map is about to go answers a
-  different question. Whether they read it is not a row.
-- **Whether the on-disk evergreen directories survived.** `ls .guild/docs .guild/qa
-  .guild/reviews` is the check and it is a shell one; nothing in the database knows they exist.
-- **Whether a `FOREIGN KEY constraint failed` line was noticed.** It arrives on *stdout*, exit
-  code 1, and a member that piped the script to `/dev/null` has a half-cleared board and a
-  clean-looking report. §8.a is what catches the result; nothing catches the not-looking.
+- **That the fresh file was the right call.** Nothing distinguishes a deliberate restart from a
+  member who found the board confusing and started over rather than reading it.
+- **Which retired file belongs to which era.** The timestamp in the name is all there is; nothing
+  in the new board points back at its predecessor, because the new board has never heard of it.
 
 ---
 
@@ -1944,7 +1874,8 @@ UNION ALL SELECT 'review_finding', COUNT(*) || '/' || COALESCE(SUM(length(dispos
 UNION ALL SELECT 'bug',            COUNT(*) FROM bug
 UNION ALL SELECT 'coverage',       COUNT(*) || '/' || COALESCE(SUM(length(id)+length(COALESCE(last_inspected_at,''))),0) FROM coverage
 UNION ALL SELECT 'doc',            COUNT(*) FROM doc
-UNION ALL SELECT 'agent',          COUNT(*) FROM agent
+UNION ALL SELECT 'doc_revision',   COUNT(*) FROM doc_revision
+UNION ALL SELECT 'knowledge_edge', COUNT(*) FROM knowledge_edge
 UNION ALL SELECT 'guild_state',    COUNT(*) FROM guild_state
 UNION ALL SELECT 'release-keys',   COUNT(*) FROM guild_state WHERE key LIKE 'release:%'
 ORDER BY part;
@@ -1963,9 +1894,16 @@ Expect **exactly two differing lines**, and they must be these two:
 > release-keys|1
 ```
 
-*Verified* — that is the transcript. `requirement`, `task`, `graph_node`, `gate`, `work_log`,
-`review_finding`, `bug`, `coverage`, `doc` and `agent` are all byte-identical across the release.
-A third differing line means a release restatused, snapshotted-and-deleted, or "tidied" something.
+*Verified* on the `messy` fixture, tursodb 0.7.2, `-m list` — that is the transcript, re-measured
+after the query changed. `requirement`, `task`, `plan`, `graph_node`, `gate`, `work_log`,
+`review_finding`, `bug`, `coverage`, `doc`, `doc_revision` and `knowledge_edge` are all
+byte-identical across the release. A third differing line means a release restatused,
+snapshotted-and-deleted, or "tidied" something.
+
+**This query carried `COUNT(*) FROM agent` until v8.1**, a v7 leftover that made the whole assertion
+error out on any board built since — `no such table: agent`, on *stdout*, where a member checking
+the exit code would not see it. The two library tables took its place: a release must not touch
+them either, and unlike the roster they are actually in this database.
 
 Under `--dry-run` the correct diff is **empty**. Steps 2, 3 and 4 are reads and are safe; step 7's
 upsert is not and must not run.

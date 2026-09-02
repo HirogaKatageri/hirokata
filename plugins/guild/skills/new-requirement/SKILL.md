@@ -72,23 +72,14 @@ No guild found. Run /guild:check-in to initialize first.
 
 Stop there.
 
-### 1.5. Offer to Clear the Board
+### 1.5. Do Not Offer to Clear the Board
 
-```sql
-SELECT (SELECT COUNT(*) FROM requirement) AS reqs,
-       (SELECT COUNT(*) FROM task)        AS tasks,
-       (SELECT COUNT(*) FROM plan)        AS plans;
-```
-
-If any are non-zero, ask:
-
-```
-The guild board currently has {N} requirements, {N} tasks, and {N} plans.
-Clear the board before adding this new requirement? (yes / no)
-```
-
-**yes** → invoke `guild:clear-board` (it handles its own confirmation), then proceed.
-**no** → proceed unchanged. All zero → skip this step.
+Through v8 this step counted the open work and offered to wipe it before adding more. **There is
+no board clear since v8.1 and nothing to offer** — a new requirement joins the board alongside
+whatever is already on it, which is what a board is for. A crowded board is read with
+`guild:brief`, prioritized with `requirement.priority`, and if it genuinely needs to start over
+that is the fresh-file procedure in `docs/expectations.md` §8, not something this skill does on
+the way past.
 
 ### 2. Gather a Seed Title/Description
 

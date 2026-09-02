@@ -843,7 +843,12 @@ ran out of road before it did. It is not NULL and it is not a pass.
 - **Do not INSERT, UPDATE or DELETE `event` by hand.** The triggers write it. It is the
   guild's memory, and a memory you can edit is not one.
 - **Do not set `updated_at` yourself** unless you mean to override the trigger.
-- **Do not `DELETE FROM agent`.** Set `active = 0`.
+- **Do not DELETE anything.** Not a task, not a requirement, not a doc, not the `event` feed —
+  the guild has no board clear and no supported procedure that removes a record (**G11**, and
+  §8 of `docs/expectations.md`). Work is retired by *status*: `done`, `cancelled`, `superseded`.
+  A board that genuinely has to start over starts over as a **new database file**, with the old
+  one moved aside and still readable. The one narrow exception is a `doc → doc` `knowledge_edge`
+  rewritten while retiring a decision, and G11 is scoped to allow exactly that.
 - **Do not write your own readiness, cursor, gate or matcher logic.** Every one of them is a
   view, and a second spelling is a second answer.
 - **Do not wrap a batch in `BEGIN … COMMIT` and assume atomicity.** A failing statement does

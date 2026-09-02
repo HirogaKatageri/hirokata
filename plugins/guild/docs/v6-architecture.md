@@ -106,8 +106,9 @@ the `schema.sql` header, in `README.md`, and here, and nowhere else.
 9. **"Every `knowledge_edge` points at something that exists."** Its endpoints are polymorphic, so
    there is no foreign key on either end and **G1 cannot cover them**. The write-time shape stops
    you *creating* a dangling edge; nothing stops you creating one by deleting the other end later.
-   **G10** is the assertion that stands in, and it is the reason `guild:clear-board` cuts the
-   library's edges into the work before it deletes the work.
+   **G10** is the assertion that stands in. Through v8 the way to create one was a board clear
+   that forgot to cut the library's edges first; since v8.1 nothing in the guild deletes at all
+   (**G11**), so a dangling edge means somebody wrote raw SQL.
 10. **"A document describes the code as it is now."** Nothing can know that. `v_doc_stale` is the
     honest approximation — a page whose subject has an `event` newer than the page — and it is a
     *signal*, never an invariant. A stale page is not a breach.
@@ -186,7 +187,7 @@ plugins/guild/
 │   ├── shift/              # the unattended loop
 │   ├── brief/ dashboard/ guild-status/
 │   ├── new-requirement/ qa/ qa-mindset/ qa-artifacts/
-│   ├── release/ clear-board/ comprehensive-review/ discuss/ verify-and-fix/ create-workflow/
+│   ├── release/ comprehensive-review/ discuss/ verify-and-fix/ create-workflow/
 │   └── svelte-*/           # specialist reference skills
 └── docs/
     ├── v6-architecture.md        # this file
