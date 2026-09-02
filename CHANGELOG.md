@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+- **Guild Plugin v8.1.0 — `guild:clear-board` is gone, and the guild deletes no records.** The
+  skill had been there since v1.0.4 and its job was to empty the board in place
+  while keeping a hand-maintained list of things that "outlive a board." That list was the tell: it
+  grew with every release, because every release added another table whose whole purpose was
+  remembering. `event` is written by triggers and is the guild's memory; `doc_revision` holds the
+  body before every rewrite; `knowledge_edge` records which decision governed which requirement. A
+  `DELETE` reaches through all of them at once, and what survives is a board that cannot explain
+  itself. The v8 knowledge graph had just added a clause making the skill cut the library's edges
+  *first* or breach G10 — a great deal of care to spend on losing information on purpose.
+
+  **Work is retired by status now**, and only by status: `done`, `cancelled`, `superseded`. A
+  finished requirement costs nothing on the board and is the only thing that explains the release
+  that shipped it.
+
+  **A fresh board is a fresh file.** `mv` the database aside with a timestamp, apply `schema.sql`
+  to a new one, and the retired board stays on disk and stays readable — so every id in git
+  history still resolves against the board it was written on. What it costs is stated rather than
+  hidden: the new board inherits neither the library nor the coverage map nor the feed. Carrying
+  them across would need `ATTACH`, which is **experimental on tursodb 0.7.2** and was tested and
+  rejected on that basis. Nothing is destroyed; nothing is migrated either.
+
+  **`G11 — nothing is deleted` makes it enforceable.** The eleventh global invariant reads the
+  `deleted` events those `AFTER DELETE` triggers were already writing, so the act writes its own
+  evidence and **no schema change was required** — `schema_version` stays at 8 and a v8 board is
+  already a v8.1 board. Its `unlinked` clause is deliberately narrow: retiring a decision legitimately
+  rewrites `doc → doc` edges, so it reads the target out of the event payload and fires only for an
+  edge deleted out of the *work*.
+
+  Downstream: `new-requirement` stops offering to clear, `validate` runs eleven invariants,
+  `expectations.md` §8 keeps its number and becomes *There is no board clear* (renumbering would
+  have moved ~90 cross-references for nobody's benefit), and `queries.md` §7 carries the general
+  rule.
+
+### Fixed
+- **Three v7 leftovers naming the dropped `agent` table**, one of them live. `docs/expectations.md`
+  §9.a carried `COUNT(*) FROM agent`, so the release fingerprint errored with `no such table:
+  agent` on every board built since v7.0.0 — written to *stdout*, where an exit-code check never
+  sees it, and `tursodb` has no `-bail` so the script ran on and reported a fingerprint one line
+  short. `doc_revision` and `knowledge_edge` replace it and the documented `7c7`/`10c10` diff was
+  re-measured and still holds. The other two were the same stale *"retire with `active = 0`"*
+  advice in `clear-board` (gone with the skill) and `references/queries.md` §7.
+- **Documentation that v8 left behind.** The root README's version table still read guild 7.0.0 and
+  the marketplace 6.0.0; both READMEs' upgrade sections listed migrations 006 and 007 only and said
+  `schema.sql` seeds version 7, when it seeds 8.
+
 ### Added
 - **Guild Plugin v8.0.0 — the library becomes a knowledge graph (BREAKING).** `doc` was a flat
   pile: a slug, a title, a body and a source, with nothing pointing at anything. Three things it

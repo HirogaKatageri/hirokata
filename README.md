@@ -1,10 +1,10 @@
 # HiroKata Claude Code Plugin Marketplace
 
-A curated collection of Claude Code plugins for enhanced development workflows. **Version 6.0.0** — [View Changelog](CHANGELOG.md)
+A curated collection of Claude Code plugins for enhanced development workflows. **Version 7.1.0** — [View Changelog](CHANGELOG.md)
 
 | Plugin | Version | What it is |
 |--------|---------|------------|
-| [**guild**](plugins/guild) | 7.0.0 | Continuous agent orchestration on a SQLite board whose rules live in the schema |
+| [**guild**](plugins/guild) | 8.1.0 | Continuous agent orchestration on a SQLite board whose rules live in the schema |
 | [**software**](plugins/software-project) | 1.0.5 | Task classification by clean-architecture phase, plan splitting, conventional commits |
 | [**research**](plugins/research) | 1.0.0 | Multi-perspective deep research, after Stanford's STORM method |
 | [**storytelling**](plugins/storytelling) | 1.0.0 | Six storytelling frameworks for making a message land |
@@ -121,13 +121,17 @@ export PATH="$HOME/.turso:$PATH"
 cp .guild/guild.db .guild/guild.db.bak
 tursodb .guild/guild.db < plugins/guild/migrations/006-project-and-plan-approval.sql   # 5 → 6
 tursodb .guild/guild.db < plugins/guild/migrations/007-roster-leaves-the-database.sql  # 6 → 7
+tursodb .guild/guild.db < plugins/guild/migrations/008-the-library-becomes-a-graph.sql # 7 → 8
 tursodb .guild/guild.db < plugins/guild/schema.sql
 ```
 
 - **006** (v6.2) renames `phase` to `project` and splits `plan.status` from `plan.approval`.
 - **007** (v7.0) drops the `agent`, `agent_capability` and `capability_request` tables — the roster moved to the agent files.
+- **008** (v8.0) gives `doc` a kind and a status, and adds `knowledge_edge` and `doc_revision` — the library becomes a knowledge graph. **Check the version reads 7 first:** a second run does not fail safely, it resets every document's tagging.
 
-Neither is idempotent, and each fails safely on a second run. A fresh board needs none of this.
+None is idempotent, and 006 and 007 fail safely on a second run. A fresh board needs none of this.
+
+**v8.1.0 needs no migration.** Removing `guild:clear-board` changed skills and documentation only; `schema.sql` is untouched and `schema_version` stays at **8**.
 
 ### Setting Up
 
@@ -249,7 +253,6 @@ The dashboard is one self-contained file — all CSS and JS inline, deterministi
 | `guild:new-requirement` | Live 3-way interview (product-owner + architect + you) that leaves a planned, ticketed requirement on the board | "new requirement", "I need a feature", "I want to build" |
 | `guild:qa` | Seed the independent QA discipline — risk-mapped coverage, e2e regression specs, bugs filed as rows | "QA the product", "run a QA pass", "build comprehensive e2e tests" |
 | `guild:comprehensive-review` | Run all 4 reviewers in parallel against recent changes | "review my changes", "run comprehensive review", "check all my code" |
-| `guild:clear-board` | Deletes every unit of work, keeping what outlives a board — there is no journal to replay, so a `DELETE` is final | "clear the board", "reset the guild", "start fresh" |
 | `guild:create-workflow` | Interactively design and generate automation workflows (GitHub Actions, scripts, Makefiles) | "create a workflow", "generate a workflow", "add a GitHub Actions workflow", "set up automation" |
 | `guild:discuss` | Summarize conversation context and facilitate focused topic discussions | "discuss", "let's discuss", "discuss [topic]", "summarize the context", "what are we working on" |
 | `guild:release` | Stamp CHANGELOG, snapshot completed requirements from the export, create git tag | "cut a release", "ship it", "tag a version" |

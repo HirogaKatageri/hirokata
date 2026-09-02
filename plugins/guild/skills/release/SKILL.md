@@ -263,9 +263,9 @@ releases and nothing has to be reset.
 
 **A release never changes a requirement's status and never deletes a row.** `done` requirements
 cost nothing on the board — `v_next_task` only ever looks at open tasks — and deleting them would
-orphan every work log, finding and event that explains how the release was built. If a board is
-genuinely too crowded to read, that is `guild:clear-board`'s question, asked deliberately, not a
-side effect of shipping.
+orphan every work log, finding and event that explains how the release was built. Nor is there
+anywhere to hand that job off to: **nothing in the guild deletes records** (G11), so a board that
+reads as crowded is one to narrow with `guild:brief` and priorities, not one to empty.
 
 ## Step 8 — commit and tag
 

@@ -36,9 +36,10 @@ repro step ending in `;` at end of line tears the statement in half.
 **There is no `.guild/qa/ledger.md` any more.** It was the bug ledger; bugs are rows. If a
 project still has one from v4, treat it as history — read it, do not append to it.
 
-`.guild/qa/` remains **evergreen** — like the `doc` and `coverage` tables, these files survive
-releases and `clear-board`. Committed test specs do NOT live here; they live in the project's
-real e2e dir and run in CI.
+`.guild/qa/` remains **evergreen** — like the `doc` and `coverage` tables, these files outlive any
+one board. Nothing in the guild deletes them, and nothing deletes the rows either (G11); a fresh
+board is a fresh database file and `.guild/qa/` carries straight across. Committed test specs do
+NOT live here; they live in the project's real e2e dir and run in CI.
 
 ```
 .guild/qa/

@@ -16,6 +16,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [8.1.0] - 2026-09-02
+
+### Removed
+- **`guild:clear-board` is gone, and nothing replaced it. The guild deletes no records.** The skill
+  existed since v1.0.4 and its job was to empty the board in place, keeping a hand-maintained list
+  of things that "outlive a board" — `coverage`, `doc`, `event`, and after v8 the `doc → doc` edges.
+  That list was the tell. Every release added to it, because every release added another table whose
+  whole purpose was remembering: `event` is written by triggers and is the guild's memory,
+  `doc_revision` holds the body before every rewrite, `knowledge_edge` records which decision
+  governed which requirement. A `DELETE` reaches through all of them at once — the row goes, and the
+  record of why it was ever there goes with it — and the skill's own v8 change was a fresh clause to
+  cut the library's edges *first* or breach G10. That is a great deal of care to spend on losing
+  information on purpose.
+
+  **Work is retired by status, not by deletion.** `done`, `cancelled`, `superseded`. A finished
+  requirement costs nothing on the board — `v_next_task` only ever looks at open work — and it is
+  the only thing that explains the release that shipped it.
+
+### Added
+- **G11 — nothing is deleted.** The eleventh global invariant, and the assertion that makes the
+  rule enforceable rather than merely stated. `goal`, `project`, `requirement`, `plan`, `task` and
+  `bug` each already carried an `AFTER DELETE` trigger writing an `event` row with
+  `verb = 'deleted'`, so **the act writes its own evidence** and G11 simply reads it. No schema
+  change was needed for this; the triggers were there before the rule was.
+
+  **Its second clause is narrow on purpose.** An `unlinked` event is not automatically a breach:
+  retiring a decision legitimately deletes and rewrites `doc → doc` edges. What separates the
+  innocent case from the guilty one is the edge's *`to`* end, and `trg_edge_unlinked` writes only
+  the *`from`* end into the subject columns — that end is a doc either way. The target is in
+  `payload`, so the clause reads `json_extract(payload, '$.to_type') <> 'doc'`. An edge deleted out
+  of the library is fine; an edge deleted out of the **work** is the shape a board clear made.
+
+- **A fresh board is a fresh file** — `docs/expectations.md` §8 and the guild README. Move
+  `guild.db` aside with a timestamp and apply `schema.sql` to a new one. The retired file stays on
+  disk and stays readable, so every id in git history still resolves against the board it was
+  written on.
+
+  **What that costs is stated plainly rather than papered over.** The new board does *not* inherit
+  the library, the coverage map or the event feed — those are in the retired file. Carrying them
+  forward would mean `ATTACH`, which was tested and rejected: it is **experimental on tursodb
+  0.7.2** and requires `--experimental-attach`, and the guild does not build a procedure on an
+  experimental flag. Nothing is destroyed; nothing is migrated either.
+
+### Changed
+- **`docs/expectations.md` §8 keeps its number and loses its process.** Renumbering would have
+  moved roughly ninety `§9`–`§13` cross-references for no reader's benefit, so §8 is now *There is
+  no board clear*: the anti-expectations for the thing that no longer exists, the fresh-file
+  procedure, and a pointer to G11 for the assertion.
+- **`guild:new-requirement` no longer offers to clear the board** before adding work. A new
+  requirement joins the board alongside whatever is already there, which is what a board is for.
+- **`guild:release`** no longer defers a crowded board to `clear-board`'s question; there is no such
+  question. **`guild:validate`** runs eleven invariants and its process table drops the
+  `clear-board` row. **`guild:qa-artifacts`** describes `.guild/qa/` as outliving any one board
+  rather than surviving a clear.
+- **`references/queries.md` §7** replaces *"Do not `DELETE FROM agent`"* with the general rule.
+
+### Fixed
+- **Three v7 leftovers referencing the dropped `agent` table.** Two were the same stale advice —
+  *"retire with `active = 0`"* — in `clear-board` (gone with the skill) and `references/queries.md`
+  §7, both naming a table and a column that have not existed since v7.0.0. The third was live and
+  broken: **`docs/expectations.md` §9.a carried `UNION ALL SELECT 'agent', COUNT(*) FROM agent`**,
+  so the release fingerprint errored with `no such table: agent` on every board built since v7 —
+  on *stdout*, where a member checking the exit code would never see it, and `tursodb` has no
+  `-bail` so the script ran on and reported a fingerprint one line short. `doc_revision` and
+  `knowledge_edge` take its place: a release must not touch those either, and unlike the roster
+  they are actually in this database. Re-measured on the `messy` fixture — the documented
+  `7c7`/`10c10` diff still holds exactly.
+- **The README's upgrade section had not caught up with v8.** It listed migrations 006 and 007
+  only, and said `schema.sql` seeds version **7**; it seeds **8**. The root README's version table
+  still read guild 7.0.0.
+
+### Migration
+**None.** `schema.sql` is unchanged and `schema_version` stays at **8** — a v8 board is already a
+v8.1 board. What changed is which skills ship and what the expectations assert.
+
+**If your board ran `guild:clear-board` before v8.1, G11 will fire on it**, and that is correct: the
+`deleted` events are a true record of something that happened. Scope the assertion with
+`AND e.ts > '<upgrade timestamp>'` and say so in the report.
+
+---
+
 ## [8.0.0] - 2026-09-02
 
 ### Added
@@ -139,7 +220,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [7.0.0] - 2026-09-02
 
-### Removed (BREAKING)
+### Removed
 - **The roster leaves the database.** `agent`, `agent_capability` and `capability_request` are
   dropped. They were a **mirror** — every fact in them was already declared in the frontmatter of
   the member's own markdown file, and the SQL copy was the one that went stale. It was only ever as

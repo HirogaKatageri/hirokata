@@ -138,6 +138,30 @@ missing, reads the roster straight from the agent files, and opens with the brie
 
 `config.yaml` is committed to git and holds env var **names** only, never a credential.
 
+### Starting a fresh board
+
+**The guild deletes nothing.** There is no board clear — no skill, no SQL recipe, no supported
+procedure that empties a board in place. `event` is the guild's memory, `doc_revision` keeps the
+body before every rewrite, and `knowledge_edge` records which decision governed which requirement;
+a `DELETE` reaches through all three at once, and what survives is a board that cannot explain
+itself. **G11** asserts this and fires on the `deleted` event the triggers write, so the act
+cannot happen quietly.
+
+A fresh board is a **fresh file**:
+
+```bash
+export PATH="$HOME/.turso:$PATH"
+mv .guild/guild.db ".guild/guild.db.retired-$(date -u +%Y%m%dT%H%M%SZ)"
+tursodb .guild/guild.db < "${CLAUDE_PLUGIN_ROOT}/schema.sql"
+```
+
+The retired file stays on disk and stays readable, so every id in git history still resolves
+against the board it was written on. What it costs is stated plainly in `docs/expectations.md` §8:
+the new board does **not** inherit the library, the coverage map or the event feed — those are in
+the retired file. Carrying them across would mean `ATTACH`, which is experimental on tursodb 0.7.2
+and not something the guild builds a procedure on. Nothing is destroyed; nothing is migrated
+either. A board you mean to keep working on is a board you do not replace.
+
 ---
 
 ## The work model
@@ -287,10 +311,9 @@ the price of moving the vocabulary into the engine, and it is a real one.
 | `guild:comprehensive-review` | Multi-dimensional pre-PR review — requirements compliance, coverage, edge cases, architecture, security. |
 | `guild:verify-and-fix` | Diagnoses a reported error end to end, then applies a test-driven fix. |
 | `guild:release` | Stamps `CHANGELOG.md`'s Unreleased section with a version, snapshots completed requirements, and creates an annotated tag. Does not push. |
-| `guild:clear-board` | Deletes every unit of work, keeping the things that outlive a board. **There is no journal to replay any more** — a `DELETE` is final. Back the file up first. |
 | `guild:discuss` | Surfaces the subjects in the current context and drives a focused discussion. |
 | `guild:create-workflow` | Generates a CI or script workflow file. |
-| `guild:validate` | **Runs `docs/expectations.md` against the live board** — the ten global invariants by default, a named process's postconditions on request. Reports each failure with the offending rows. Read-only unless you ask it to load a fixture. |
+| `guild:validate` | **Runs `docs/expectations.md` against the live board** — the eleven global invariants by default, a named process's postconditions on request. Reports each failure with the offending rows. Read-only unless you ask it to load a fixture. |
 | `guild:warehouse` | **The reference every member loads before touching guild data.** |
 
 Agent-facing skills that specialists pre-load rather than users invoking: `guild:qa-mindset`,
@@ -412,8 +435,8 @@ expected result**:
 
 | | |
 |---|---|
-| **§3 — ten global invariants** | Hold at all times, whatever just ran: referential health, vocabulary, id shape, gate integrity, ticket routing, closure, event coverage, graph structure, concurrency, library integrity. |
-| **§4–§12 — one section per process** | Trigger, preconditions, expected sequence, postconditions, anti-expectations, and *cannot be asserted* — for `new-requirement`, `brief`, `dashboard`, `check-in`, `clear-board`, `release`, `guild-status`, `qa` and `shift`. |
+| **§3 — eleven global invariants** | Hold at all times, whatever just ran: referential health, vocabulary, id shape, gate integrity, ticket routing, closure, event coverage, graph structure, concurrency, library integrity, and **nothing deleted**. |
+| **§4–§12 — one section per process** | Trigger, preconditions, expected sequence, postconditions, anti-expectations, and *cannot be asserted* — for `new-requirement`, `brief`, `dashboard`, `check-in`, `release`, `guild-status`, `qa` and `shift`. §8 names no process: it is the anti-expectations for the board clear that no longer exists, and the fresh-file procedure that replaced it. |
 | **`expectations-fixtures.md`** | Six known board states — `empty`, `planned`, `in-flight`, `review-ready`, `messy`, `maintenance` — because an assertion run against an unknown state answers differently every time. |
 
 Assertions return **zero rows when healthy and the offending rows when not**, so a failure names its
@@ -449,6 +472,7 @@ tursodb .guild/guild.db "SELECT version FROM schema_version;"
 # run only the ones above the reported version, in order
 tursodb .guild/guild.db < migrations/006-project-and-plan-approval.sql   # → 6
 tursodb .guild/guild.db < migrations/007-roster-leaves-the-database.sql  # → 7
+tursodb .guild/guild.db < migrations/008-the-library-becomes-a-graph.sql # → 8
 tursodb .guild/guild.db < schema.sql
 ```
 
@@ -456,10 +480,16 @@ tursodb .guild/guild.db < schema.sql
 |-----------|------------------|--------------|
 | **006** | 6 (v6.2) | Renames `phase` to `project`, rewrites `PHASE-NNN` ids, splits `plan.status` from `plan.approval`. |
 | **007** | 7 (v7.0) | Drops `agent`, `agent_capability` and `capability_request` and the six roster views; rebuilds `task` without the FK to `agent(name)`. |
+| **008** | 8 (v8.0) | Gives `doc` a `kind`, `status`, `area` and `created_at`; adds `knowledge_edge` and `doc_revision`. **Check the version reads 7 first** — a second run does not fail safely, it resets every document's tagging. |
 
-`schema.sql` seeds version **7**. **Neither migration is idempotent** — a second run of 006 fails on
+`schema.sql` seeds version **8**. **No migration is idempotent** — a second run of 006 fails on
 `CREATE TABLE project`, which is the safe direction to fail — and **order is not optional**. A fresh
 board needs none of this.
+
+**v8.1.0 ships no migration.** Removing `guild:clear-board` touched skills and documentation only;
+`schema.sql` is unchanged, so a v8.0 board is already a v8.1 board. The new invariant it brings, **G11
+— nothing is deleted**, reads `event` rows the existing triggers already wrote, so there was
+nothing to add to the schema for it.
 
 ---
 
@@ -481,7 +511,7 @@ What *is* verified:
   authored.
 - **Every assertion in `docs/expectations.md` and every fixture in `docs/expectations-fixtures.md`
   was executed** against a real tursodb 0.7.2 database — confirmed to pass on a healthy board, and,
-  for the ten invariants, confirmed to *fire* on a deliberately injected breach. An assertion that
+  for the eleven invariants, confirmed to *fire* on a deliberately injected breach. An assertion that
   has never been seen to fail is not an assertion, it is a wish.
 - **The v6.2 `project` rename and plan approval** were verified the same way: the schema applies to a
   fresh board at version 6, `migrations/006-project-and-plan-approval.sql` was run end to end against
@@ -499,10 +529,18 @@ What *is* verified:
   its bad row; `trg_doc_revised` snapshots a real body change and correctly skips a no-op rewrite;
   `v_doc_stale` stays empty until its subject moves and fires the moment it does; **G10 fires on
   both clauses and clears when fixed**, and G8 fires on a dropped `document` node; all six
-  fixtures reload and every one of the ten invariants returns zero rows on each. Four SQL
+  fixtures reload and every one of the invariants then defined returns zero rows on each. Four SQL
   constructs new to the schema — `group_concat(col, sep)`, a `LEFT JOIN` onto a view, a
   correlated `NOT EXISTS` against a `UNION ALL` view, and `AFTER DELETE` triggers — were each
   verified and carry a row in `tursodb-gotchas.md` §7.
+- **The v8.1 removal of `guild:clear-board`** was verified against the `messy` fixture on tursodb
+  0.7.2: **G11 returns zero rows** on the fixture as loaded, then fires once per injected act —
+  `DELETE FROM bug WHERE id = 'BUG-002'` → `row-deleted|bug:BUG-002`, and a `doc → requirement`
+  edge delete → `edge-unlinked|doc:adr-a -> requirement:REQ-001` — while a legitimate `doc → doc`
+  supersession delete correctly returns **nothing**. The §9 release fingerprint was re-measured
+  after its `COUNT(*) FROM agent` line was replaced, and still produces exactly the documented
+  `7c7`/`10c10` diff. `ATTACH` was tested and **rejected**: it is experimental on tursodb 0.7.2
+  and needs `--experimental-attach`, which is why a fresh board inherits nothing.
 - **All three migrations have been run against seeded boards only, never against a board with real
   history.**
 

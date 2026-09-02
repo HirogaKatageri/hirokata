@@ -29,7 +29,7 @@ rather than prose to be interpreted. This skill runs them and reports what holds
 
 | invocation | what runs |
 |---|---|
-| `validate` | §3 — the ten global invariants. They hold whatever just ran. |
+| `validate` | §3 — the eleven global invariants. They hold whatever just ran. |
 | `validate <process>` | §3, then that process's preconditions, postconditions and anti-expectations. |
 | `validate --fixture <name>` | Loads a fixture into a **scratch** database, then asserts against it. Writes. |
 
@@ -37,11 +37,14 @@ rather than prose to be interpreted. This skill runs them and reports what holds
 
 | process | section | process | section |
 |---|---|---|---|
-| `new-requirement` | §4 the build flow | `clear-board` | §8 |
-| `brief` | §5 | `release` | §9 |
-| `dashboard` | §6 | `guild-status` | §10 |
-| `check-in` | §7 | `qa` | §11 the maintenance cycle |
-| | | `shift` | §12 the unattended shift |
+| `new-requirement` | §4 the build flow | `release` | §9 |
+| `brief` | §5 | `guild-status` | §10 |
+| `dashboard` | §6 | `qa` | §11 the maintenance cycle |
+| `check-in` | §7 | `shift` | §12 the unattended shift |
+
+§8 names no process. `guild:clear-board` was removed in v8.1 and the section is what stands in its
+place — the anti-expectations for a board clear, and the fresh-file procedure that replaced it.
+Its assertion, *nothing was deleted*, is **G11** and runs with every other global.
 
 `<name>` is one of `empty`, `planned`, `in-flight`, `review-ready`, `messy`, `maintenance` —
 `docs/expectations-fixtures.md`.
