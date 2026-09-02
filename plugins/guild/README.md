@@ -60,9 +60,9 @@ bash. Nothing polices them now — they are documented in `schema.sql` and nowhe
    work-log line's *prefix*, matched with `LIKE`. It is a marker, not a column.
 4. **"Concurrently dispatched tickets touch disjoint files."** `task.files` is a JSON array; the
    disjointness across a `parallel_group` is an assertion by the architect. Nothing checks it.
-5. **"A capability must be in the vocabulary."** A CHECK cannot reference another table, so an
-   unknown capability inserts fine and simply matches nobody. Read `v_capability_unknown` when the
-   matcher goes quiet.
+5. **"A ticket's capabilities name something a real agent declares."** The vocabulary is the agent
+   files, not a table, so no SQL check can reach it — a misspelled tag inserts fine and matches
+   nobody. The dispatcher is what makes it speak, by writing the ticket `blocked`.
 6. **"A gate is decided by a human."** `gate.status` is a column. Anyone can write it.
 7. **The graph is not acyclic by construction.** `graph_edge` accepts any pair. A cycle makes
    `v_ready_nodes` return nothing for the whole loop — a silent stall, not an error. There is no
@@ -73,9 +73,13 @@ bash. Nothing polices them now — they are documented in `schema.sql` and nowhe
 ### Key features
 
 - **A ticket names a required capability, not an agent.** `task_capability` rows say what the work
-  needs; any roster member whose declared capabilities cover the set is eligible. Adding
-  `agents/developer-rust.md` with the right tags makes it eligible with no skill edits and no chain
-  rewiring — `v_agent_match` picks it up on the next roster sync.
+  needs; any subagent whose frontmatter `capabilities:` cover the set is eligible. Adding
+  `agents/developer-rust.md` with the right tags makes it eligible with no skill edits, no chain
+  rewiring and **nothing to sync** — the dispatcher reads the agent files on the next check-in.
+- **The roster is the agent files, not a table.** Who exists, what each can do and whether one runs
+  serially are declared in frontmatter and read at dispatch time, across this plugin, the project's
+  `.claude/agents/`, your `~/.claude/agents/` and every other installed plugin. v7 dropped the SQL
+  mirror of it, because a mirror is only ever as fresh as the last sync somebody remembered.
 - **The chain is data.** An execution template is instantiated per requirement into `graph_node` /
   `graph_edge` / `gate` rows. `v_ready_nodes` says what can run.
 - **Two gates, always.** `gate-plan` before anything is built; `gate-repairs` after review. Gates
@@ -153,9 +157,12 @@ guild member can claim, carrying the file set it owns in `files`.
 `project` was called `phase` through v6.1. Existing boards migrate with
 `migrations/006-project-and-plan-approval.sql` — run it before re-applying `schema.sql`.
 
-Alongside them: `graph_node` / `graph_edge` / `gate` (the execution graph), `agent` /
-`agent_capability` / `task_capability` (the roster and the matcher), `bug`, `coverage`,
-`review_finding`, `work_log`, `doc`, and `event` — the activity feed the triggers write.
+Alongside them: `graph_node` / `graph_edge` / `gate` (the execution graph), `task_capability`
+(what each ticket needs), `bug`, `coverage`, `review_finding`, `work_log`, `doc`, and `event` —
+the activity feed the triggers write.
+
+The roster left the database in v7. Existing boards migrate with
+`migrations/007-roster-leaves-the-database.sql` — run it before re-applying `schema.sql`.
 
 **`event` is the record.** There is no journal any more. `guild.db` is not derived state that can be
 thrown away and rebuilt; it is the board. It is gitignored because a binary file is a bad thing to
@@ -177,12 +184,11 @@ Read the view; do not re-derive the rule. The ones you will use most:
 | `v_ready_nodes` | Which graph nodes have all direct predecessors done. |
 | `v_gates_pending` | What is waiting on the guild master. |
 | `v_plans_pending_approval` | Which drafted plans nobody has ruled on yet. |
-| `v_agent_match` / `v_task_top_agent` | Who should take this. |
 | `v_projects_runnable` | Which projects may run right now, and why — the parallelism rule, defined once. |
 | `v_project_progress` | Every project with its counters, isolation and worktree. |
 | `v_requirement_progress` / `v_goal_progress` | How far along. |
 | `v_failed_tasks`, `v_open_findings`, `v_open_bugs`, `v_coverage_due` | What still needs attention. |
-| `v_roster_gaps`, `v_capability_unknown` | Why the matcher went quiet. |
+| `v_blocked_tasks` | What cannot move, and why — a `status-blocked` row's `who` names the capability nobody has. |
 | `v_recent_activity` | What moved. |
 
 ---
@@ -256,10 +262,18 @@ Agent-facing skills that specialists pre-load rather than users invoking: `guild
 
 ## The roster
 
-The roster is `agent` rows, synced from these files' frontmatter. A ticket names capabilities; the
-matcher (`v_agent_match`) ranks eligible members deterministically — eligible means the member's
-capabilities are a **superset** of the required set, ranked by preferred-covered (desc), then total
-capability count (**asc**, so a specialist beats a generalist), then name.
+**The roster is these files' frontmatter — there is no roster table.** A ticket names capabilities;
+the orchestrator scans every subagent available to you and ranks the eligible ones deterministically
+— eligible means the member's declared capabilities are a **superset** of the required set, ranked
+by preferred-covered (desc), then total capability count (**asc**, so a specialist beats a
+generalist), then name. Read it with:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py"
+```
+
+Adding a member is writing its file. There is nothing to sync, and no vocabulary to admit the word
+to first.
 
 | Agent | Model | Capabilities | Role |
 |-------|-------|--------------|------|

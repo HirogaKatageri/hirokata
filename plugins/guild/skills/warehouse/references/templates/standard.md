@@ -180,7 +180,7 @@ VALUES ('REQ-007', 'add-node', 'research',
 | A `required: true` node may be **reshaped but never dropped** | Review always happens; *how wide it fans out* is negotiable. Reshaping is a judgement about this requirement. Dropping is a judgement about the guild's standards, which is not the architect's to make. |
 | **A gate may be neither dropped nor added** | §4. `add-gate` is refused outright, whatever the reason. |
 | **Every deviation carries a non-empty reason** | Whitespace-only is empty. A graph with unexplained divergence cannot be diffed against a baseline when a run goes wrong — you end up staring at a bespoke graph with no way to tell intent from accident. |
-| **An `add-node` must name a capability the roster has** | Otherwise you get a graph that cannot run: a node no active member can be matched to, discovered at dispatch time in the middle of a shift. Check before you insert (§8). |
+| **An `add-node` must name a capability some available subagent declares** | Otherwise you get a graph that cannot run: a node nobody can be matched to, discovered at dispatch time in the middle of a shift. **Nothing in SQL can check this** — the roster is the agent files. Check with `roster.py --covers` before you insert (§8). |
 | **Every template key gets at least one node** | This is what makes "dropped" unambiguous. A key with zero rows was dropped — full stop, with no *"unless its fan-out happened to be empty"* caveat to hide behind. It is also why `implement` has a no-tickets fallback and why the anchors exist. |
 
 **Legitimate deviations look like:** a `research` node ahead of `implement` for an unfamiliar
@@ -436,13 +436,15 @@ JOIN graph_node t ON t.id = e.to_node
 WHERE t.requirement_id = 'REQ-007' AND f.requirement_id <> t.requirement_id;
 ```
 
-Before an `add-node` deviation, confirm the capability exists on an active member:
+Before an `add-node` deviation, confirm some available subagent declares the capability.
+**This one is not SQL** — the roster is the agent files, and nothing in the database can see
+them:
 
-```sql
-SELECT 'NO MEMBER FOR: ' || 'perf-profiling'
-WHERE NOT EXISTS (SELECT 1 FROM agent_capability ac JOIN agent a ON a.name = ac.agent
-                   WHERE ac.capability = 'perf-profiling' AND a.active = 1);
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers perf-profiling
 ```
+
+No output means no member. Do not add the node.
 
 Node counts, as a sanity check against the numbers in §1:
 

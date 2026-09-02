@@ -57,9 +57,6 @@ SELECT '## bounties';     SELECT json_object('id',id,'req',requirement_id,'p',pr
                                  'who',who,'title',title) FROM v_open_bounties;
 SELECT '## blocked';      SELECT json_object('id',id,'req',requirement_id,'status',status,
                                  'reason',reason,'title',title) FROM v_blocked_tasks;
-SELECT '## gaps';         SELECT json_object('cap',capability,'req',requirement_id,
-                                 'proposed',proposed_agent,'covered',covered_by,
-                                 'why',rationale) FROM v_roster_gaps;
 SELECT '## bugs';         SELECT json_object('id',id,'sev',severity,'status',status,
                                  'by',found_by,'req',requirement_id,'title',title) FROM v_open_bugs;
 SELECT '## failed';       SELECT json_object('id',id,'who',who,'waived',waived,
@@ -112,7 +109,7 @@ the user's to ask for, and Step 4's last rule tells you to **name the query** ra
 
 `v_brief` is the standup as one fact per row: `next`, `next_reason`, the task counts,
 `bounties_open` / `bounties_stuck`, `bugs_open`, `findings_open`, `coverage_due`,
-`roster_gaps`, `capability_unknown`, `nodes_ready`, `gates_pending`, `events_since_checkin`.
+`nodes_ready`, `gates_pending`, `plans_pending_approval`, `events_since_checkin`.
 Every count comes from the same view its detail list comes from, so **a count and its listing
 cannot disagree.** Never state a number that is not in these rows.
 
@@ -145,38 +142,35 @@ What each block teaches:
 **An empty block is good news stated by its absence.** No `## bugs` rows means nothing is
 open. Do not announce empty categories, and do not invent one.
 
-### The two blocks that are usually the most important thing on the page
+### The block that is usually the most important thing on the page
 
 ```json
 {"id":"TASK-005","req":"REQ-001","status":"blocked",
- "reason":"no-eligible-agent:implement,rust","title":"Port the codec to Rust"}
-{"cap":"rust","req":"REQ-001","proposed":"developer-rust","covered":0,
- "why":"Three implement tickets are Rust crates; developer has no Rust idiom guidance."}
+ "reason":"status-blocked","who":"needs:implement+rust","title":"Port the codec to Rust"}
 ```
 
-- **`## blocked` is `id · req · status · reason · title`,** and `reason` is one blank-free
-  token: `status-blocked`, `deps:TASK-009,…`, or `no-eligible-agent:<capabilities>`. The last
-  is a **roster gap** — the ticket declared capabilities nobody covers — and the token names
-  the words that would fix it, which is to say it names the agent file somebody needs to
-  write. `blocked` means exactly one thing in this guild: *this bounty has no taker*.
-- **`## gaps` is one row per open `capability_request`** — a decision the guild master has not
-  made yet. The architect hit a capability the guild does not have, filed it rather than
-  routing to the nearest generalist, and proposed a member. **`covered > 0` on an open request
-  means the gap was filled and nobody closed the request** — worth saying, because the board
-  is still asking for something it already has.
-- **A gap disappears when it is filled, not when it is dismissed.** Only a roster sync that
-  admits an agent declaring the capability moves it `open → created`. So a gap that has been
-  on the brief for a week means nobody recruited for it — including when the user chose to
-  hand the work to a generalist anyway. Report it as standing, never as stale.
-- **The two are usually one story.** A blocked row and a gap row on the same board are the
-  bounty and its cause; narrate them together in one sentence.
+- **`## blocked` is `id · req · status · reason · who · title`,** and `reason` is one
+  blank-free token: `status-blocked`, `deps:TASK-009,…`, or `unassigned`. `blocked` means
+  exactly one thing in this guild: *this bounty has no taker*.
+- **A `status-blocked` row IS the roster gap, and `who` names it.** `needs:implement+rust`
+  names the words that would fix it, which is to say it names the agent file somebody needs to
+  write. There is no separate gaps block any more — the ticket that is actually stuck *is* the
+  gap, which is both louder and harder to leave lying around than a request row was.
+- **A gap disappears when somebody writes the agent file, and nothing else.** No sync, no
+  approval, no row to close. So a `status-blocked` ticket that has been on the brief for a week
+  means nobody has written that file — including when the user chose to hand the work to a
+  generalist anyway. Report it as standing, never as stale.
+- **`unassigned` is a different failure.** That ticket names no member AND declares no
+  capabilities, so there is no question anybody could answer. It is a malformed ticket, not a
+  roster gap, and the fix is the architect's.
 - **When blocked work is all that is left** — `bounties_open` is 0 and `bounties_stuck` is
   not — that **is** the headline. It is not "all caught up", and it must never be narrated as
   if it were.
 
-**`capability_unknown > 0`** is worth one line too: an agent or a ticket carries a tag outside
-the vocabulary, so it matches nobody, silently, forever. `SELECT side, owner, capability FROM
-v_capability_unknown` names it.
+**A ticket can be stuck without being `blocked` yet.** Nothing in the database checks a
+capability against the agent files, so a ticket nobody covers sits in `## bounties` looking
+healthy until a check-in tries to dispatch it and writes it `blocked`. If `bounties_open` looks
+implausibly high against a board that is not moving, that is the thing to suspect.
 
 ## Step 4 — narrate it
 
@@ -199,9 +193,9 @@ them. Skip any part the data does not support.
 3. **Risks — named, never counted.** Open bugs worst-severity first, every `critical` one by id
    and title. Then the unadjudicated failed tasks, with their reason. Then the findings, at
    least the critical and major ones, each as severity + reviewer + what + where. Then coverage
-   areas overdue or never inspected. **End the risk beat with the roster gaps** — a gap is a
-   risk with a known remedy, which is the most useful kind to state: "`rust` has been an open
-   gap since REQ-001; the architect proposed `developer-rust`."
+   areas overdue or never inspected. **End the risk beat with the roster gaps** — a
+   `status-blocked` row is a risk with a known remedy, which is the most useful kind to state:
+   "TASK-005 has needed `rust` since REQ-001, and no available subagent declares it."
 4. **What moved** — summarize by subject rather than reciting timestamps: "since your last
    check-in, TASK-001 and TASK-002 completed, reviewer-security filed a major finding on
    TASK-003, BUG-001 was filed critical, TASK-007 failed." Each row carries its subject's title
@@ -213,7 +207,7 @@ them. Skip any part the data does not support.
    node to surface it — it would otherwise be invisible. Name the plan and its requirement.
 6. **What to do next** — a concrete recommendation, with the reason. Default to `next`. Deviate
    only for something the numbers justify — a critical bug with no fix task, an unadjudicated
-   failure, an open roster gap holding a requirement, a pending gate — and say which fact
+   failure, a `status-blocked` ticket holding a requirement, a pending gate — and say which fact
    changed your mind. If everything left is blocked, the recommendation is **recruiting**, and
    it is the only one: `/guild:new-requirement` is where a new guild member is created, on the
    user's say-so. Do not offer to reassign the ticket yourself.
@@ -231,9 +225,10 @@ does not hold** in one line at the end of the briefing; never repair it silently
 
 ## Rules
 
-- **Read-only.** Every statement is a `SELECT`. Never `UPDATE`, `INSERT`, `DELETE`, never sync
-  the roster, never stamp `last-checkin`, never write an `agents/*.md` file, and never open the
-  database file with anything but `tursodb`.
+- **Read-only.** Every statement is a `SELECT`. Never `UPDATE`, `INSERT`, `DELETE`, never
+  stamp `last-checkin`, never write an `agents/*.md` file, and never open the database file
+  with anything but `tursodb`. In particular **never mark a ticket `blocked` from here**, even
+  when you can see nobody covers it — that is a decision, and check-in makes it.
 - **Read the view, do not re-derive the rule.** `v_next_task` is the cursor; `v_open_bounties`
   is what can be handed out; `v_blocked_tasks` says why not. Writing your own `NOT EXISTS` over
   `task_dependency` gives the guild a second answer to a question that already has one.
@@ -244,8 +239,8 @@ does not hold** in one line at the end of the briefing; never repair it silently
   `json_object`, or as the only column in the statement, and never `cut -d'|'` a result.
 - **Do not paste the rows and call it a briefing.** The rows are evidence; the narration is the
   deliverable. Show them only if asked, or if quoting them *is* the shortest honest answer.
-- **A blocked bounty and an open roster gap are never omitted for brevity.** Everything else on
-  this page eventually resolves by someone doing their job; these two resolve only when the
-  guild master decides to grow the roster. If the briefing must lose a beat to fit on a screen,
-  lose the activity feed.
+- **A blocked bounty is never omitted for brevity.** Everything else on this page eventually
+  resolves by someone doing their job; a `status-blocked` ticket resolves only when the guild
+  master decides to grow the roster. If the briefing must lose a beat to fit on a screen, lose
+  the activity feed.
 - **Keep it to a screen.** This is a glance, not a report.

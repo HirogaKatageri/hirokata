@@ -1,5 +1,5 @@
 -- =====================================================================================
--- guild v6 — THE SCHEMA IS THE TOOL
+-- guild v7 — THE SCHEMA IS THE TOOL
 -- =====================================================================================
 --
 -- APPLY IT
@@ -16,12 +16,12 @@
 -- and moves on, so a RENAMED table or a NEW COLUMN never reaches a live board from this
 -- file. Those ship as one-shot scripts in `migrations/`, run in order, once each:
 --
---   tursodb .guild/guild.db < migrations/006-project-and-plan-approval.sql
+--   tursodb .guild/guild.db < migrations/007-roster-leaves-the-database.sql
 --   tursodb .guild/guild.db < schema.sql
 --
 -- Check `SELECT version FROM schema_version` against the number seeded below. This file
--- is at version 6. A board reporting 5 has not been migrated, and applying this file over
--- it lands the views and triggers on columns that are not there.
+-- is at version 7. A board reporting 6 has not been migrated, and applying this file over
+-- it leaves the roster tables and their views behind.
 --
 -- ------------------------------------------------------------------------------------
 -- WHAT THIS FILE IS
@@ -31,12 +31,30 @@
 -- they write SQL — and THIS FILE is the guild's knowledge of what the warehouse contains
 -- and what its rules are.
 --
+-- THE ONE THING THAT IS DELIBERATELY NOT IN HERE IS THE ROSTER. Who the guild's members
+-- are, what each can do and whether one runs serially are facts about the AGENT FILES,
+-- and they are declared in those files' frontmatter:
+--
+--   ---
+--   name: developer-svelte
+--   model: sonnet
+--   capabilities: [implement, frontend, svelte, sveltekit]
+--   serial: false
+--   ---
+--
+-- A mirror of that in SQL was a second copy of a truth that already had a home, and it
+-- went stale the moment somebody added an agent file without syncing. So the dispatcher
+-- READS THE FRONTMATTER OF EVERY SUBAGENT AVAILABLE TO THE USER at dispatch time — the
+-- plugin's own `agents/`, the project's `.claude/agents/`, the user's `~/.claude/agents/`
+-- and any other installed plugin's — and matches it against `task_capability`. The
+-- warehouse records what a ticket NEEDS. It does not claim to know who exists.
+--
 -- That only works if the rules live in the database rather than in a wrapper, so:
 --
 --   CHECK constraints  are the vocabularies. A status outside its enum is REJECTED by the
 --                      engine, on every connection, from every member, forever.
 --   VIEWS              are the derived rules. The cursor rule, the review gate, node
---                      readiness, the agent matcher, the board, the briefing — each has
+--                      readiness, the board, the briefing — each has
 --                      ONE definition, here. A member SELECTs from the view instead of
 --                      re-deriving the logic, so two members cannot get two answers.
 --   TRIGGERS           are the record. Every meaningful mutation writes an `event` row
@@ -64,10 +82,12 @@
 --   4. "CONCURRENTLY DISPATCHED TASKS TOUCH DISJOINT FILES." `task.files` is a JSON
 --      array and the disjointness across a `parallel_group` is an ASSERTION BY THE
 --      ARCHITECT. Nothing checks it.
---   5. "A CAPABILITY MUST BE IN THE VOCABULARY." `v_capability_vocabulary` defines the
---      word list and `v_capability_unknown` reports violations, but a CHECK cannot
---      reference another table, so an unknown capability INSERTS fine and simply matches
---      nobody. Read `v_capability_unknown` when the matcher goes quiet.
+--   5. "A TICKET'S CAPABILITIES NAME SOMETHING A REAL AGENT DECLARES." The vocabulary
+--      lives in the agent files, not in here, so SQL cannot check a `task_capability`
+--      row against it — a misspelled tag INSERTS fine and simply matches nobody at
+--      dispatch. THE DISPATCHER IS WHAT MAKES IT SPEAK: when the frontmatter scan finds
+--      no agent covering every required capability, it sets the ticket to `blocked`,
+--      which puts it on the board naming the word nobody has.
 --   6. "A GATE IS DECIDED BY A HUMAN." `gate.status` is a column. Anyone can write it.
 --   7. THE GRAPH IS NOT ACYCLIC BY CONSTRUCTION. `graph_edge` accepts any pair. A cycle
 --      makes `v_ready_nodes` return nothing for the whole loop — a silent stall, not an
@@ -91,7 +111,7 @@
 --     one hop, and propagates as the work runs. Never write a traversal.
 --   * No FTS5. Text search is `LIKE`, with `%` and `_` escaped by the caller.
 --   * No lag/lead/ntile/percent_rank/cume_dist. Ranking here is an `ORDER BY` and the
---     rank is the ROW'S POSITION, assigned by the reader — see `v_agent_match`.
+--     rank is the ROW'S POSITION, assigned by the reader — see `v_open_bounties`.
 --   * STRICT tables accept only INT, INTEGER, REAL, TEXT, BLOB, ANY. Every column below
 --     is TEXT or INTEGER. Keep it that way.
 --   * WORKING: STRICT, RETURNING, ON CONFLICT DO UPDATE, printf(), plain CTEs, WAL,
@@ -153,7 +173,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 ) STRICT;
 
 INSERT INTO schema_version (id, version, applied_at)
-SELECT 1, 6, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+SELECT 1, 7, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE id = 1);
 
 
@@ -303,9 +323,12 @@ CREATE TABLE IF NOT EXISTS plan (
 --   failed       an agent tried and could not. A HUMAN HAS SEEN IT: the orchestrator
 --                sets it and immediately asks retry-or-skip. Because it has been
 --                adjudicated, `failed` does NOT hold the review gate.
---   blocked      NOBODY ON THE ROSTER CAN TAKE THIS. It is not a general "stuck" flag —
---                it means the capability match found nobody. A machine verdict no human
---                has ruled on yet, so it DOES hold the review gate (see `v_task_actionable`).
+--   blocked      NOBODY AVAILABLE CAN TAKE THIS. It is not a general "stuck" flag — it
+--                means the dispatcher scanned the frontmatter of every subagent the user
+--                has and found none covering the ticket's required capabilities. A
+--                machine verdict no human has ruled on yet, so it DOES hold the review
+--                gate (see `v_task_actionable`). This is a WRITE the dispatcher makes,
+--                not a state a view derives — the warehouse cannot see the agent files.
 --   waived       deliberately skipped, by a gate decision. Counts as finished for
 --                dependency purposes, exactly like `done` (see `v_task_deps`).
 --
@@ -330,12 +353,13 @@ CREATE TABLE IF NOT EXISTS task (
                  CHECK (status IN ('todo', 'in-progress', 'done',
                                    'failed', 'blocked', 'waived')),
   priority       INTEGER NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
-  -- `agent` is the PIN: a member the architect named on the ticket. Optional. When it is
-  -- set it wins the match outright (`v_task_top_agent`), and the ticket is never reported
-  -- as a roster gap — a pin the roster cannot independently cover is a deviation to
-  -- review, not a bounty nobody can take.
+  -- `agent` is the PIN: a subagent the architect named on the ticket, by the `name` in
+  -- that agent's frontmatter. Optional. When it is set the dispatcher spawns it and does
+  -- NOT run the capability match at all — a pin is a decision that has already been made.
+  -- NOT a foreign key, and it cannot be one: the roster is a directory of markdown files.
   agent          TEXT,
-  claimed_by     TEXT REFERENCES agent(name),
+  -- Who actually took it. Also a plain name, for the same reason.
+  claimed_by     TEXT,
   claimed_at     TEXT,
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL
@@ -352,41 +376,28 @@ CREATE TABLE IF NOT EXISTS task_dependency (
 ) STRICT;
 
 
--- =====================================================================================
--- THE ROSTER — agent, agent_capability, task_capability, capability_request
--- =====================================================================================
--- Adding an agent file to `agents/` and INSERTing its name and capability tags here is
--- the entire process of adding a guild member. The matcher (`v_agent_match`) does the
--- rest.
 
-CREATE TABLE IF NOT EXISTS agent (
-  name        TEXT PRIMARY KEY,               -- 'developer-svelte'
-  model       TEXT NOT NULL DEFAULT 'sonnet',
-  description TEXT NOT NULL DEFAULT '',
-  active      INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
-  serial      INTEGER NOT NULL DEFAULT 0 CHECK (serial IN (0, 1))
-              -- 1 = never run concurrently with itself (the qa-tester drives one app)
-) STRICT;
-
+-- =====================================================================================
+-- WHAT A TICKET NEEDS — task_capability
+-- =====================================================================================
+-- The ONE capability table. It records what the WORK requires. It does not record who
+-- can do it: that is `capabilities:` in each agent file's frontmatter, and the dispatcher
+-- reads it from there against every subagent available to the user.
+--
 -- A capability is compared for EQUALITY and never normalized, so the alphabet is narrow
 -- on purpose: lowercase letters, digits and '-'. `e2e` and `E2E` would be two
--- capabilities that read as one, and the matcher would quietly stop working. The CHECK
--- below enforces the ALPHABET. The VOCABULARY (which words are legal) is
--- `v_capability_vocabulary`, and it cannot be a CHECK because a CHECK may not read
--- another table — `v_capability_unknown` is how you audit it.
-CREATE TABLE IF NOT EXISTS agent_capability (
-  agent      TEXT NOT NULL REFERENCES agent(name),
-  capability TEXT NOT NULL
-             CHECK (length(capability) BETWEEN 1 AND 64
-                    AND capability = lower(capability)
-                    AND capability GLOB '[a-z]*'
-                    AND NOT capability GLOB '*[^a-z0-9-]*'),
-  PRIMARY KEY (agent, capability)
-) STRICT;
-
--- `required = 1` decides ELIGIBILITY (an agent must cover every one of them).
--- `required = 0` — "preferred" — decides RANK only. A preferred capability never
--- excludes anybody. That distinction is the whole of the matcher.
+-- capabilities that read as one, and the match would quietly stop working. The CHECK
+-- below enforces the ALPHABET. The VOCABULARY — which words mean anything — is the union
+-- of what the agent files declare, and no CHECK can reach it. See item 5 of "what this
+-- file cannot enforce".
+--
+-- `required = 1` decides ELIGIBILITY: the matching agent's declared capabilities must be
+-- a SUPERSET of the ticket's required set.
+-- `required = 0` — "preferred" — decides RANK only. A preferred capability never excludes
+-- anybody. That distinction is the whole of the match, and it now runs in the dispatcher.
+--
+-- A ticket with NO rows here and no pinned `agent` is one nobody can be found for. It is
+-- the `unassigned` reason in `v_blocked_tasks`.
 CREATE TABLE IF NOT EXISTS task_capability (
   task_id    TEXT NOT NULL REFERENCES task(id),
   capability TEXT NOT NULL
@@ -398,24 +409,14 @@ CREATE TABLE IF NOT EXISTS task_capability (
   PRIMARY KEY (task_id, capability)
 ) STRICT;
 
--- A capability the architect needs and the roster does not have. Raised at plan time,
--- resolved by the guild master creating a new member. Filing one is ALSO what legitimizes
--- a new WORD: `v_capability_vocabulary` unions in every non-declined request, so the row
--- that admits `rust` into the guild's language outlives the recruitment.
---   open      filed, nobody has acted
---   created   the member now exists
---   declined  refused — and the word stays out of the vocabulary
-CREATE TABLE IF NOT EXISTS capability_request (
-  id             INTEGER PRIMARY KEY,
-  capability     TEXT NOT NULL,
-  requirement_id TEXT NOT NULL REFERENCES requirement(id),
-  rationale      TEXT NOT NULL,               -- why existing members cannot cover it
-  proposed_agent TEXT NOT NULL,               -- suggested name, e.g. 'developer-rust'
-  proposed_spec  TEXT NOT NULL DEFAULT '',    -- draft role/tools/model
-  status         TEXT NOT NULL DEFAULT 'open'
-                 CHECK (status IN ('open', 'created', 'declined')),
-  created_at     TEXT NOT NULL
-) STRICT;
+-- A capability the guild lacks used to be filed here as a `capability_request` row, so
+-- the word could be admitted to a vocabulary this database owned. v7 dropped both. The
+-- vocabulary is the union of what the agent files declare, so ADMITTING A NEW WORD IS
+-- WRITING THE AGENT FILE THAT DECLARES IT — there is no intermediate paperwork, and a
+-- request row that outlived its recruitment was only ever bookkeeping about bookkeeping.
+--
+-- The gap itself is still visible, and louder than a request row was: the ticket that
+-- wanted the capability sits at `blocked` on the board, naming it.
 
 
 -- =====================================================================================
@@ -638,10 +639,9 @@ CREATE INDEX IF NOT EXISTS bug_by_status    ON bug(status, severity);
 -- index would be tidier, so keep this one narrow rather than adding columns to it.
 CREATE INDEX IF NOT EXISTS plan_by_approval ON plan(approval, requirement_id);
 CREATE INDEX IF NOT EXISTS project_by_goal  ON project(goal_id, ordinal);
--- Both capability tables are keyed (owner, capability), so "what does this agent/task
--- declare" is already a seek. The matcher asks the OTHER question — "who can cover
--- `rust`" — which is a scan on the second key column. These cover that direction.
-CREATE INDEX IF NOT EXISTS agent_cap_by_cap ON agent_capability(capability);
+-- `task_capability` is keyed (task_id, capability), so "what does this ticket need" is
+-- already a seek. This covers the other direction — "which tickets want `rust`" — which
+-- the dispatcher asks once per scan.
 CREATE INDEX IF NOT EXISTS task_cap_by_cap  ON task_capability(capability, required);
 -- Dependency and edge lookups run in BOTH directions in the readiness views.
 CREATE INDEX IF NOT EXISTS dep_by_pred      ON task_dependency(depends_on);
@@ -667,7 +667,6 @@ CREATE INDEX IF NOT EXISTS edge_by_to       ON graph_edge(to_node);
 -- INDEX OF VIEWS
 --   helpers      v_task_who · v_task_deps · v_task_blockers
 --   the cursor   v_task_actionable · v_next_task
---   the matcher  v_agent_eligible · v_agent_match · v_task_top_agent
 --   the bounties v_open_bounties · v_blocked_tasks
 --   the graph    v_ready_nodes · v_gates_pending · v_plans_pending_approval
 --   direction    v_projects_runnable · v_project_progress · v_goal_progress
@@ -675,7 +674,11 @@ CREATE INDEX IF NOT EXISTS edge_by_to       ON graph_edge(to_node);
 --   the briefing v_brief · v_in_flight · v_failed_tasks · v_open_findings ·
 --                v_open_bugs · v_recent_activity
 --   quality      v_coverage_due
---   the roster   v_capability_vocabulary · v_capability_unknown · v_roster_gaps
+--
+-- THERE IS NO MATCHER VIEW. `v_agent_eligible`, `v_agent_match` and `v_task_top_agent`
+-- were dropped in v7 along with the roster tables they read. Matching a ticket to a
+-- member is now the dispatcher's job, because the facts it needs — who exists, what they
+-- declare — live in the agent files and never entered this database.
 
 
 -- ------------------------------------------------------------------------------------
@@ -805,10 +808,10 @@ SELECT t.*
 -- WHAT THIS VIEW DOES NOT CHECK, and it is not an oversight: DEPENDENCIES and
 -- ELIGIBILITY. The cursor is a cursor — it walks the board in id order and applies the
 -- review gate, exactly as the old `guild next` did. It can therefore hand you a ticket
--- that is waiting on a predecessor, or one nobody on the roster can take.
+-- that is waiting on a predecessor, or one nobody available can take.
 --
 -- `v_open_bounties` IS THE DISPATCH-READY SET. It is this rule PLUS dependencies PLUS a
--- matched member. Use the cursor to answer "where was I", and the bounty board to answer
+-- ticket that names what it wants. Use the cursor to answer "where was I", and the bounty board to answer
 -- "what can I hand out". They are two different questions and they have two views.
 DROP VIEW IF EXISTS v_next_task;
 CREATE VIEW v_next_task AS
@@ -842,7 +845,7 @@ SELECT 'claim',
 -- A `blocked` MEMBER IS EXCLUDED and the group dispatches without it. It cannot be
 -- dispatched — that is what blocked means — and the tasks in a parallel group touch
 -- disjoint files by assertion, so the members that can run have no reason to wait.
--- Holding the whole batch would turn one roster gap into a stalled group while telling
+-- Holding the whole batch would turn one unfillable ticket into a stalled group while telling
 -- the reader nothing new. The review gate is where the blocked task is accounted for.
 --
 --   SELECT member_id FROM v_batch WHERE task_id = 'TASK-003'
@@ -863,169 +866,73 @@ SELECT t1.id              AS task_id,
 
 
 -- ------------------------------------------------------------------------------------
--- v_agent_eligible — WHO CAN TAKE THIS TICKET (the capability path)
+-- THE MATCHER IS GONE FROM SQL — v_agent_eligible, v_agent_match, v_task_top_agent
 -- ------------------------------------------------------------------------------------
--- ELIGIBILITY IS A SUPERSET TEST: the agent's declared capabilities must be a superset of
--- the task's REQUIRED set. Written as "there is no required capability this agent lacks",
--- which is the universal quantifier as a doubled NOT EXISTS — a direct-row join, no
--- aggregate, no traversal.
+-- These three views ranked every member against every ticket. They were dropped in v7,
+-- together with the `agent` and `agent_capability` tables they read, because the roster
+-- they queried was a mirror: the real answer to "who exists and what can they do" is the
+-- frontmatter of the agent files, and a copy of it in here could only ever be as fresh as
+-- the last sync somebody remembered to run.
 --
--- THE SWITCH INTO THIS VIEW IS THE PRESENCE OF ANY `task_capability` ROW, required or
--- preferred — not the emptiness of the required set. A task with an EMPTY required set is
--- vacuously covered by every agent in the roster and would match all of them, which is
--- the wrong answer for a ticket that simply never declared anything. So a ticket with no
--- capability rows at all does not appear here at all, and falls to its pinned `agent`
--- instead (`v_agent_match`, branch 0).
+-- THE RULE THEY ENCODED DID NOT DIE, IT MOVED. The dispatcher now applies it, in this
+-- order, against every subagent available to the user:
 --
--- Retired agents (`active = 0`) are excluded. Retiring is how a member leaves the roster
--- without deleting the record that explains old dispatches.
+--   pin         `task.agent` is set — spawn it. The capability match is not run at all.
+--   capability  the ticket has `task_capability` rows — an agent is ELIGIBLE when its
+--               frontmatter `capabilities:` cover every `required = 1` row. Among the
+--               eligible, rank by: most `required = 0` (preferred) rows covered DESC,
+--               then FEWEST declared capabilities ASC (a specialist beats a generalist),
+--               then name ASC so the answer is deterministic.
+--   nobody      no pin and no eligible agent — the dispatcher writes `status = 'blocked'`,
+--               and the ticket says so on the board with the capability it is waiting for.
 --
--- The three ranking numbers travel with the row:
---   preferred_covered  how many of the task's PREFERRED capabilities this agent has.
---                      HIGHER is better.
---   preferred_total    the denominator, so `2/3` is readable. Not a ranking key.
---   capabilities       the agent's TOTAL capability count. LOWER IS BETTER — a specialist
---                      beats a generalist. That is why the sort is ASC on a number that
---                      looks like it should be DESC.
-DROP VIEW IF EXISTS v_agent_eligible;
-CREATE VIEW v_agent_eligible AS
-SELECT t.id   AS task_id,
-       a.name AS agent,
-       (SELECT COUNT(*) FROM task_capability tcp
-         WHERE tcp.task_id = t.id AND tcp.required = 0
-           AND EXISTS (SELECT 1 FROM agent_capability acp
-                        WHERE acp.agent = a.name
-                          AND acp.capability = tcp.capability))       AS preferred_covered,
-       (SELECT COUNT(*) FROM task_capability tcq
-         WHERE tcq.task_id = t.id AND tcq.required = 0)               AS preferred_total,
-       (SELECT COUNT(*) FROM agent_capability act
-         WHERE act.agent = a.name)                                    AS capabilities,
-       a.serial                                                       AS serial,
-       a.model                                                        AS model
-  FROM task t
-  JOIN agent a ON a.active = 1
- WHERE EXISTS (SELECT 1 FROM task_capability tc0 WHERE tc0.task_id = t.id)
-   AND NOT EXISTS (SELECT 1 FROM task_capability tcr
-                    WHERE tcr.task_id = t.id AND tcr.required = 1
-                      AND NOT EXISTS (SELECT 1 FROM agent_capability acr
-                                       WHERE acr.agent = a.name
-                                         AND acr.capability = tcr.capability));
-
-
--- ------------------------------------------------------------------------------------
--- v_agent_match — THE MATCHER. Every candidate for every task, already ranked.
--- ------------------------------------------------------------------------------------
---   SELECT * FROM v_agent_match WHERE task_id = 'TASK-014'
---
--- THE RANK IS THE ROW'S POSITION. There is no rank column and there is no row_number():
--- the view carries the ORDER BY, and the first row for a task is rank 1. Restate the
--- ORDER BY yourself if you wrap this view in another query — a view's internal ordering
--- is not a contract SQLite promises to preserve through a join.
---
---   ORDER BY task_id, branch, preferred_covered DESC, capabilities ASC, agent ASC
---
--- The third key, `agent ASC`, is not a tiebreak of convenience. It is what makes the
--- answer DETERMINISTIC, which is the property that lets the orchestrator dispatch rank 1
--- without exercising judgment.
---
--- THREE SOURCES, AND THEY ARE NOT THREE FALLBACKS:
---
---   pin         the ticket names an agent AND declares capabilities. The pin ranks FIRST
---               and runs. The eligible members follow it, so the deviation is VISIBLE
---               rather than merely obeyed.
---   ticket      the ticket names an agent and declares NO capabilities. That one agent is
---               the only candidate, and the roster is not consulted at all — which is why
---               this works on a board that has never synced its agent files.
---   capability  §5.2 in full. Only reached when the ticket declares capabilities.
---
--- WHAT IS ABSENT IS THE POINT: a ticket that DECLARED capabilities and whose named agent
--- covers none of them still ranks that agent first (it is a pin), but a ticket with
--- capabilities and NO agent that nothing covers produces NO ROWS. That is a roster gap,
--- and it is the entire reason for declaring capabilities. `v_blocked_tasks` names it.
-DROP VIEW IF EXISTS v_agent_match;
-CREATE VIEW v_agent_match AS
--- branch 0 — the pin, and the no-capabilities ticket fallback
-SELECT t.id   AS task_id,
-       t.agent AS agent,
-       CASE WHEN EXISTS (SELECT 1 FROM task_capability tc0 WHERE tc0.task_id = t.id)
-            THEN 'pin' ELSE 'ticket' END                              AS source,
-       0                                                              AS branch,
-       (SELECT COUNT(*) FROM task_capability tcp
-         WHERE tcp.task_id = t.id AND tcp.required = 0
-           AND EXISTS (SELECT 1 FROM agent_capability acp
-                        WHERE acp.agent = t.agent
-                          AND acp.capability = tcp.capability))       AS preferred_covered,
-       (SELECT COUNT(*) FROM task_capability tcq
-         WHERE tcq.task_id = t.id AND tcq.required = 0)               AS preferred_total,
-       (SELECT COUNT(*) FROM agent_capability act
-         WHERE act.agent = t.agent)                                   AS capabilities,
-       COALESCE((SELECT a2.serial FROM agent a2 WHERE a2.name = t.agent), 0) AS serial
-  FROM task t
- WHERE COALESCE(t.agent, '') <> ''
-UNION ALL
--- branch 1 — the capability match, minus the pinned member so nobody appears twice
-SELECT e.task_id, e.agent, 'capability', 1,
-       e.preferred_covered, e.preferred_total, e.capabilities, e.serial
-  FROM v_agent_eligible e
- WHERE e.agent <> COALESCE((SELECT tp.agent FROM task tp WHERE tp.id = e.task_id), '')
- ORDER BY task_id, branch, preferred_covered DESC, capabilities ASC, agent ASC;
-
-
--- ------------------------------------------------------------------------------------
--- v_task_top_agent — rank 1, as one row per task. '' when nobody is eligible.
--- ------------------------------------------------------------------------------------
--- This IS "what `v_agent_match` would say first", and the branch order is identical on
--- purpose: if the two disagreed, one view would name a member and the other would name
--- somebody else for the same ticket.
+-- THE DROPS BELOW ARE LOAD-BEARING. Re-applying this file over a v6 board is what removes
+-- the stale views, and they must go before the tables do (see the migration).
 DROP VIEW IF EXISTS v_task_top_agent;
-CREATE VIEW v_task_top_agent AS
-SELECT t.id AS task_id,
-       CASE
-         WHEN COALESCE(t.agent, '') <> '' THEN t.agent
-         WHEN EXISTS (SELECT 1 FROM task_capability tc0 WHERE tc0.task_id = t.id)
-           THEN COALESCE((SELECT e.agent FROM v_agent_eligible e
-                           WHERE e.task_id = t.id
-                           ORDER BY e.preferred_covered DESC,
-                                    e.capabilities ASC,
-                                    e.agent ASC
-                           LIMIT 1), '')
-         ELSE ''
-       END AS agent
-  FROM task t;
+DROP VIEW IF EXISTS v_agent_match;
+DROP VIEW IF EXISTS v_agent_eligible;
 
 
 -- ------------------------------------------------------------------------------------
 -- v_open_bounties — WORK THAT CAN BE DISPATCHED RIGHT NOW, with its matched member
 -- ------------------------------------------------------------------------------------
--- The cursor rule PLUS dependencies PLUS somebody to give it to. Three conditions:
+-- The cursor rule PLUS dependencies PLUS something to dispatch against. Three conditions:
 --
 --   1. actionable          `v_task_actionable` — todo, past the review gate
 --   2. no unfinished deps  `v_task_deps` is empty for it
---   3. somebody can take it — a pin, or an eligible member on the capability path
+--   3. it names what it wants — a pinned `agent`, or at least one `task_capability` row
+--
+-- CONDITION 3 CHANGED IN v7 AND THE DIFFERENCE MATTERS. It used to mean "somebody can
+-- take it", verified against the roster. The roster is not in this database any more, so
+-- this view can only promise that the ticket ASKS FOR SOMEBODY — whether anybody answers
+-- is settled by the dispatcher reading the agent files. A row here is a candidate for
+-- dispatch, not a guarantee of one, and a ticket whose required capabilities nobody
+-- covers appears here once and then gets written to `blocked`.
+--
+-- `agent` is the pin or '-'. A '-' means "match me", and `who` names the capabilities to
+-- match on.
 --
 -- Ordered by priority then id, which is the order a dispatcher should walk it. Note that
 -- `v_next_task` deliberately does NOT consider priority (it takes the lowest id) — the
 -- cursor resumes and claims in a fixed order, while the bounty board is a market. Both
 -- behaviors are intended and they are different questions.
 --
--- THIS VIEW MUTATES NOTHING. In particular a ticket with nobody eligible does not become
--- `blocked` by being read — it just appears in `v_blocked_tasks` with the reason instead.
--- Moving it is a decision, and decisions are writes somebody makes on purpose.
+-- THIS VIEW MUTATES NOTHING. A ticket does not become `blocked` by being read. Moving it
+-- is a decision, and decisions are writes somebody makes on purpose.
 DROP VIEW IF EXISTS v_open_bounties;
 CREATE VIEW v_open_bounties AS
 SELECT t.id                                   AS id,
        t.requirement_id                       AS requirement_id,
        t.priority                             AS priority,
-       COALESCE(NULLIF(m.agent, ''), '-')     AS agent,
+       COALESCE(NULLIF(t.agent, ''), '-')     AS agent,
        w.who                                  AS who,
        COALESCE(t.parallel_group, '')         AS parallel_group,
        t.title                                AS title
   FROM v_task_actionable t
-  JOIN v_task_top_agent m ON m.task_id = t.id
   JOIN v_task_who       w ON w.task_id = t.id
  WHERE NOT EXISTS (SELECT 1 FROM v_task_deps d WHERE d.task_id = t.id)
    AND ( COALESCE(t.agent, '') <> ''
-         OR EXISTS (SELECT 1 FROM v_agent_eligible e WHERE e.task_id = t.id) )
+         OR EXISTS (SELECT 1 FROM task_capability tc WHERE tc.task_id = t.id) )
  ORDER BY t.priority, t.id;
 
 
@@ -1037,39 +944,37 @@ SELECT t.id                                   AS id,
 --
 --   status-blocked        the task is explicitly `blocked` — somebody already ruled
 --   deps:TASK-009,…       waiting on unfinished direct predecessors
---   no-eligible-agent:rust,embedded    declared capabilities nobody covers — A ROSTER GAP
---   no-eligible-agent:unassigned       no agent, no capabilities, nobody to give it to
+--   unassigned            no pin AND no capabilities: it names nobody and asks for
+--                         nothing, so there is no question the dispatcher could answer
 --
 -- Order matters in that CASE. An explicitly blocked task says so even when it ALSO has
 -- unfinished dependencies, because the status was a human's decision and the dependency
 -- is a fact about the graph.
 --
--- `awk '$0 ~ /no-eligible-agent/'` over this view is the roster-gap query, and the answer
--- names the capability that would fix it — which is to say, it names the agent file
--- somebody needs to write.
+-- WHAT LEFT IN v7: the `no-eligible-agent:rust,embedded` reason. This view could compute
+-- it while the roster was a table; it cannot now. A ticket that declares capabilities
+-- nobody covers is NOT listed here on its own — it sits in `v_open_bounties` until the
+-- dispatcher scans the agent files, finds nobody, and WRITES `status = 'blocked'`. It
+-- then appears here as `status-blocked`, with `who` naming the capabilities it wants.
+--
+-- So the roster-gap query is now: this view, `status-blocked`, read `who`. The `needs:…`
+-- it prints is the agent file somebody needs to write.
 DROP VIEW IF EXISTS v_blocked_tasks;
 CREATE VIEW v_blocked_tasks AS
 SELECT t.id                                   AS id,
        t.requirement_id                       AS requirement_id,
        t.status                               AS status,
-       COALESCE(NULLIF(m.agent, ''), '-')     AS agent,
+       COALESCE(NULLIF(t.agent, ''), '-')     AS agent,
        w.who                                  AS who,
        CASE
          WHEN t.status = 'blocked' THEN 'status-blocked'
          WHEN EXISTS (SELECT 1 FROM v_task_deps d WHERE d.task_id = t.id)
            THEN 'deps:' || COALESCE((SELECT b.blockers FROM v_task_blockers b
                                       WHERE b.task_id = t.id), '')
-         WHEN EXISTS (SELECT 1 FROM task_capability tc WHERE tc.task_id = t.id)
-           THEN 'no-eligible-agent:'
-                || COALESCE((SELECT group_concat(c, ',')
-                               FROM (SELECT tcl.capability AS c FROM task_capability tcl
-                                      WHERE tcl.task_id = t.id AND tcl.required = 1
-                                      ORDER BY tcl.capability)), '')
-         ELSE 'no-eligible-agent:unassigned'
+         ELSE 'unassigned'
        END                                    AS reason,
        t.title                                AS title
   FROM task t
-  JOIN v_task_top_agent m ON m.task_id = t.id
   JOIN v_task_who       w ON w.task_id = t.id
  WHERE t.status = 'blocked'
     OR ( t.status = 'todo'
@@ -1077,7 +982,7 @@ SELECT t.id                                   AS id,
     OR ( t.id IN (SELECT a.id FROM v_task_actionable a)
          AND NOT EXISTS (SELECT 1 FROM v_task_deps d WHERE d.task_id = t.id)
          AND COALESCE(t.agent, '') = ''
-         AND NOT EXISTS (SELECT 1 FROM v_agent_eligible e WHERE e.task_id = t.id) )
+         AND NOT EXISTS (SELECT 1 FROM task_capability tc WHERE tc.task_id = t.id) )
  ORDER BY t.id;
 
 
@@ -1174,7 +1079,7 @@ SELECT p.id                           AS id,
 --
 -- One row per task, tagged with the section it belongs in and the order those sections
 -- print. `Blocked` sits DIRECTLY UNDER `In Progress` rather than down with `Failed`,
--- because a roster gap should be loud and the bottom of a long board is not loud — and it
+-- because an unfillable ticket should be loud and the bottom of a long board is not — and it
 -- reads correctly there: a blocked task is work that WOULD be in flight if the guild had
 -- somebody to give it to.
 --
@@ -1562,82 +1467,33 @@ SELECT c.id                AS id,
 
 
 -- ------------------------------------------------------------------------------------
--- v_capability_vocabulary — THE WORDS THIS GUILD KNOWS
+-- THE ROSTER VIEWS ARE GONE — v_capability_vocabulary, v_capability_unknown, v_roster_gaps
 -- ------------------------------------------------------------------------------------
--- The seed list, plus every capability legitimized by a `capability_request` that was not
--- declined. Kept SMALL on purpose: a sprawling vocabulary makes matching mushy, and the
--- concrete failure is two agents tagged `e2e` and `end-to-end` and a matcher that quietly
--- stops working.
+-- `v_capability_vocabulary` listed the words this guild knows. `v_capability_unknown`
+-- audited tags outside it. `v_roster_gaps` listed capability requests nobody had acted
+-- on. All three were dropped in v7 with the tables they read.
 --
--- THE ONLY DOOR INTO THIS LIST IS A `capability_request` ROW. It is deliberately NOT
--- sourced from `agent_capability` — that would be self-approving, and one typo'd tag would
--- become legal forever the moment somebody synced it.
+-- WHERE EACH QUESTION GOES NOW:
 --
--- This cannot be a CHECK: a CHECK may not read another table. So it is a view, and
--- `v_capability_unknown` is the audit. Item 5 of "what this file cannot enforce".
-DROP VIEW IF EXISTS v_capability_vocabulary;
-CREATE VIEW v_capability_vocabulary AS
-SELECT 'implement'      AS capability
-UNION SELECT 'frontend'
-UNION SELECT 'backend'
-UNION SELECT 'svelte'
-UNION SELECT 'sveltekit'
-UNION SELECT 'test-planning'
-UNION SELECT 'test-authoring'
-UNION SELECT 'e2e'
-UNION SELECT 'review'
-UNION SELECT 'security'
-UNION SELECT 'architecture'
-UNION SELECT 'business-logic'
-UNION SELECT 'edge-case'
-UNION SELECT 'research'
-UNION SELECT 'qa-planning'
-UNION SELECT 'qa-execution'
-UNION SELECT 'requirements'
-UNION SELECT capability FROM capability_request WHERE status <> 'declined';
-
-
--- ------------------------------------------------------------------------------------
--- v_capability_unknown — tags outside the vocabulary
--- ------------------------------------------------------------------------------------
--- An unknown capability does not fail. It matches nobody, silently, forever. This is the
--- view that makes it speak: run it whenever the matcher goes unexpectedly quiet.
+--   "what words does this guild know?"
+--       The union of `capabilities:` across the frontmatter of every subagent available
+--       to the user. Read the files. There is no seed list to keep in step any more, and
+--       a word is legal exactly when some agent claims it — which was always the honest
+--       definition, and the reason the old view's hand-maintained list drifted.
 --
--- An unknown tag on an AGENT is the worse of the two — the agent declares work it will
--- never be offered. An unknown tag on a TASK is loud within one dispatch, because the
--- ticket shows up in `v_blocked_tasks` as a roster gap naming the word.
-DROP VIEW IF EXISTS v_capability_unknown;
-CREATE VIEW v_capability_unknown AS
-SELECT 'agent' AS side, ac.agent AS owner, ac.capability AS capability
-  FROM agent_capability ac
- WHERE ac.capability NOT IN (SELECT capability FROM v_capability_vocabulary)
-UNION ALL
-SELECT 'task', tc.task_id, tc.capability
-  FROM task_capability tc
- WHERE tc.capability NOT IN (SELECT capability FROM v_capability_vocabulary)
- ORDER BY side, owner, capability;
-
-
--- ------------------------------------------------------------------------------------
--- v_roster_gaps — capability requests nobody has acted on
--- ------------------------------------------------------------------------------------
--- `covered_by` counts active members who already have the capability. A non-zero count on
--- an OPEN request means the gap was filled and the request was never closed — resolve it
--- to `created` so the board stops asking.
+--   "which tags match nobody?"
+--       The dispatcher answers it by scanning, and it answers LOUDLY: the ticket goes to
+--       `blocked` and sits on the board naming the capability. That is strictly better
+--       than a view somebody had to remember to run when the matcher went quiet.
+--
+--   "what gaps are open?"
+--       `SELECT id, who FROM v_blocked_tasks WHERE reason = 'status-blocked'`. Each
+--       `needs:…` is an agent file waiting to be written.
+--
+-- THE DROPS BELOW ARE LOAD-BEARING, exactly as the matcher's are.
 DROP VIEW IF EXISTS v_roster_gaps;
-CREATE VIEW v_roster_gaps AS
-SELECT q.id             AS id,
-       q.capability     AS capability,
-       q.requirement_id AS requirement_id,
-       q.proposed_agent AS proposed_agent,
-       q.created_at     AS created_at,
-       (SELECT COUNT(*) FROM agent_capability ac
-          JOIN agent a ON a.name = ac.agent
-         WHERE a.active = 1 AND ac.capability = q.capability) AS covered_by,
-       q.rationale      AS rationale
-  FROM capability_request q
- WHERE q.status = 'open'
- ORDER BY q.id;
+DROP VIEW IF EXISTS v_capability_unknown;
+DROP VIEW IF EXISTS v_capability_vocabulary;
 
 
 -- ------------------------------------------------------------------------------------
@@ -1674,12 +1530,10 @@ UNION ALL SELECT 18, 'projects_worktree',   CAST((SELECT COUNT(*) FROM v_project
 UNION ALL SELECT 19, 'bugs_open',           CAST((SELECT COUNT(*) FROM v_open_bugs) AS TEXT)
 UNION ALL SELECT 20, 'findings_open',       CAST((SELECT COUNT(*) FROM v_open_findings) AS TEXT)
 UNION ALL SELECT 21, 'coverage_due',        CAST((SELECT COUNT(*) FROM v_coverage_due) AS TEXT)
-UNION ALL SELECT 22, 'roster_gaps',         CAST((SELECT COUNT(*) FROM v_roster_gaps) AS TEXT)
-UNION ALL SELECT 23, 'capability_unknown',  CAST((SELECT COUNT(*) FROM v_capability_unknown) AS TEXT)
-UNION ALL SELECT 24, 'nodes_ready',         CAST((SELECT COUNT(*) FROM v_ready_nodes WHERE kind = 'work') AS TEXT)
-UNION ALL SELECT 25, 'gates_pending',       CAST((SELECT COUNT(*) FROM v_gates_pending) AS TEXT)
-UNION ALL SELECT 26, 'plans_pending_approval', CAST((SELECT COUNT(*) FROM v_plans_pending_approval) AS TEXT)
-UNION ALL SELECT 27, 'events_since_checkin',
+UNION ALL SELECT 22, 'nodes_ready',         CAST((SELECT COUNT(*) FROM v_ready_nodes WHERE kind = 'work') AS TEXT)
+UNION ALL SELECT 23, 'gates_pending',       CAST((SELECT COUNT(*) FROM v_gates_pending) AS TEXT)
+UNION ALL SELECT 24, 'plans_pending_approval', CAST((SELECT COUNT(*) FROM v_plans_pending_approval) AS TEXT)
+UNION ALL SELECT 25, 'events_since_checkin',
   CAST((SELECT COUNT(*) FROM event
          WHERE ts >= COALESCE(NULLIF((SELECT value FROM guild_state WHERE key = 'last-checkin'), 'null'), '')) AS TEXT)
  ORDER BY ord;
@@ -1708,9 +1562,9 @@ UNION ALL SELECT 27, 'events_since_checkin',
 --     guard is written that way rather than relying on the default being OFF.
 --
 -- WHAT IS DELIBERATELY NOT INSTRUMENTED, and why:
---   * `agent_capability` / `task_capability` — a roster sync deletes and reinserts every
---     row each run, so instrumenting them would bury the feed under churn that says
---     nothing. The `agent` row itself is instrumented instead.
+--   * `task_capability` — the architect writes the whole set at plan time and rewrites it
+--     wholesale when a ticket is re-scoped, so instrumenting it would bury the feed under
+--     churn that says nothing. The `task` row itself is instrumented instead.
 --   * `graph_node` INSERTS — instantiating one requirement's graph writes dozens of nodes
 --     in a breath. Only node STATUS CHANGES are recorded, which is the part that means
 --     something moved.
@@ -2181,65 +2035,16 @@ BEGIN
 END;
 
 
--- ---- capability_request -------------------------------------------------------------
+-- ---- the roster's triggers, removed in v7 -------------------------------------------
+-- `capability_request` and `agent` are not tables any more, so recruiting, retiring and
+-- requesting a member are not events this database can witness. They are commits to the
+-- agent files. THE DROPS ARE LOAD-BEARING: re-applying this file over a v6 board is what
+-- removes triggers that would otherwise fire against tables the migration is dropping.
 DROP TRIGGER IF EXISTS trg_capreq_created;
-CREATE TRIGGER trg_capreq_created AFTER INSERT ON capability_request
-BEGIN
-  INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
-  VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-          COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
-          'requested', 'capability_request', CAST(new.id AS TEXT),
-          json_object('capability', new.capability,
-                      'requirement_id', new.requirement_id,
-                      'proposed_agent', new.proposed_agent));
-END;
-
 DROP TRIGGER IF EXISTS trg_capreq_resolved;
-CREATE TRIGGER trg_capreq_resolved AFTER UPDATE OF status ON capability_request
-WHEN old.status IS NOT new.status
-BEGIN
-  INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
-  VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-          COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
-          'resolved', 'capability_request', CAST(new.id AS TEXT),
-          json_object('from', old.status, 'to', new.status,
-                      'capability', new.capability));
-END;
-
-
--- ---- agent --------------------------------------------------------------------------
--- Recruiting and retiring a member are rare and consequential, so both are recorded.
--- Capability rows are not — see the header.
 DROP TRIGGER IF EXISTS trg_agent_recruited;
-CREATE TRIGGER trg_agent_recruited AFTER INSERT ON agent
-BEGIN
-  INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
-  VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-          COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
-          'recruited', 'agent', new.name,
-          json_object('model', new.model, 'serial', new.serial));
-END;
-
 DROP TRIGGER IF EXISTS trg_agent_retired;
-CREATE TRIGGER trg_agent_retired AFTER UPDATE OF active ON agent
-WHEN old.active IS NOT new.active
-BEGIN
-  INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
-  VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-          COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
-          CASE WHEN new.active = 0 THEN 'retired' ELSE 'recruited' END,
-          'agent', new.name,
-          json_object('from', old.active, 'to', new.active));
-END;
-
 DROP TRIGGER IF EXISTS trg_agent_deleted;
-CREATE TRIGGER trg_agent_deleted AFTER DELETE ON agent
-BEGIN
-  INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
-  VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-          COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
-          'retired', 'agent', old.name, json_object('deleted', 1));
-END;
 
 
 -- =====================================================================================

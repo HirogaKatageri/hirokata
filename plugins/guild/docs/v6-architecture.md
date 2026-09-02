@@ -91,9 +91,10 @@ the `schema.sql` header, in `README.md`, and here, and nowhere else.
    line, matched with `LIKE`. A marker, not a column. A stray log line can look like one.
 4. **"Concurrently dispatched tickets touch disjoint files."** `task.files` is a JSON array. The
    disjointness across a `parallel_group` is an assertion by the architect; nothing checks it.
-5. **"A capability must be in the vocabulary."** A CHECK cannot reference another table, so an
-   unknown capability inserts fine and matches nobody. `v_capability_unknown` reports them — read it
-   when the matcher goes quiet.
+5. **"A ticket's capabilities name something a real agent declares."** Since v7 the vocabulary is
+   the agent files, so no SQL check can reach it at all — an unknown capability inserts fine and
+   matches nobody. The dispatcher makes it speak by writing the ticket `blocked`; skip that write
+   and the gap is silent.
 6. **"A gate is decided by a human."** `gate.status` is a column. Anyone can write it.
 7. **The graph is not acyclic by construction.** `graph_edge` accepts any pair, and a cycle makes
    `v_ready_nodes` return nothing for the whole loop — a silent stall, not an error. With no
@@ -119,7 +120,7 @@ Verified against tursodb 0.7.2. Each of these shaped the schema.
   hop — and propagate as work completes. Never write a traversal.
 - **No FTS5.** Text search is `LIKE`, with `%` and `_` escaped by the caller.
 - **No `lag`/`lead`/`ntile`/`percent_rank`/`cume_dist`.** Ranking is an `ORDER BY`; the rank is the
-  row's position, assigned by the reader (see `v_agent_match`).
+  row's position, assigned by the reader (see `v_open_bounties`).
 - **STRICT** accepts only INT, INTEGER, REAL, TEXT, BLOB, ANY. Every column is TEXT or INTEGER.
 - **Working:** STRICT, RETURNING, ON CONFLICT DO UPDATE, printf(), plain CTEs, WAL, foreign_keys,
   JSON functions, CHECK, VIEW, TRIGGER, `UPDATE OF <col>` triggers.

@@ -233,9 +233,13 @@ SELECT id, node_key, kind, task_id, parallel_group
 Nodes sharing a `parallel_group` are **one batch** and dispatch together. Take batch 1 and only
 batch 1. Never widen a batch, never merge two, never re-order them.
 
-Then follow `guild:check-in`'s dispatch protocol verbatim: resolve the member with
-`v_task_top_agent`, move the ticket and the node in that order, spawn with the Agent tool, and
-record both halves when it returns.
+Then follow `guild:check-in`'s dispatch protocol verbatim: resolve the member with the
+pin/capability rule in its §3.3 — the pin wins outright, otherwise `roster.py --covers` the
+ticket's required set and take the first row — move the ticket and the node in that order,
+spawn with the Agent tool, and record both halves when it returns.
+
+**Scan the roster once, at the top of the shift**, and reuse it all night. It is a directory of
+markdown files, not a table, and nothing writes to it while you run.
 
 ```sql
 -- claim, then run the node. Two writes; the ticket first.
@@ -293,7 +297,8 @@ bounty starts, so one bad task cannot contaminate the next.
 Nothing runs this for you now. These are three rules you apply yourself, each with its own SQL.
 
 **Task fails → retry it once, with a fresh agent instance.** Same ticket, same member — the
-matcher is deterministic and re-picking would silently route work to the roster's second choice.
+match is deterministic (that is what the `name ASC` tiebreak buys) and re-running it would
+silently route the retry to the roster's second choice.
 The retry marker is a `work_log` line whose text *begins* `Shift retry`, the same
 prefix-as-marker convention `Skipped by user` already uses:
 
@@ -318,19 +323,20 @@ UPDATE graph_node SET status = 'pending'
 failed with it, and the shift continues with the requirement's other independent work. A `failed`
 node holds only its own successors, which is exactly right: the dead branch stops, the rest runs.
 
-**No eligible agent → block the ticket and move on.** A read never does this; it is a decision:
+**No eligible agent → block the ticket and move on.** A read never does this; it is a decision,
+and **it is the only thing that makes the gap visible** — no view can derive it, so skipping the
+write means the shift re-picks the same ticket next turn and spins:
 
 ```sql
 UPDATE task SET status = 'blocked'
  WHERE id = 'TASK-014' AND status = 'todo'
-   AND NOT EXISTS (SELECT 1 FROM v_agent_eligible e WHERE e.task_id = 'TASK-014')
    AND COALESCE(agent, '') = ''
 RETURNING id, status;
 ```
 
-It surfaces as a roster gap in `v_roster_gaps` and `v_blocked_tasks`, and **`blocked` holds the
-review gate on purpose** — a roster gap should be loud. Do not improvise a substitute member;
-creating an agent is a guild-master decision.
+It surfaces in `v_blocked_tasks` as `status-blocked`, with `who` naming the capabilities, and
+**`blocked` holds the review gate on purpose** — a roster gap should be loud. Do not improvise a
+substitute member; creating an agent is a guild-master decision.
 
 **A retry costs nothing from the task budget**, because the budget counts distinct graph nodes
 this shift moved and a retried node was already counted.
@@ -462,12 +468,12 @@ SELECT body FROM requirement WHERE id = 'REQ-NNN';          -- one column: byte-
 SELECT body FROM plan WHERE requirement_id = 'REQ-NNN';
 SELECT json_object('task', id, 'group', COALESCE(parallel_group,''), 'files', files)
   FROM task WHERE requirement_id = 'REQ-NNN' AND node_key = 'implement';
-SELECT id, capability, proposed_agent, rationale FROM capability_request WHERE status = 'open';
 SELECT id, node_key, kind, status FROM graph_node WHERE requirement_id = 'REQ-NNN' ORDER BY id;
 ```
 
-Present the plan, its tickets and their file sets, and **every open capability request by name** — each is a member
-the architect proposed and the guild does not have, and approving the plan is also approving the
+Present the plan, its tickets and their file sets, and **every roster gap the plan's Technical
+Decisions records by name** — each is a member the architect proposed and the guild does not
+have, and approving the plan is also approving the
 recruiting. Then say plainly: *this is yours to approve; `/guild:new-requirement` is where it
 happens.* Stop.
 
@@ -621,7 +627,8 @@ that mattered — arrives silenced.
 6. **Record both halves, always** — the ticket and the node. A node left `running` silently
    stalls everything behind it, and at 3am there is nobody to notice.
 7. **Never improvise a member.** No eligible agent means the ticket is a roster gap; block it and
-   move on.
+   move on. **Write the block** — nothing else records it, and an unblocked gap makes the shift
+   re-pick the same ticket until morning.
 8. **Never change direction.** No `goal`, no `project`, no `priority`, no retitling somebody else's
    work. A shift executes the plan; it does not edit it.
 9. **`started` and `ended` are the only `event` rows you write by hand,** and they are never

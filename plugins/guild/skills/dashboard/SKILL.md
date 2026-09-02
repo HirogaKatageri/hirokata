@@ -71,9 +71,6 @@ SELECT replace(replace(replace(json_object(
   'approvals', (SELECT json_group_array(json_object('id',id,'req',requirement_id,
               'status',status,'gate',gate_node_id,'title',title))
             FROM (SELECT * FROM v_plans_pending_approval)),
-  'gaps', (SELECT json_group_array(json_object('cap',capability,'req',COALESCE(requirement_id,''),
-              'proposed',COALESCE(proposed_agent,''),'covered',covered_by,'why',rationale))
-            FROM (SELECT * FROM v_roster_gaps)),
   'nodes', (SELECT json_group_array(json_object('id',id,'req',requirement_id,'key',node_key,
               'kind',kind,'status',status,'task',COALESCE(task_id,''),
               'group',COALESCE(parallel_group,'')))

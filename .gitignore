@@ -33,3 +33,7 @@
 .guild/qa/
 .guild/state.yaml
 .guild/BOARD.md
+
+# Python bytecode from local script runs
+__pycache__/
+*.pyc

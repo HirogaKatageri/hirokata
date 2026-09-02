@@ -99,9 +99,11 @@ guild status
 
 ## How to Use the Guild Plugin
 
-The Guild plugin (v6.2.0) provides continuous agent orchestration through a persistent, database-backed work cycle. The guild tracks direction, requirements, tasks, bugs and quality coverage across sessions — no per-session setup required.
+The Guild plugin (v7.0.0) provides continuous agent orchestration through a persistent, database-backed work cycle. The guild tracks direction, requirements, tasks, bugs and quality coverage across sessions — no per-session setup required.
 
-**The plugin is a schema and a set of skills — not a program.** `tursodb` already executes SQL, so the guild ships no second tool that does the same thing: members write their own SQL, and the guild's rules live *in the database* as CHECK constraints (the status vocabularies), views (the derived rules — the cursor, the review gate, readiness, the matcher, the board, each with one definition) and triggers (the `event` record, written on every mutation). A member can forget to call a command; a member cannot bypass a trigger or a CHECK.
+**The plugin is a schema and a set of skills — not a program.** `tursodb` already executes SQL, so the guild ships no second tool that does the same thing: members write their own SQL, and the guild's rules live *in the database* as CHECK constraints (the status vocabularies), views (the derived rules — the cursor, the review gate, readiness, the board, each with one definition) and triggers (the `event` record, written on every mutation). A member can forget to call a command; a member cannot bypass a trigger or a CHECK.
+
+**The one thing deliberately *not* in the database is the roster.** Who the guild's members are and what each can do is the `capabilities:` frontmatter of the agent files, read at dispatch time across every subagent available to you — this plugin's, your project's `.claude/agents/`, your `~/.claude/agents/`, and every other installed plugin's. A ticket names the capability it needs; adding an agent file that declares it is the whole of hiring, with nothing to sync.
 
 ```
 guild:new-requirement — live 3-way interview (product-owner + architect + you)
@@ -112,16 +114,20 @@ guild:new-requirement — live 3-way interview (product-owner + architect + you)
 
 **v6 is a fresh rewrite, and its status is worth reading before you trust it.** The v5 CLI it replaces had four adversarial review rounds and a 2,278-check suite; that code is deleted and none of that assurance carries over. v6 ships with no tests, by design. See the *Status* section in `plugins/guild/README.md`.
 
-**Upgrading a board created before v6.2?** The work hierarchy is `goal → project → requirement → plan → task`, and `project` was called `phase` until v6.2. `CREATE TABLE IF NOT EXISTS` cannot rename a table, so an existing `.guild/guild.db` needs the migration run once, in this order:
+**Upgrading an existing board?** `CREATE TABLE IF NOT EXISTS` cannot rename or drop a table, so a live `.guild/guild.db` needs the migrations run once each, in order, with `schema.sql` re-applied at the end. Check `SELECT version FROM schema_version` first and run only the ones above it:
 
 ```bash
 export PATH="$HOME/.turso:$PATH"
 cp .guild/guild.db .guild/guild.db.bak
-tursodb .guild/guild.db < plugins/guild/migrations/006-project-and-plan-approval.sql
+tursodb .guild/guild.db < plugins/guild/migrations/006-project-and-plan-approval.sql   # 5 → 6
+tursodb .guild/guild.db < plugins/guild/migrations/007-roster-leaves-the-database.sql  # 6 → 7
 tursodb .guild/guild.db < plugins/guild/schema.sql
 ```
 
-`SELECT version FROM schema_version` reads `5` before and `6` after. A fresh board needs none of this.
+- **006** (v6.2) renames `phase` to `project` and splits `plan.status` from `plan.approval`.
+- **007** (v7.0) drops the `agent`, `agent_capability` and `capability_request` tables — the roster moved to the agent files.
+
+Neither is idempotent, and each fails safely on a second run. A fresh board needs none of this.
 
 ### Setting Up
 

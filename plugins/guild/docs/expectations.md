@@ -174,7 +174,6 @@ Every foreign key, checked as data rather than as a constraint.
 ```sql
 SELECT 'task.requirement_id' AS ref, t.id AS row_id, t.requirement_id AS missing FROM task t WHERE NOT EXISTS (SELECT 1 FROM requirement r WHERE r.id = t.requirement_id)
 UNION ALL SELECT 'task.plan_id', t.id, t.plan_id FROM task t WHERE t.plan_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM plan p WHERE p.id = t.plan_id)
-UNION ALL SELECT 'task.claimed_by', t.id, t.claimed_by FROM task t WHERE COALESCE(t.claimed_by,'') <> '' AND NOT EXISTS (SELECT 1 FROM agent a WHERE a.name = t.claimed_by)
 UNION ALL SELECT 'project.goal_id', p.id, p.goal_id FROM project p WHERE NOT EXISTS (SELECT 1 FROM goal g WHERE g.id = p.goal_id)
 UNION ALL SELECT 'requirement.project_id', r.id, r.project_id FROM requirement r WHERE r.project_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM project p WHERE p.id = r.project_id)
 UNION ALL SELECT 'plan.requirement_id', p.id, p.requirement_id FROM plan p WHERE NOT EXISTS (SELECT 1 FROM requirement r WHERE r.id = p.requirement_id)
@@ -191,9 +190,7 @@ UNION ALL SELECT 'review_finding.fix_task_id', CAST(f.id AS TEXT), f.fix_task_id
 UNION ALL SELECT 'bug.fix_task_id', b.id, b.fix_task_id FROM bug b WHERE b.fix_task_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM task t WHERE t.id = b.fix_task_id)
 UNION ALL SELECT 'bug.requirement_id', b.id, b.requirement_id FROM bug b WHERE b.requirement_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM requirement r WHERE r.id = b.requirement_id)
 UNION ALL SELECT 'work_log.task_id', CAST(w.id AS TEXT), w.task_id FROM work_log w WHERE NOT EXISTS (SELECT 1 FROM task t WHERE t.id = w.task_id)
-UNION ALL SELECT 'agent_capability.agent', ac.agent || '/' || ac.capability, ac.agent FROM agent_capability ac WHERE NOT EXISTS (SELECT 1 FROM agent a WHERE a.name = ac.agent)
 UNION ALL SELECT 'task_capability.task_id', tc.task_id || '/' || tc.capability, tc.task_id FROM task_capability tc WHERE NOT EXISTS (SELECT 1 FROM task t WHERE t.id = tc.task_id)
-UNION ALL SELECT 'capability_request.requirement_id', CAST(q.id AS TEXT), q.requirement_id FROM capability_request q WHERE NOT EXISTS (SELECT 1 FROM requirement r WHERE r.id = q.requirement_id)
 UNION ALL SELECT 'inspection_coverage.inspection_id', ic.inspection_id || '/' || ic.coverage_id, ic.inspection_id FROM inspection_coverage ic WHERE NOT EXISTS (SELECT 1 FROM inspection i WHERE i.id = ic.inspection_id)
 UNION ALL SELECT 'inspection_coverage.coverage_id', ic.inspection_id || '/' || ic.coverage_id, ic.coverage_id FROM inspection_coverage ic WHERE NOT EXISTS (SELECT 1 FROM coverage c WHERE c.id = ic.coverage_id)
 UNION ALL SELECT 'graph_deviation.requirement_id', CAST(d.id AS TEXT), d.requirement_id FROM graph_deviation d WHERE NOT EXISTS (SELECT 1 FROM requirement r WHERE r.id = d.requirement_id)
@@ -230,9 +227,6 @@ UNION ALL SELECT 'bug.status', id, status FROM bug WHERE status NOT IN ('open','
 UNION ALL SELECT 'coverage.risk', id, risk FROM coverage WHERE risk NOT IN ('high','medium','low')
 UNION ALL SELECT 'inspection.status', id, status FROM inspection WHERE status NOT IN ('todo','in-progress','done')
 UNION ALL SELECT 'inspection_coverage.verdict', inspection_id || '/' || coverage_id, verdict FROM inspection_coverage WHERE verdict IS NOT NULL AND verdict NOT IN ('pass','issues','not-reached')
-UNION ALL SELECT 'capability_request.status', CAST(id AS TEXT), status FROM capability_request WHERE status NOT IN ('open','created','declined')
-UNION ALL SELECT 'agent.active', name, CAST(active AS TEXT) FROM agent WHERE active NOT IN (0,1)
-UNION ALL SELECT 'agent.serial', name, CAST(serial AS TEXT) FROM agent WHERE serial NOT IN (0,1)
 UNION ALL SELECT 'task_capability.required', task_id || '/' || capability, CAST(required AS TEXT) FROM task_capability WHERE required NOT IN (0,1)
 UNION ALL SELECT 'goal.priority', id, CAST(priority AS TEXT) FROM goal WHERE priority NOT BETWEEN 1 AND 5
 UNION ALL SELECT 'requirement.priority', id, CAST(priority AS TEXT) FROM requirement WHERE priority NOT BETWEEN 1 AND 5
@@ -343,51 +337,56 @@ why its absence is itself a breach.
 `built-before-gate-plan | TASK-001 | pending` and four more. Adding a third gate node returns
 `added-gate | REQ-001/gate-migrations | gate-migrations`.
 
-### G5 — Roster integrity
+### G5 — Ticket routing
 
-No task requires a capability no member has without that gap existing as a `capability_request`
-row, and no capability outside the vocabulary is in use.
+Every open ticket asks a question somebody could answer: it pins a member, or it declares what
+it needs. And nothing claims a status the routing contradicts.
 
 ```sql
-SELECT 'uncovered-capability-no-request' AS breach, tc.task_id AS row_id, tc.capability AS detail
+SELECT 'no-pin-no-capabilities' AS breach, t.id AS row_id, t.status AS detail
+  FROM task t
+ WHERE t.status IN ('todo','in-progress') AND COALESCE(t.agent,'') = ''
+   AND NOT EXISTS (SELECT 1 FROM task_capability c WHERE c.task_id = t.id)
+UNION ALL
+-- a required set that is empty while preferred rows exist ranks everybody and excludes nobody
+SELECT 'preferred-only-capabilities', tc.task_id, 'no required=1 row'
   FROM task_capability tc JOIN task t ON t.id = tc.task_id
- WHERE tc.required = 1 AND COALESCE(t.agent,'') = '' AND t.status IN ('todo','in-progress','blocked')
-   AND NOT EXISTS (SELECT 1 FROM agent_capability ac JOIN agent a ON a.name = ac.agent
-                    WHERE a.active = 1 AND ac.capability = tc.capability)
-   AND NOT EXISTS (SELECT 1 FROM capability_request q WHERE q.capability = tc.capability AND q.status IN ('open','created'))
+ WHERE t.status IN ('todo','in-progress') AND COALESCE(t.agent,'') = ''
+   AND NOT EXISTS (SELECT 1 FROM task_capability r WHERE r.task_id = tc.task_id AND r.required = 1)
+ GROUP BY tc.task_id
 UNION ALL
-SELECT 'capability-outside-vocabulary', u.owner, u.side || ':' || u.capability FROM v_capability_unknown u
+SELECT 'blocked-with-a-pin', t.id, t.agent FROM task t
+ WHERE t.status = 'blocked' AND COALESCE(t.agent,'') <> ''
 UNION ALL
-SELECT 'stale-roster-gap', CAST(rg.id AS TEXT), rg.capability || ' covered_by=' || rg.covered_by FROM v_roster_gaps rg WHERE rg.covered_by > 0
-UNION ALL
-SELECT 'created-request-still-uncovered', CAST(q.id AS TEXT), q.capability FROM capability_request q
- WHERE q.status = 'created'
-   AND NOT EXISTS (SELECT 1 FROM agent_capability ac JOIN agent a ON a.name = ac.agent WHERE a.active = 1 AND ac.capability = q.capability)
-UNION ALL
-SELECT 'dispatched-to-inactive-agent', t.id, t.claimed_by FROM task t
-  JOIN agent a ON a.name = t.claimed_by WHERE a.active = 0 AND t.status = 'in-progress'
-UNION ALL
-SELECT 'pinned-agent-not-on-roster', t.id, t.agent FROM task t
- WHERE COALESCE(t.agent,'') <> '' AND t.agent <> 'reviewer'
-   AND NOT EXISTS (SELECT 1 FROM agent a WHERE a.name = t.agent)
-UNION ALL
--- the two views that name a member for a ticket must never disagree
-SELECT 'top-agent-disagrees-with-match', m.task_id, m.agent
-  FROM v_task_top_agent m
- WHERE m.agent <> '' AND m.agent <> COALESCE((SELECT am.agent FROM v_agent_match am WHERE am.task_id = m.task_id
-    ORDER BY am.branch, am.preferred_covered DESC, am.capabilities ASC, am.agent ASC LIMIT 1),'')
+SELECT 'claimed-by-nobody-while-running', t.id, t.status FROM task t
+ WHERE t.status = 'in-progress' AND COALESCE(t.claimed_by,'') = ''
 ORDER BY breach, row_id;
 ```
 
-`v_capability_unknown` and `v_roster_gaps` are read rather than re-derived, per §2. The literal
-`'reviewer'` is excluded from the pin check because it is the one pin that is a *role* fanned out
-to four real agents at dispatch, not a member name — this is the same exact-match that
-`v_task_actionable`'s review gate depends on.
+`blocked-with-a-pin` is the sharpest of the four. A pin **skips the capability match entirely**,
+so a pinned ticket can never fail to find a member — if one is `blocked`, either the pin was
+added after the block and nobody cleared it, or somebody blocked a ticket for a reason `blocked`
+does not mean.
 
-*Verified to fire:* tagging an agent `rust` returns
-`capability-outside-vocabulary | developer | agent:rust`. A task requiring `research` with the
-capability stripped from the roster and no request filed returns
-`uncovered-capability-no-request | TASK-007 | research`.
+**Cannot be asserted, and this is the v7 trade:** *whether a declared capability is one some
+agent actually declares.* The roster is a directory of markdown files and this is SQL. The old
+G5 checked `capability-outside-vocabulary`, `uncovered-capability-no-request`,
+`stale-roster-gap`, `created-request-still-uncovered`, `dispatched-to-inactive-agent`,
+`pinned-agent-not-on-roster` and `top-agent-disagrees-with-match` — **every one of them read a
+roster table, and all seven are gone with those tables.** The replacement is not another query,
+it is a different check at a different time:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers implement,rust
+```
+
+run by the architect at plan time (per ticket) and by the dispatcher at dispatch time. **State
+that plainly when G5 passes** — a green G5 now means "every ticket asks an answerable question",
+not "somebody can answer it".
+
+*Verified to fire:* a ticket with no `agent` and no capability rows returns
+`no-pin-no-capabilities | TASK-010 | todo`. Pinning a `blocked` ticket returns
+`blocked-with-a-pin | TASK-005 | developer`.
 
 ### G6 — Closure and records
 
@@ -436,9 +435,6 @@ SELECT 'todo-but-claimed', t.id, t.claimed_by FROM task t WHERE t.status = 'todo
 UNION ALL
 SELECT 'claimed-without-timestamp', t.id, t.claimed_by FROM task t WHERE COALESCE(t.claimed_by,'') <> '' AND COALESCE(t.claimed_at,'') = ''
 UNION ALL
--- `blocked` means NOBODY CAN TAKE IT. If the matcher names somebody, the status is a lie.
-SELECT 'blocked-but-coverable', t.id, m.agent FROM task t JOIN v_task_top_agent m ON m.task_id = t.id WHERE t.status = 'blocked' AND m.agent <> ''
-UNION ALL
 SELECT 'updated-before-created', t.id, t.created_at || ' > ' || t.updated_at FROM task t WHERE t.updated_at < t.created_at
 UNION ALL
 SELECT 'requirement-updated-before-created', r.id, r.created_at || ' > ' || r.updated_at FROM requirement r WHERE r.updated_at < r.created_at
@@ -470,7 +466,6 @@ UNION ALL SELECT 'no-created-event','requirement', id FROM requirement r WHERE N
 UNION ALL SELECT 'no-created-event','plan', id FROM plan p WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='plan' AND e.subject_id=p.id AND e.verb='created')
 UNION ALL SELECT 'no-created-event','task', id FROM task t WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='task' AND e.subject_id=t.id AND e.verb='created')
 UNION ALL SELECT 'no-created-event','bug', id FROM bug b WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='bug' AND e.subject_id=b.id AND e.verb='created')
-UNION ALL SELECT 'no-created-event','agent', name FROM agent a WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='agent' AND e.subject_id=a.name AND e.verb='recruited')
 UNION ALL SELECT 'no-created-event','coverage', id FROM coverage c WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='coverage' AND e.subject_id=c.id AND e.verb='created')
 UNION ALL SELECT 'no-found-event','review_finding', CAST(f.id AS TEXT) FROM review_finding f
  WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='task' AND e.subject_id=f.task_id AND e.verb='found'
@@ -563,16 +558,18 @@ asserted* below.
 
 ### G9 — Concurrency
 
-Includes the `qa-execute` invariant: **more than one tester at a time is a breach.** It is
-expressed against `agent.serial` rather than against the name `qa-tester`, because `serial = 1`
-is what the schema means by "never run concurrently with itself" and the QA tester is the member
-that carries the flag, not the definition of the rule.
+Includes the `qa-execute` invariant: **more than one tester at a time is a breach.**
+
+**In v6 this keyed on `agent.serial = 1`** — the schema's own word for "never run concurrently
+with itself" — so the query could say breach or no breach on its own. `serial` now lives in the
+agent's frontmatter, so this clause reports **every** member holding two in-flight tickets and
+leaves the verdict to the roster:
 
 ```sql
-SELECT 'serial-agent-double-booked' AS breach, a.name AS row_id, CAST(COUNT(*) AS TEXT) || ' in-flight' AS detail
-  FROM task t JOIN agent a ON a.name = t.claimed_by
- WHERE t.status = 'in-progress' AND a.serial = 1
- GROUP BY a.name HAVING COUNT(*) > 1
+SELECT 'agent-double-booked' AS breach, t.claimed_by AS row_id, CAST(COUNT(*) AS TEXT) || ' in-flight' AS detail
+  FROM task t
+ WHERE t.status = 'in-progress' AND COALESCE(t.claimed_by,'') <> ''
+ GROUP BY t.claimed_by HAVING COUNT(*) > 1
 UNION ALL
 SELECT 'parallel-group-crosses-requirements', t.parallel_group, group_concat(DISTINCT t.requirement_id)
   FROM task t WHERE COALESCE(t.parallel_group,'') <> ''
@@ -580,8 +577,18 @@ SELECT 'parallel-group-crosses-requirements', t.parallel_group, group_concat(DIS
 ORDER BY breach, row_id;
 ```
 
+A row here is **not automatically a breach** — two `developer` tickets in flight is ordinary
+parallel dispatch. Resolve it against the frontmatter:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" | grep '| serial |'
+```
+
+Any member on both lists is the breach. **Report the pair, not the query's verdict** — this
+clause got weaker in v7 and pretending otherwise is worse than saying so.
+
 *Verified to fire:* two tickets claimed by `qa-tester` simultaneously returns
-`serial-agent-double-booked | qa-tester | 2 in-flight`.
+`agent-double-booked | qa-tester | 2 in-flight`, and `qa-tester` declares `serial: true`.
 
 ### Cannot be asserted — globally
 
@@ -623,19 +630,24 @@ is what releases the rest of the flow to `guild:check-in` or `guild:shift`.
 
 ### Preconditions
 
-The schema is applied and the roster is populated. Before the flow may begin:
+The schema is applied and the roster has been read. Before the flow may begin:
 
 ```sql
--- P4.a  the schema is current — expect exactly one row, version 6
+-- P4.a  the schema is current — expect exactly one row, version 7
 SELECT version FROM schema_version WHERE id = 1;
-
--- P4.b  the roster is not empty and its tags are legal — expect ZERO ROWS
-SELECT 'roster-empty' AS breach, '' AS detail WHERE NOT EXISTS (SELECT 1 FROM agent WHERE active = 1)
-UNION ALL SELECT 'unknown-capability', side || ':' || owner || ':' || capability FROM v_capability_unknown;
 
 -- P4.c  this requirement has no graph already — expect ZERO ROWS
 SELECT id FROM graph_node WHERE requirement_id = 'REQ-NNN';
 ```
+
+```bash
+# P4.b  the roster is not empty — expect AT LEAST ONE member with capabilities
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py"
+```
+
+**P4.b left SQL in v7** and that is the point of the change: it now reads the agent files
+directly, which is the only place the answer was ever true. An empty result means no subagent
+declares any capability — every unpinned ticket the architect writes will go `blocked`.
 
 P4.c must be a **separate round trip.** A failing statement does not stop a tursodb script and
 `COMMIT` still commits, so a guard in the same script as the INSERTs is not a guard.
@@ -681,10 +693,21 @@ UNION ALL SELECT 'ticket-without-capability-or-pin', t.id, '' FROM task t
  WHERE t.requirement_id='REQ-NNN' AND COALESCE(t.agent,'')='' AND NOT EXISTS (SELECT 1 FROM task_capability c WHERE c.task_id=t.id)
 UNION ALL SELECT 'graph-cannot-start', 'REQ-NNN', 'v_ready_nodes empty'
  WHERE NOT EXISTS (SELECT 1 FROM v_ready_nodes WHERE requirement_id='REQ-NNN')
-UNION ALL SELECT 'unmatched-ticket', t.id, w.who FROM task t JOIN v_task_top_agent m ON m.task_id=t.id JOIN v_task_who w ON w.task_id=t.id
- WHERE t.requirement_id='REQ-NNN' AND m.agent=''
-UNION ALL SELECT 'unknown-capability-tag', u.owner, u.side||':'||u.capability FROM v_capability_unknown u
 ORDER BY breach, row_id;
+```
+
+**`unmatched-ticket` and `unknown-capability-tag` were dropped from this list in v7.** Both read
+the roster tables, and neither can be expressed now. The equivalent check is per ticket and
+outside SQL — read each unpinned ticket's `who` and put it to the scanner:
+
+```sql
+SELECT t.id, w.who FROM task t JOIN v_task_who w ON w.task_id = t.id
+ WHERE t.requirement_id = 'REQ-NNN' AND COALESCE(t.agent,'') = '' ORDER BY t.id;
+```
+
+```bash
+# for each `needs:a+b` above — no output is an unmatched ticket
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers a,b
 ```
 
 **§4.b — the graph's only entry point is the plan gate.** Expect **exactly one row**, and it must
@@ -806,8 +829,8 @@ specific ways *this* flow goes wrong:
 | A review node `done` while its ticket is still open | G8 `node-done-while-its-task-open` |
 | The requirement closed over an open or blocked ticket | G6 `requirement-done-over-open-task` |
 | A finding still `open` after the repair gate decided | G6 `finding-open-past-gate-repairs` |
-| A ticket dispatched by hardcoded agent name to somebody the matcher would not pick | G5 `top-agent-disagrees-with-match` |
-| An invented capability tag on a ticket | G5 `capability-outside-vocabulary` |
+| A ticket that names no member and declares nothing | G5 `no-pin-no-capabilities` |
+| An invented capability tag on a ticket | **nothing in SQL.** `roster.py --covers`, at plan time |
 
 ### Cannot be asserted
 
@@ -853,14 +876,14 @@ and is bound by §5.b and §5.c identically; the difference is that check-in the
 SELECT 'missing-view' AS breach, v.n AS row_id FROM (
   SELECT 'v_brief' AS n UNION ALL SELECT 'v_goal_progress' UNION ALL SELECT 'v_requirement_progress'
   UNION ALL SELECT 'v_in_flight' UNION ALL SELECT 'v_open_bounties' UNION ALL SELECT 'v_blocked_tasks'
-  UNION ALL SELECT 'v_roster_gaps' UNION ALL SELECT 'v_open_bugs' UNION ALL SELECT 'v_failed_tasks'
+  UNION ALL SELECT 'v_open_bugs' UNION ALL SELECT 'v_failed_tasks'
   UNION ALL SELECT 'v_open_findings' UNION ALL SELECT 'v_coverage_due' UNION ALL SELECT 'v_gates_pending'
   UNION ALL SELECT 'v_plans_pending_approval' UNION ALL SELECT 'v_projects_runnable'
   UNION ALL SELECT 'v_project_progress'
-  UNION ALL SELECT 'v_recent_activity' UNION ALL SELECT 'v_capability_unknown') v
+  UNION ALL SELECT 'v_recent_activity') v
  WHERE NOT EXISTS (SELECT 1 FROM sqlite_schema s WHERE s.type = 'view' AND s.name = v.n)
 UNION ALL
-SELECT 'schema-not-6', CAST(version AS TEXT) FROM schema_version WHERE version <> 6;
+SELECT 'schema-not-7', CAST(version AS TEXT) FROM schema_version WHERE version <> 7;
 ```
 
 *Verified:* zero rows on `empty` and on `messy`; `DROP VIEW v_failed_tasks` returns
@@ -884,7 +907,8 @@ and nothing would say why.
    `NULLIF(value,'null')` — the seed value is the literal string `'null'`, not SQL NULL.
 5. **Narrate in the skill's order**: direction, in flight, blocked, risks, what moved, what is
    waiting on the user, what to do next.
-6. **Write nothing.** No `last-checkin` stamp, no roster sync, no `agents/*.md`.
+6. **Write nothing.** No `last-checkin` stamp, no `agents/*.md`, and no `blocked` write even
+   when a ticket obviously has no taker — that is check-in's decision to make.
 
 ### Postconditions
 
@@ -904,7 +928,6 @@ UNION ALL SELECT 'work_log',       COUNT(*) || '/' || COALESCE(MAX(id),0) FROM w
 UNION ALL SELECT 'review_finding', COUNT(*) || '/' || COALESCE(SUM(length(disposition)),0) FROM review_finding
 UNION ALL SELECT 'bug',            COUNT(*) || '/' || COALESCE(SUM(length(id) + length(status)),0) FROM bug
 UNION ALL SELECT 'coverage',       COUNT(*) || '/' || COALESCE(SUM(length(id) + length(COALESCE(last_inspected_at,''))),0) FROM coverage
-UNION ALL SELECT 'agent',          COUNT(*) || '/' || COALESCE(SUM(length(name) + active + serial),0) FROM agent
 UNION ALL SELECT 'doc',            COUNT(*) FROM doc
 ORDER BY part;
 ```
@@ -947,9 +970,8 @@ SELECT DISTINCT kind, token FROM (
   UNION ALL SELECT 'failed-waived',        id                 FROM v_failed_tasks WHERE waived = 1
   UNION ALL SELECT 'blocked-task',         id                 FROM v_blocked_tasks
   UNION ALL SELECT 'blocked-because',      reason             FROM v_blocked_tasks
+  UNION ALL SELECT 'blocked-needs',        who                FROM v_blocked_tasks WHERE reason = 'status-blocked'
   UNION ALL SELECT 'coverage-stale',       id                 FROM v_coverage_due
-  UNION ALL SELECT 'roster-gap',           capability         FROM v_roster_gaps
-  UNION ALL SELECT 'capability-unknown',   owner              FROM v_capability_unknown
   UNION ALL SELECT 'gate-waiting',         node_id            FROM v_gates_pending
   UNION ALL SELECT 'finding-where',  COALESCE(file,'') || ':' || COALESCE(line,0)
                                           FROM v_open_findings WHERE severity IN ('critical','major')
@@ -974,34 +996,38 @@ done < /tmp/rollcall.txt
 [ $fail -eq 0 ] || exit 1
 ```
 
-**On `messy` the roll call is exactly 27 rows**, and this is the transcript:
+**`blocked-needs` replaced `roster-gap` and `capability-unknown` in v7**, and it is a better
+row than either: it fires off `v_blocked_tasks.who`, which names the missing capability on the
+ticket that is actually stuck, rather than off a request table somebody had to remember to file
+into. The roll call is still exactly **27 rows** on `messy`, which is the useful coincidence to
+notice — the same facts survived the table's removal, attached to the ticket instead.
 
 ```
 blocked-because|deps:TASK-003            failed-unadjudicated|TASK-007
 blocked-because|deps:TASK-004            failed-waived|TASK-008
-blocked-because|no-eligible-agent:embedded   in-flight|TASK-003
-blocked-because|status-blocked           moved|BUG-001
-blocked-task|TASK-004                    moved|BUG-002
-blocked-task|TASK-005                    moved|REQ-001/gate-plan
-blocked-task|TASK-009                    moved|TASK-001
-blocked-task|TASK-010                    moved|TASK-002
-blocked-task|TASK-011                    moved|TASK-003
-bug-open|BUG-001                         moved|TASK-007
-bug-open|BUG-002                         moved|TASK-008
-capability-unknown|TASK-010              moved|TASK-009
-coverage-stale|auth-session              roster-gap|rust
+blocked-because|status-blocked           in-flight|TASK-003
+blocked-needs|needs:embedded             moved|BUG-001
+blocked-needs|needs:rust                 moved|BUG-002
+blocked-task|TASK-004                    moved|REQ-001/gate-plan
+blocked-task|TASK-005                    moved|TASK-001
+blocked-task|TASK-009                    moved|TASK-002
+blocked-task|TASK-010                    moved|TASK-003
+blocked-task|TASK-011                    moved|TASK-007
+bug-open|BUG-001                         moved|TASK-008
+bug-open|BUG-002                         moved|TASK-009
+coverage-stale|auth-session              moved|TASK-010
 coverage-stale|checkout-flow
 ```
 
 Row counts per fixture, so a harness can sanity-check its own load: `empty` **0**, `planned`
-**5**, `review-ready` **12**, `maintenance` **8**, `messy` **27**.
+**5**, `in-flight` **9**, `review-ready` **12**, `maintenance` **8**, `messy` **27**.
 
 **A brief that omits a failed task is a FAILURE.** Nothing crashed, no query errored, the exit
 code was 0, and the deliverable is wrong — `TASK-007` failed with 12k of 480k rows backfilled and
 nobody has ruled on it, and a brief that does not say so has told the guild master the board is
-in better shape than it is. The same holds for every other row above: an omitted `roster-gap`
-hides the one risk with a known remedy; an omitted `blocked-because` turns "nobody can take this"
-into "it's in the backlog".
+in better shape than it is. The same holds for every other row above: an omitted `blocked-needs`
+hides the one risk with a known remedy — the word that names the agent file somebody has to
+write; an omitted `blocked-because` turns "nobody can take this" into "it's in the backlog".
 
 *Verified to fire.* Against a plausible-looking brief that covers direction, in-flight, both
 bugs, all five stuck tickets and both coverage areas — everything a reader would call thorough —
@@ -1015,7 +1041,7 @@ BRIEF OMITS  moved  TASK-001
 BRIEF OMITS  moved  TASK-002
 BRIEF OMITS  moved  TASK-007
 BRIEF OMITS  moved  TASK-008
-BRIEF OMITS  roster-gap  rust
+BRIEF OMITS  blocked-needs  needs:rust
 ```
 
 A brief that also carries the failures, the waiver, the gap and the activity beat returns
@@ -1061,7 +1087,7 @@ Zero rows / no match when healthy.
 
 | Must not be true | How it is caught |
 |---|---|
-| The brief stamped `last-checkin`, synced the roster, or wrote any row | §5.a — the fingerprint diff |
+| The brief stamped `last-checkin` or wrote any row | §5.a — the fingerprint diff |
 | A failed, blocked or bugged item was left out | §5.b — the roll call names it |
 | `next = none` was narrated as "finished" or "all caught up" | judgment; see below |
 | The backlog count was presented as available work | §5.c — both numbers must appear |
@@ -1127,7 +1153,7 @@ raw tables the page reads directly rather than through a view:
 -- P6.a  the page's data sources exist — expect ZERO ROWS
 SELECT 'missing-source' AS breach, v.n AS row_id FROM (
   SELECT 'v_brief' AS n UNION ALL SELECT 'v_goal_progress' UNION ALL SELECT 'v_requirement_progress'
-  UNION ALL SELECT 'v_board' UNION ALL SELECT 'v_blocked_tasks' UNION ALL SELECT 'v_roster_gaps'
+  UNION ALL SELECT 'v_board' UNION ALL SELECT 'v_blocked_tasks'
   UNION ALL SELECT 'v_recent_activity'
   UNION ALL SELECT 'v_projects_runnable' UNION ALL SELECT 'v_project_progress'
   UNION ALL SELECT 'v_plans_pending_approval'
@@ -1333,7 +1359,7 @@ and its expectations split cleanly along that line: **§5's roll call binds its 
 Four things are asserted here, and they are the four ways an orchestrator goes wrong:
 
 1. it re-derives a rule instead of reading the view, and gets it subtly different;
-2. it dispatches by a hardcoded agent name rather than by `v_agent_match`;
+2. it dispatches by a hardcoded agent name rather than by the §3.3 match;
 3. it lets somebody other than itself move a status;
 4. it builds past a gate.
 
@@ -1344,12 +1370,13 @@ resume path after `guild:new-requirement` hands `gate-plan` back approved.
 
 ### Preconditions
 
-```sql
--- P7.a  the roster is synced and legal — expect ZERO ROWS.
---       Step 1.2 writes this; skipping it turns a good board into a wall of blocked tickets.
-SELECT 'roster-empty' AS breach, '' AS detail WHERE NOT EXISTS (SELECT 1 FROM agent WHERE active = 1)
-UNION ALL SELECT 'unknown-capability', side || ':' || owner || ':' || capability FROM v_capability_unknown;
+```bash
+# P7.a  the roster is readable and not empty — expect AT LEAST ONE member with capabilities.
+#       Step 1.2 reads this; skipping it leaves you with no way to match a ticket at all.
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py"
+```
 
+```sql
 -- P7.b  nothing was left half-recorded by the last session — expect ZERO ROWS
 SELECT 'running-node-no-claimed-ticket' AS breach, n.id AS row_id, COALESCE(n.task_id,'(unbound)') AS detail
   FROM graph_node n
@@ -1358,25 +1385,29 @@ SELECT 'running-node-no-claimed-ticket' AS breach, n.id AS row_id, COALESCE(n.ta
 ```
 
 P7.a is a **report**, not a stop: on `messy` it returns
-`unknown-capability | task:TASK-010:embedded`, which is a real board state the check-in must
-narrate rather than route around. On `empty` it returns `roster-empty` — correct, and the reason
-Step 1.2's roster sync runs before anything else. P7.b returning rows is the crash-recovery case
-that Step 1.3 exists for: resolve it before Step 3, never by re-dispatching blind.
+P7.a **left SQL in v7**, and the change is the point: it now reads the agent files, which is the
+only place the answer was ever true. It returns nothing on a machine with no subagents declaring
+capabilities — correct, and the reason Step 1.2's roster scan runs before anything else. It no
+longer has a `messy`-fixture failure to show, because a fixture cannot seed a roster any more.
+
+P7.b returning rows is the crash-recovery case that Step 1.3 exists for: resolve it before
+Step 3, never by re-dispatching blind.
 
 *Verified:* P7.b is zero rows on all six fixtures; on `review-ready` with `test-plan` forced back
 to `running` it returns `running-node-no-claimed-ticket | REQ-001/test-plan | TASK-004`.
 
 ### Expected sequence
 
-1. **Step 1** — apply the schema (idempotent), sync the roster, recover anything `running`.
+1. **Step 1** — apply the schema (idempotent), scan the roster, recover anything `running`.
    Do **not** stamp `last-checkin`; it is the cutoff Step 2 reads.
 2. **Step 2** — read `v_brief` and its detail lists in one script and narrate. Bound by §5.b.
 3. **3.1** — pick the lowest-id `in-progress` requirement, else the lowest-id `todo` one, then ask
    `v_ready_nodes` what is runnable. **The segment query mutates nothing.**
 4. **3.2** — cut the ready *work* nodes into ONE batch, capped by the template's `parallel:`
-   line, and independently capped by the `serial` flag. Never two `serial = 1` members at once.
-5. **3.3** — resolve the member from `v_task_top_agent` / `v_agent_match`, then move the ticket
-   and the node, **in that order**, each with `RETURNING`.
+   line, and independently capped by the `serial` flag **read from the agent's frontmatter**.
+   Never two serial members at once.
+5. **3.3** — resolve the member with the pin/capability rule against the scanned roster, then
+   move the ticket and the node, **in that order**, each with `RETURNING`.
 6. **3.4** — record both halves for every node in the batch, then go back to 3.1. Readiness
    propagates; the whole graph is never queued.
 7. **3.5** — at `gate-repairs`, present one decision, record `gate.status` **and**
@@ -1394,11 +1425,12 @@ One script, seven clauses. Zero rows when healthy. Run it after every batch, not
 
 ```sql
 -- checkin.sql
--- C.a  a ticket handed to somebody the matcher never offered  =  HARDCODED DISPATCH
-SELECT 'dispatched-to-unmatched-agent' AS breach, t.id AS row_id, t.claimed_by AS detail
+-- C.a  a ticket claimed by somebody other than its own pin  =  HARDCODED DISPATCH, half of it
+SELECT 'claimed-against-its-own-pin' AS breach, t.id AS row_id,
+       t.claimed_by || ' <> ' || t.agent AS detail
   FROM task t
- WHERE COALESCE(t.claimed_by,'') <> ''
-   AND NOT EXISTS (SELECT 1 FROM v_agent_match m WHERE m.task_id = t.id AND m.agent = t.claimed_by)
+ WHERE COALESCE(t.claimed_by,'') <> '' AND COALESCE(t.agent,'') <> ''
+   AND t.agent <> 'reviewer' AND t.claimed_by <> t.agent
 UNION ALL
 -- C.b  a status transition whose actor is neither the orchestrator nor the guild master
 SELECT 'status-moved-by-non-orchestrator', e.subject_type || ':' || e.subject_id, e.actor
@@ -1464,9 +1496,25 @@ and fails C.a on `TASK-004` and `TASK-005` immediately. `messy` is the fixture t
 visible: `TASK-002` prefers `svelte` and goes to `developer-svelte`, while `TASK-001` and
 `TASK-003` go to `developer`, so one hardcoded name is wrong twice on one requirement.
 
-C.a deliberately reads `v_agent_match` rather than `v_task_top_agent`: dispatching rank 2 is a
-legitimate call the guild master can make out loud, and the assertion is about dispatching to
-somebody the matcher *never named at all*.
+**C.a lost half its reach in v7, and it is worth being precise about which half.** It used to
+read `v_agent_match` and catch a ticket handed to somebody the matcher *never named at all* —
+including on the capability path, where the wrong developer is the likeliest mistake. That query
+needed the roster, so what survives is the pinned case: a ticket that names its member and was
+claimed by a different one. That is unambiguous and still worth catching.
+
+The capability path has no SQL assertion any more. Checking it means re-running the match:
+
+```sql
+SELECT t.id, t.claimed_by, w.who FROM task t JOIN v_task_who w ON w.task_id = t.id
+ WHERE COALESCE(t.claimed_by,'') <> '' AND COALESCE(t.agent,'') = '';
+```
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers <who's capabilities>
+```
+
+`claimed_by` must appear in that output. Dispatching rank 2 is a legitimate call the guild master
+can make out loud; dispatching somebody who is not eligible at all is the breach.
 
 **§7.b — C.b is "you own every status transition", made checkable.** `guild:check-in` Key Rule 2
 says plainly that no constraint enforces it. This clause is the only thing that reports it, and
@@ -1495,17 +1543,24 @@ connects them to it.
 dispatch, not only afterwards. `maintenance` is the fixture and the trap is live:
 
 ```sql
-SELECT task_id, agent, source, serial FROM v_agent_match WHERE task_id = 'TASK-904';
--- TASK-904|qa-tester|capability|1
+SELECT id, who FROM v_open_bounties WHERE id = 'TASK-904';
+-- TASK-904|needs:qa-execution
 ```
 
-`serial = 1` is in the row the matcher hands over. **Nothing will stop the dispatch.**
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers qa-execution
+# qa-tester | sonnet | serial | guild | e2e, qa-execution, test-authoring
+```
+
+The `serial` word in that line is the signal, and **it is now the only place the signal exists**
+— v6 carried it in the matcher's row. Nothing will stop the dispatch, and a dispatcher that
+skipped the roster scan cannot even see the problem.
 
 ### Anti-expectations
 
 | Must not be true | Caught by |
 |---|---|
-| A ticket dispatched to a member `v_agent_match` never named | §7 C.a |
+| A ticket dispatched to a member the §3.3 match never named | §7 C.a |
 | An agent moved its own ticket, node or gate | §7 C.b |
 | A gate approved before its predecessors finished | §7 C.c |
 | A ticket moved without its node, or a node without its ticket | §7 C.d |
@@ -1574,9 +1629,7 @@ comparison, so there has to be a *before*:
 
 ```sql
 -- keep.sql — run BEFORE the clear, and again after
-SELECT 'agent'            AS t, COUNT(*) AS n FROM agent
-UNION ALL SELECT 'agent_capability', COUNT(*) FROM agent_capability
-UNION ALL SELECT 'coverage',         COUNT(*) FROM coverage
+SELECT 'coverage'         AS t, COUNT(*) AS n FROM coverage
 UNION ALL SELECT 'doc',              COUNT(*) FROM doc
 UNION ALL SELECT 'event',            COUNT(*) FROM event
 UNION ALL SELECT 'state-actor',      (SELECT COUNT(*) FROM guild_state WHERE key = 'actor')
@@ -1584,8 +1637,11 @@ UNION ALL SELECT 'state-checkin',    (SELECT COUNT(*) FROM guild_state WHERE key
 ORDER BY t;
 ```
 
-On `messy` this reads `agent|14`, `agent_capability|26`, `coverage|3`, `doc|0`, `event|61`,
-`state-actor|1`, `state-checkin|1`.
+On `messy` this reads `coverage|3`, `doc|0`, `event|47`, `state-actor|1`, `state-checkin|1`.
+
+**`agent|14` and `agent_capability|26` used to head this list**, and their absence is the point
+of the v7 change: the roster is the agent files, so a board reset was never able to reach it and
+now cannot even be asked about it. Nothing to fingerprint, nothing to lose.
 
 ### Expected sequence
 
@@ -1623,7 +1679,6 @@ SELECT 'not-cleared' AS breach, t.tbl AS row_id, CAST(t.n AS TEXT) AS detail FRO
   UNION ALL SELECT 'work_log', COUNT(*) FROM work_log
   UNION ALL SELECT 'review_finding', COUNT(*) FROM review_finding
   UNION ALL SELECT 'bug', COUNT(*) FROM bug
-  UNION ALL SELECT 'capability_request', COUNT(*) FROM capability_request
   UNION ALL SELECT 'inspection', COUNT(*) FROM inspection
   UNION ALL SELECT 'inspection_coverage', COUNT(*) FROM inspection_coverage
   UNION ALL SELECT 'guild_state:graph-template', COUNT(*) FROM guild_state WHERE key LIKE 'graph-template:%'
@@ -1635,12 +1690,19 @@ SELECT 'orphan-after-clear', 'inspection_coverage', ic.coverage_id FROM inspecti
 ORDER BY breach, row_id;
 ```
 
-**Nineteen things, and `guild_state`'s `graph-template:REQ-NNN` keys are the nineteenth.** They
+**Eighteen things, and `guild_state`'s `graph-template:REQ-NNN` keys are the eighteenth.** They
 are the easiest to forget because they are not a table, and without them G4's
 `graph-without-template` fires on the *next* requirement built on this board.
 
 *Verified:* the skill's exact delete script, run against `messy`, exits 0 with silent stdout and
 this assertion returns zero rows. G1's referential-health clauses are also clean afterwards.
+
+**That verification caught a real defect, and the fix is load-bearing.** `plan.gate_node_id`
+points forward into `graph_node`, so the script's cycle-breaking block must NULL it alongside
+`plan.task_id` — without that line `DELETE FROM graph_node` fails the foreign key and every
+delete after it fails too. And because tursodb has no `-bail`, **the script runs to the end and
+the clear silently does not happen.** This is exactly the failure §0.3's both-channels load check
+exists to catch, and it is why "it exited 0" is never the assertion.
 
 **§8.b — the evergreen survived, unchanged.** `diff` the keep fingerprint:
 
@@ -1649,9 +1711,9 @@ diff /tmp/keep.before /tmp/keep.after
 ```
 
 Expect **exactly one differing line**, and it must be `event`, and it must have **increased**.
-On `messy` the verified transcript is `event|61` → `event|80`: nineteen delete statements, each
-firing the trigger that records it. Every other line is byte-identical — `agent|14`,
-`agent_capability|26`, `coverage|3`, `doc|0`, `state-actor|1`, `state-checkin|1`.
+On `messy` the verified transcript is `event|47` → `event|66`: nineteen rows deleted, each firing
+the trigger that records it. Every other line is byte-identical — `coverage|3`, `doc|0`,
+`state-actor|1`, `state-checkin|1`.
 
 That the count *rises* is the assertion, not an artifact: a board that vanished with no trace is
 indistinguishable from a corrupted one. A clear that left `event` unchanged means the deletes ran
@@ -1986,7 +2048,7 @@ otherwise carry two graphs and one ambiguous `graph-template:` key.
 ### Preconditions
 
 ```sql
--- P11.a  the schema is current — expect exactly one row, version 6
+-- P11.a  the schema is current — expect exactly one row, version 7
 SELECT version FROM schema_version WHERE id = 1;
 
 -- P11.b  the carrier has no graph already — expect ZERO ROWS, in its own round trip
@@ -1996,28 +2058,33 @@ SELECT id FROM graph_node WHERE requirement_id = 'REQ-NNN';
 SELECT 'no-area-is-due' AS breach, 'coverage' AS row_id, CAST((SELECT COUNT(*) FROM coverage) AS TEXT) AS detail
  WHERE NOT EXISTS (SELECT 1 FROM v_coverage_due)
 UNION ALL
-SELECT 'no-member-can-plan', 'qa-planning', '' WHERE NOT EXISTS
-  (SELECT 1 FROM agent_capability ac JOIN agent a ON a.name = ac.agent
-    WHERE a.active = 1 AND ac.capability = 'qa-planning')
-UNION ALL
-SELECT 'no-member-can-execute', 'qa-execution', '' WHERE NOT EXISTS
-  (SELECT 1 FROM agent_capability ac JOIN agent a ON a.name = ac.agent
-    WHERE a.active = 1 AND ac.capability = 'qa-execution')
-UNION ALL
-SELECT 'the-executor-is-not-serial', a.name, CAST(a.serial AS TEXT) FROM agent a
-  JOIN agent_capability ac ON ac.agent = a.name AND ac.capability = 'qa-execution'
- WHERE a.active = 1 AND a.serial <> 1
-UNION ALL
 SELECT 'a-tester-is-already-running', n.id, n.status FROM graph_node n
  WHERE n.node_key = 'qa-execute' AND n.status = 'running'
 UNION ALL
 SELECT 'a-tester-already-holds-a-ticket', t.id, COALESCE(t.claimed_by,'') FROM task t
- WHERE t.claimed_by IN (SELECT name FROM agent WHERE serial = 1) AND t.status = 'in-progress'
+ WHERE t.node_key = 'qa-execute' AND t.status = 'in-progress'
 ORDER BY breach, row_id;
 ```
 
+**Three clauses left this precondition in v7** — `no-member-can-plan`, `no-member-can-execute`
+and `the-executor-is-not-serial` all read the roster tables. They are now one command, and it
+answers all three at once:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers qa-planning
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers qa-execution
+```
+
+Both must return a row, and the `qa-execution` row must read `serial`. **Run them** — a
+maintenance cycle staffed by a non-serial executor is the two-testers-on-one-port failure, and
+nothing downstream will catch it.
+
+`a-tester-already-holds-a-ticket` is now keyed on `node_key = 'qa-execute'` rather than on
+`agent.serial = 1`, which is a narrower question asked of the board rather than of the roster,
+and is the honest version of it.
+
 **`no-area-is-due` is a precondition, not a failure.** It says the cycle should end at `qa-check`
-having cost nothing (§11.b), not that something is wrong. The other five are failures: a cycle
+having cost nothing (§11.b), not that something is wrong. The others are failures: a cycle
 that cannot be staffed, or a second one starting on top of a tester that is already driving a
 browser.
 
@@ -2119,9 +2186,10 @@ areas due) **and** zero rows on the same fixture after `maintenance.md` §7.5's 
 returns `inspection-running-nothing-due | INSP-001 | v_coverage_due is empty`.
 
 **§11.c — one tester, board-wide.** This is the invariant the whole template is shaped around, so
-it is asserted directly rather than left to `agent.serial`. **G9 catches the ticket half from the
-roster's side; these are the node-side and mission-side halves it does not see.** Expect **zero
-rows**:
+it is asserted directly against the graph rather than left to a `serial` flag — **and in v7 that
+is no longer a stylistic preference but the only assertion left in SQL.** G9's ticket-side clause
+can now only report a member holding two tickets; whether that member is serial lives in its
+frontmatter. These node-side and mission-side halves are the ones that still stand on their own:
 
 ```sql
 SELECT 'two-qa-execute-running' AS breach, n.id AS row_id, n.requirement_id AS detail
@@ -2142,9 +2210,8 @@ UNION ALL
 SELECT 'qa-execute-running-node-unbound', n.id, 'task_id IS NULL' FROM graph_node n
  WHERE n.node_key = 'qa-execute' AND n.status = 'running' AND n.task_id IS NULL
 UNION ALL
-SELECT 'mission-ticket-not-with-the-serial-member', t.id, COALESCE(t.claimed_by,'(null)') FROM task t
- WHERE t.node_key = 'qa-execute' AND t.status = 'in-progress'
-   AND NOT EXISTS (SELECT 1 FROM agent a WHERE a.name = t.claimed_by AND a.serial = 1)
+SELECT 'mission-ticket-unclaimed-while-running', t.id, '(null)' FROM task t
+ WHERE t.node_key = 'qa-execute' AND t.status = 'in-progress' AND COALESCE(t.claimed_by,'') = ''
 ORDER BY breach, row_id;
 ```
 
@@ -2185,9 +2252,6 @@ SELECT 'issues-found-but-no-bug-filed', n.requirement_id, 'qa-report done, 0 bug
    AND (SELECT value FROM guild_state WHERE key = 'graph-template:' || n.requirement_id) = 'maintenance'
    AND EXISTS (SELECT 1 FROM inspection_coverage ic WHERE ic.verdict = 'issues')
    AND NOT EXISTS (SELECT 1 FROM bug b WHERE b.requirement_id = n.requirement_id)
-UNION ALL
-SELECT 'bug-found-by-non-member', b.id, b.found_by FROM bug b
- WHERE COALESCE(b.found_by,'') <> '' AND NOT EXISTS (SELECT 1 FROM agent a WHERE a.name = b.found_by)
 UNION ALL
 SELECT 'inspection-done-no-finished-at', i.id, '(null)' FROM inspection i
  WHERE i.status = 'done' AND COALESCE(i.finished_at,'') = ''
@@ -2485,7 +2549,7 @@ rows** and `v_ready_nodes` offer `REQ-001/test-plan` — the first genuinely sta
 8. **On failure**: retry once with a fresh agent instance — the marker is a `work_log` line
    beginning `Shift retry` — then give up, leaving the node `failed` and its ticket `failed`, and
    continue with the requirement's other independent work.
-9. **On no eligible agent**: mark the ticket `blocked` and file a `capability_request`. Never
+9. **On no eligible agent**: mark the ticket `blocked` — that write is the whole record. Never
    improvise a member.
 10. **At the end of every turn**, recompute the stop reason and write `shift:used` / `shift:stall`
     back — *including on the turns where nothing changed*, or the stall counter never decrements.
@@ -2567,19 +2631,24 @@ SELECT 'shift-declared-a-coverage-area', e.subject_id, e.ts
   FROM event e, w
  WHERE e.subject_type='coverage' AND e.verb='created' AND e.ts >= w.t0 AND e.ts <= w.t1
 UNION ALL
-SELECT 'shift-recruited-or-retired-a-member', e.subject_id, e.verb || ' at ' || e.ts
-  FROM event e, w
- WHERE e.subject_type='agent' AND e.verb IN ('recruited','retired') AND e.ts >= w.t0 AND e.ts <= w.t1
-UNION ALL
 SELECT 'shift-touched-the-direction', e.subject_type || ':' || e.subject_id, e.verb || ' at ' || e.ts
   FROM event e, w
  WHERE e.subject_type IN ('goal','project') AND e.ts >= w.t0 AND e.ts <= w.t1
-UNION ALL
-SELECT 'shift-filed-a-capability-request-and-created-the-member', q.capability, q.proposed_agent
-  FROM capability_request q
- WHERE q.status = 'open' AND EXISTS (SELECT 1 FROM agent a WHERE a.name = q.proposed_agent)
 ORDER BY breach, row_id;
 ```
+
+**Two clauses left this list in v7 and the rule they enforced did not.** `shift-recruited-or-
+retired-a-member` read `event` rows the `agent` table's triggers wrote, and
+`shift-filed-a-capability-request-and-created-the-member` read `capability_request`. Recruiting is
+now a **commit to the agent files**, which this database cannot witness at all. The assertion
+moves out of SQL and into the diff:
+
+```bash
+git status --porcelain agents/ .claude/agents/
+```
+
+Anything there after an unattended shift is the breach — **a shift may not add a guild member**,
+and now the only thing that can prove it did is the filesystem.
 
 `qa-check` moving off `pending` **is** an inspection starting — it is the entry node of the
 `maintenance` graph, so the one event says the whole thing. A shift may *continue* an inspection
@@ -2587,15 +2656,11 @@ freely: every node from `qa-check` through `qa-report` only observes and records
 before the gate touches production code. So `qa-plan`, `qa-execute` and `qa-report` moving inside
 the window are all legal, and only the first move of the first node is not.
 
-The last clause is a shape rather than a window: a `capability_request` still `open` whose
-`proposed_agent` already exists on the roster means somebody filed the gap *and then filled it
-themselves*, which is the exact thing `v5-design.md` §5.4's last line forbids.
-
 *Verified:* zero rows on a cold `maintenance` carrier with an open shift over it. Moving
-`qa-check` to `done`, inserting an `inspection` row and creating `developer-embedded` returns
-`shift-started-an-inspection | REQ-900/qa-check`, `shift-opened-an-inspection-row | INSP-009` and
-`shift-recruited-or-retired-a-member | developer-embedded | recruited at …`. Closing `GOAL-001`
-and `PROJ-001` mid-shift returns `shift-touched-the-direction` for both.
+`qa-check` to `done` and inserting an `inspection` row returns
+`shift-started-an-inspection | REQ-900/qa-check` and `shift-opened-an-inspection-row | INSP-009`.
+Closing `GOAL-001` and `PROJ-001` mid-shift returns `shift-touched-the-direction` for both. The
+recruitment half is verified by `git status` returning a new file under `agents/`.
 
 **§12.c — the failure policy was followed and the shift did not deadlock.** Expect **zero rows**:
 
@@ -2661,27 +2726,22 @@ Deleting the work log returns `failed-ticket-with-no-reason-logged` and
 **§12.d — a blocked ticket became a roster gap, not a silent skip.** Expect **zero rows**:
 
 ```sql
+-- The shift ran and something it could not staff is still `todo`. SQL cannot tell WHICH
+-- ticket had no taker, so this offers every unpinned candidate: check each `who` against
+-- `roster.py --covers`, and a ticket nobody covers is the breach.
 SELECT 'uncoverable-ticket-left-todo' AS breach, t.id AS row_id, w.who AS detail
   FROM task t JOIN v_task_who w ON w.task_id = t.id
  WHERE t.status = 'todo' AND COALESCE(t.agent,'') = ''
-   AND NOT EXISTS (SELECT 1 FROM v_agent_eligible e WHERE e.task_id = t.id)
+   AND EXISTS (SELECT 1 FROM task_capability c WHERE c.task_id = t.id)
+   AND NOT EXISTS (SELECT 1 FROM v_task_deps d WHERE d.task_id = t.id)
    AND EXISTS (SELECT 1 FROM event WHERE subject_type = 'shift' AND verb = 'ended')
 UNION ALL
 SELECT 'blocked-ticket-invisible-as-a-gap', t.id, ''
   FROM task t WHERE t.status = 'blocked'
    AND NOT EXISTS (SELECT 1 FROM v_blocked_tasks b WHERE b.id = t.id)
 UNION ALL
-SELECT 'blocked-for-a-capability-nobody-requested', tc.task_id, tc.capability
-  FROM task_capability tc JOIN task t ON t.id = tc.task_id
- WHERE t.status = 'blocked' AND tc.required = 1
-   AND NOT EXISTS (SELECT 1 FROM agent_capability ac JOIN agent a ON a.name = ac.agent
-                    WHERE a.active = 1 AND ac.capability = tc.capability)
-   AND NOT EXISTS (SELECT 1 FROM capability_request q WHERE q.capability = tc.capability
-                    AND q.status IN ('open','created'))
-UNION ALL
-SELECT 'blocked-but-coverable', t.id, m.agent
-  FROM task t JOIN v_task_top_agent m ON m.task_id = t.id
- WHERE t.status = 'blocked' AND m.agent <> ''
+SELECT 'blocked-with-a-pin', t.id, t.agent
+  FROM task t WHERE t.status = 'blocked' AND COALESCE(t.agent,'') <> ''
 ORDER BY breach, row_id;
 ```
 
@@ -2691,14 +2751,20 @@ not available. The shift would select the same requirement next turn, emit the s
 spin all night — **marking it `blocked` is what makes the loop move on**, and `blocked` holding
 the review gate is deliberate, because a roster gap should be loud.
 
-`blocked-but-coverable` is the mirror: `blocked` means *nobody can take it*. If `v_task_top_agent`
-names somebody, the status is a lie and a member is being denied work. (It also appears in G6;
-restated here because a shift is the thing most likely to write it.)
+**That write matters more in v7 than it did in v6.** No view derives "nobody covers this" any
+more, so `blocked` is the *only* record that the scan happened and came back empty. A shift that
+skips it does not just leave a stale `todo` — it leaves a board on which nothing, anywhere, knows
+there is a gap.
 
-*Verified to fire:* reverting `TASK-013` to `todo` after the shift ended returns
-`uncoverable-ticket-left-todo | TASK-013 | needs:embedded`. Blocking a ticket the matcher can
-staff returns `blocked-but-coverable | TASK-006 | reviewer`. Deleting the `embedded` capability
-request returns `blocked-for-a-capability-nobody-requested | TASK-013 | embedded`.
+`blocked-with-a-pin` is the mirror, and it is what survives of `blocked-but-coverable`: a pin
+skips the capability match entirely, so a pinned ticket can never fail to find a member. If one
+is `blocked`, the status is a lie and a member is being denied work. (The capability-path half of
+that check needed the roster and is gone; re-running `roster.py --covers` against a blocked
+ticket's `who` is what replaces it.)
+
+*Verified to fire:* reverting `TASK-010` to `todo` after the shift ended returns
+`uncoverable-ticket-left-todo | TASK-010 | needs:embedded`. Pinning a blocked ticket returns
+`blocked-with-a-pin | TASK-010 | developer`.
 
 **§12.e — the shift said why it stopped, every time.** Expect **zero rows**:
 
@@ -2831,7 +2897,7 @@ Must be false after a shift. These are the specific ways *this* process goes wro
 | Any node moved past an unresolved gate | §12.a `work-past-unresolved-gate`, G4 `past-unresolved-gate` |
 | A requirement closed past an unresolved gate | G6 `requirement-done-with-pending-gate` |
 | An inspection *started* by the shift | §12.b `shift-started-an-inspection`, `shift-opened-an-inspection-row` |
-| A member created, or a filed gap quietly self-filled | §12.b `shift-recruited-or-retired-a-member`, `shift-filed-a-capability-request-and-created-the-member` |
+| A member created during a shift | **not in SQL.** `git status --porcelain agents/ .claude/agents/` after the run |
 | A goal or project moved | §12.b `shift-touched-the-direction` |
 | A ticket retried twice inside one shift | §12.c `retried-more-than-once` |
 | A failure recorded on only one of the ticket and the node | §12.c `failed-node-live-ticket`, `failed-ticket-live-node` |
@@ -2843,7 +2909,7 @@ Must be false after a shift. These are the specific ways *this* process goes wro
 | A ceiling raised from inside the loop | §12.e `budget-changed-mid-shift`, `over-budget` |
 | A commit on the default branch, or anything pushed | §12.f G-2, G-3, G-4 |
 | A commit for a failed task | §12.f G-6, G-8 |
-| An invented capability tag on a ticket the shift created | G5 `capability-outside-vocabulary` |
+| An invented capability tag on a ticket the shift created | **not in SQL.** `roster.py --covers` against the ticket's `who` |
 | A dispatch to somebody the matcher would not have picked | G5 `top-agent-disagrees-with-match` |
 
 ### Cannot be asserted

@@ -152,8 +152,8 @@ The `FROM requirement r WHERE r.id = …` **is** the referential check: a bad re
 returns zero rows and writes nothing, which matters because a failing statement does not stop
 the script.
 
-Declare the capability rather than pinning the agent — that is what lets the matcher work and
-what makes a roster gap visible if the qa-strategist is ever missing:
+Declare the capability rather than pinning the agent — that is what lets the dispatcher match
+and what makes a roster gap visible if the qa-strategist is ever missing:
 
 ```sql
 INSERT INTO task_capability (task_id, capability, required)
@@ -187,11 +187,14 @@ write the charter, then create the qa-tester mission tickets.
 ```
 
 Then check the words you used are real, because an unknown capability inserts fine and matches
-nobody, silently, forever:
+nobody, silently. **The check is not SQL** — the vocabulary is the agent files:
 
-```sql
-SELECT side, owner, capability FROM v_capability_unknown;
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers qa-planning
 ```
+
+At least one row back is the answer you want. No output means the ticket will go `blocked` at
+the first dispatch that reaches it.
 
 ## Step 6 — confirm and offer to run
 

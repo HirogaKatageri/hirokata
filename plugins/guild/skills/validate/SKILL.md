@@ -103,14 +103,17 @@ Validated .guild/guild.db against §3 + §7 (check-in) — READ-ONLY, nothing wa
 
   G1  referential health   PASS      G6  closure and records  PASS
   …
-  G5  roster integrity     FAIL      G9  concurrency          PASS
+  G5  ticket routing       FAIL      G9  concurrency          PASS
 
-  G5 — roster integrity
-      capability-outside-vocabulary|TASK-010|task:embedded
-      uncovered-capability-no-request|TASK-010|embedded
+  G5 — ticket routing
+      no-pin-no-capabilities|TASK-010
 
-1 of 9 invariants failed. TASK-010 requires `embedded`, no active member covers it, and no
-capability_request was filed — the ticket will sit on the board matching nobody.
+1 of 9 invariants failed. TASK-010 names no member and declares no capabilities, so there is
+no question the dispatcher can answer — it will sit on the board forever.
+
+Not checked here: whether a declared capability is one some agent file actually
+declares. The roster is not in the database, so no SQL assertion can reach it —
+`roster.py --covers` is the check, and it is the architect's to run at plan time.
 ```
 
 - **Print the offending rows verbatim.** Never compress a failure into a count; the rows
@@ -143,11 +146,10 @@ Four things are mandatory:
    ORDER BY tbl;
    ```
 
-   Zero rows means the file is safe to overwrite. A roster alone does not trip it.
+   Zero rows means the file is safe to overwrite.
 2. **Confirm before loading**, naming the exact file that will be written. This is the one
    path in this skill that is not read-only and the user is told so before it runs.
-3. **Load in order.** The chains are §0.1 of `expectations-fixtures.md`, and every one
-   starts with the roster block (§0.5):
+3. **Load in order.** The chains are §0.1 of `expectations-fixtures.md`:
    `empty` = schema only · `planned` = `00`+`02` · `in-flight` = +`03` ·
    `review-ready` = +`04` · `messy` = `00`,`02`,`03`,`05` · `maintenance` = `00`,`06`.
    Extract each seed block by its `**Seed SQL — \`NN-name.sql\`:**` line, same awk.

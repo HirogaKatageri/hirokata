@@ -47,9 +47,11 @@ Four rules sit underneath everything below:
    status`, `UPDATE gate SET status`. **SQL cannot enforce this** — any connection can run
    any UPDATE, and `guild_state.actor` is a label, not an identity. It holds because you and
    the agent definitions honor it.
-2. **A ticket names a CAPABILITY, not a member.** `v_task_top_agent` derives rank 1;
-   `v_agent_match` shows every candidate in rank order. A ticket with a pinned `agent` still
-   dispatches to that member.
+2. **A ticket names a CAPABILITY, not a member — and YOU do the matching.** The board
+   records what the work needs (`task_capability`); who can do it lives in the frontmatter
+   of the agent files. There is no matcher view any more. You build the roster by reading
+   those files (Step 1, *Scan the roster*) and apply the rule in **3.3**. A ticket with a
+   pinned `agent` skips the match entirely.
 3. **Subagents cannot ask the user.** `AskUserQuestion` works only in this session. Agents
    relay through `NEEDS INPUT:` and you ask on their behalf. This is also *why* a gate can
    never live inside a dispatched workflow.
@@ -127,19 +129,28 @@ to move it to `.guild/v4-archive/` yourself, and get a yes before moving anythin
 1. **Re-apply the schema.** `tursodb .guild/guild.db < "${CLAUDE_PLUGIN_ROOT}/schema.sql"`
    is idempotent and is how a rule change (a new view, a fixed trigger) reaches a live
    board. Tables are `IF NOT EXISTS`, so data survives.
-2. **Sync the roster.** Tickets name capabilities and the matcher can only see synced
-   members — **skipping this turns a good board into a wall of blocked tickets.** Read every
-   `agents/*.md` frontmatter (`name`, `model`, `capabilities`, `serial`, `description`) and
-   write the roster with the upsert / replace / retire / admit block in
-   `guild:warehouse` → `references/queries.md` §5. Then check what you just wrote:
+2. **Scan the roster.** The roster is not in the database — it is the frontmatter of every
+   subagent available to the user, and you read it fresh each session. **Skipping this
+   leaves you with no way to match a ticket.** Run:
 
-   ```sql
-   SELECT side, owner, capability FROM v_capability_unknown;
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py"
    ```
 
-   Any row is a tag outside the vocabulary: it inserts fine and then **matches nobody,
-   silently**. Report it rather than routing around it — the fix is a `capability_request`
-   or a corrected agent file.
+   It prints one line per member — `name | model | serial | capabilities` — gathered from
+   every place a subagent can live: this plugin's `agents/`, the project's `.claude/agents/`,
+   the user's `~/.claude/agents/`, and every other installed plugin's. **Keep that output
+   for the rest of the session**: it is what 3.3 matches against, and re-reading it is
+   cheaper than guessing.
+
+   The script prints a `WARN` line for any file it could not read a `name` from, and lists
+   agents that declare no `capabilities:` at all. An agent with no capabilities can still be
+   PINNED by name; it simply never wins a capability match. Report those rather than routing
+   around them — the fix is a line of frontmatter in the agent file.
+
+   **There is no vocabulary table and no sync step any more.** A capability is legal exactly
+   when some agent file declares it, so adding a member is writing its file — nothing to
+   INSERT, nothing to keep in step, and a new agent file works on the very next check-in.
 3. **Recover anything the last session left running.** The node is the authoritative half:
 
    ```sql
@@ -181,7 +192,6 @@ SELECT fact, value FROM v_brief;
 SELECT * FROM v_goal_progress;
 SELECT id, requirement_id, who, minutes, title FROM v_in_flight;
 SELECT id, requirement_id, status, who, reason, title FROM v_blocked_tasks;
-SELECT id, capability, requirement_id, proposed_agent, covered_by, rationale FROM v_roster_gaps;
 SELECT id, severity, status, found_by, requirement_id, title FROM v_open_bugs;
 SELECT id, who, waived, reason, title FROM v_failed_tasks;
 SELECT id, task_id, reviewer, severity, disposition, file, line, summary FROM v_open_findings;
@@ -202,9 +212,10 @@ SELECT json_object('ts', ts, 'actor', actor, 'verb', verb, 'type', subject_type,
   takes minutes is a crashed dispatch, not work in progress; say so;
 - the risks, worst first: open bugs (name every `critical` one), unresolved failed tasks with
   the reason from `v_failed_tasks.reason`, review findings with `file:line`;
-- **anything in `v_blocked_tasks` or `v_roster_gaps`, by name.** Neither resolves on its own
-  and neither will ever be handed out. If `bounties_open` is 0 and `bounties_stuck` is not,
-  that **is** the headline;
+- **anything in `v_blocked_tasks`, by name.** It never resolves on its own and it will never
+  be handed out. A `status-blocked` row is a gap in the roster and its `who` names the
+  capability that would fill it — that is the agent file somebody needs to write. If
+  `bounties_open` is 0 and `bounties_stuck` is not, that **is** the headline;
 - **what is waiting on the guild master** — every `v_gates_pending` row is a decision that
   cannot progress without them. Name it. **`v_plans_pending_approval` belongs in the same
   breath**: a drafted plan nobody has ruled on blocks every ticket under it, and a row there
@@ -249,11 +260,11 @@ graph what is runnable — **this is the segment query, and it mutates nothing**
 SELECT json_object('node', n.id, 'key', n.node_key, 'kind', n.kind,
                    'group', n.parallel_group,
                    'task', COALESCE(n.task_id, ''),
-                   'agent', COALESCE((SELECT m.agent FROM v_task_top_agent m
-                                       WHERE m.task_id = n.task_id), ''),
-                   'serial', COALESCE((SELECT a.serial FROM agent a WHERE a.name =
-                                        (SELECT m.agent FROM v_task_top_agent m
-                                          WHERE m.task_id = n.task_id)), 0),
+                   'pin', COALESCE((SELECT t.agent FROM task t WHERE t.id = n.task_id), ''),
+                   'needs', COALESCE((SELECT group_concat(c.capability, '+')
+                                        FROM (SELECT capability FROM task_capability
+                                               WHERE task_id = n.task_id AND required = 1
+                                               ORDER BY capability) c), ''),
                    'gate', COALESCE(n.gate_status, ''), 'gate_kind', COALESCE(n.gate_kind, ''),
                    'prompt', COALESCE(n.gate_prompt, ''))
   FROM v_ready_nodes n
@@ -342,21 +353,57 @@ For each node in the batch:
 - **Unbound and no bounty for it** → the node is an **anchor** for a fanout that has not
   happened yet. See *Anchors* below.
 
-**Never dispatch straight from `v_open_bounties`.** It answers "who could take this ticket",
-not "may this run yet". **The graph is the ordering; the bounty board and the matcher only
-name the member.**
+**Never dispatch straight from `v_open_bounties`.** It answers "does this ticket ask for
+somebody", not "may this run yet". **The graph is the ordering; the bounty board only says
+the ticket is ready to be matched.**
 
-**2. Resolve the member.** The segment query's `agent` is already rank 1, from the same view
-`v_agent_match` ranks with. For a ticket you just found yourself:
+**2. Resolve the member — YOU run the match.** The segment query gives you two facts per
+ticket: `pin` and `needs`. Apply them against the roster you scanned in Step 1, in this
+order, and stop at the first that answers:
+
+| | condition | what you do |
+|---|---|---|
+| **pin** | `pin` is non-empty | Dispatch that member. **Do not run the capability match** — a pin is a decision the architect already made, and it wins even when the member covers none of the ticket's capabilities. |
+| **capability** | `pin` empty, `needs` non-empty | ELIGIBLE = every roster member whose `capabilities` are a **superset** of `needs`. Rank the eligible and take the first. |
+| **nobody** | no pin, and nothing eligible | → **3.8**. Never improvise a substitute. |
+
+**The ranking, in order, and every key earns its place:**
+
+1. **most PREFERRED capabilities covered, DESC.** Preferred rows are `required = 0` in
+   `task_capability`. They never make anyone eligible or ineligible — they only break ties.
+2. **FEWEST declared capabilities, ASC.** A specialist beats a generalist. This is why the
+   sort is ascending on a number that looks like it should descend.
+3. **name ASC.** Not a tiebreak of convenience — it is what makes the answer
+   **deterministic**, which is the property that lets you dispatch rank 1 without exercising
+   judgment. Two check-ins on the same board must pick the same member.
+
+For a ticket you found yourself rather than through the segment query:
 
 ```sql
-SELECT agent FROM v_task_top_agent WHERE task_id = 'TASK-NNN';   -- '' means nobody
-SELECT task_id, agent, source, preferred_covered, preferred_total, capabilities
-  FROM v_agent_match WHERE task_id = 'TASK-NNN'
- ORDER BY branch, preferred_covered DESC, capabilities ASC, agent ASC;
+SELECT COALESCE(t.agent, '') AS pin,
+       COALESCE((SELECT group_concat(c.capability || ':' || c.required, ' ')
+                   FROM (SELECT capability, required FROM task_capability
+                          WHERE task_id = t.id ORDER BY required DESC, capability) c), '') AS caps
+  FROM task t WHERE t.id = 'TASK-NNN';
 ```
 
-`''` or no rows → nobody on the roster can take it → **3.8**. Never improvise a substitute.
+`caps` prints each tag with its `required` flag, so `implement:1 svelte:1 frontend:0` reads
+as "must have implement and svelte, prefers frontend".
+
+Then let the scanner do the superset test and the last two ranking keys for you:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers implement,svelte
+```
+
+It prints only members covering **all** of those, already ordered specialist-first then by
+name. **No output means no eligible member** → 3.8. When more than one row comes back and the
+ticket has preferred capabilities, apply key 1 yourself over those rows — the script cannot
+see the ticket.
+
+**A required capability no roster member declares is the whole point of declaring it.** Do
+not soften the superset test, and do not treat a near-miss as a match: the ticket goes to
+3.8 and the board says which word nobody has.
 
 **There is no reviewer special case.** The `review` node **is** four nodes, one per named
 reviewer, and the node id says which: `REQ-007/review.reviewer-security` dispatches
@@ -619,8 +666,8 @@ SELECT member_id, member_status, member_title FROM v_batch WHERE task_id = 'TASK
 
 **Use it only when the requirement has no `graph_node` rows, and say so out loud.**
 `v_next_task` applies the review gate but deliberately ignores dependencies and eligibility,
-so check `v_open_bounties` before dispatching. Dispatch by `v_task_top_agent` exactly as in
-3.3, and skip 3.5 — there is no gate on a graph-less requirement, so a review report goes to
+so check `v_open_bounties` before dispatching. Resolve the member with the pin/capability
+rule in 3.3, and skip 3.5 — there is no gate on a graph-less requirement, so a review report goes to
 the user directly.
 
 **Offer the fix once**: only the architect should decide a graph's shape, so hand the
@@ -628,14 +675,18 @@ requirement back to `guild:new-requirement` rather than instantiating one yourse
 
 ### 3.8 No eligible agent — block it, loudly
 
-When `v_task_top_agent` returns `''` and the ticket declared capabilities, no member covers
-it. That is a **roster gap** and it should be loud. Reading never blocks a ticket; blocking is
-a decision, so it is a write you make on purpose:
+When the match in 3.3 comes back empty — the ticket declared capabilities, has no pin, and no
+roster member's `capabilities` cover its required set — that is a **gap in the roster** and it
+should be loud.
+
+**This write is the ONLY thing that makes the gap visible.** The database cannot see the agent
+files, so no view can derive "nobody covers this": `v_open_bounties` will keep offering the
+ticket every check-in until you write it down. Reading never blocks a ticket; blocking is a
+decision, so it is a write you make on purpose:
 
 ```sql
 UPDATE task SET status = 'blocked'
  WHERE id = 'TASK-005' AND status = 'todo'
-   AND NOT EXISTS (SELECT 1 FROM v_agent_eligible e WHERE e.task_id = 'TASK-005')
    AND COALESCE(agent, '') = ''
 RETURNING id, status;
 
@@ -648,22 +699,27 @@ RETURNING id, status;
 ```
 
 **Tell the user now, do not batch it into the wrap-up.** Name the ticket, the missing
-capabilities (`v_blocked_tasks.reason` spells them: `no-eligible-agent:implement,rust`), and
-the one thing that fixes it:
+capabilities (`v_blocked_tasks.who` spells them: `needs:implement+rust`), and the one thing
+that fixes it:
 
 ```
-TASK-005 "Port the codec to Rust" is blocked: no guild member has [implement, rust].
-Nothing will pick it up until the roster covers it. Run /guild:new-requirement to
-recruit for it, or reassign the work.
+TASK-005 "Port the codec to Rust" is blocked: no subagent available to you declares
+[implement, rust]. Nothing will pick it up until one does. Adding an agent file with
+`capabilities: [implement, rust]` to .claude/agents/ is the whole fix — or reassign
+the work by pinning a member you accept.
 ```
+
+**Say which capability is missing, not just that the match failed.** The word is the agent
+file somebody needs to write, and it is the only actionable half of the report.
 
 Then continue the loop. `blocked` means exactly one thing — **no guild member can take this
 bounty** — never "waiting on a person or a decision". It holds the review gate and keeps its
 requirement open at 3.6, both deliberately. **Never substitute a member you think is close
 enough**; if the user wants a generalist to take it anyway, that is their call, out loud.
 
-**Unblocking**: once an agent file is added and the roster synced, `UPDATE task SET status =
-'todo'`, `UPDATE graph_node SET status = 'pending'`, then confirm with `v_task_top_agent`.
+**Unblocking**: the moment an agent file declaring the capability exists, the gap is closed —
+there is nothing to sync. Re-run the roster scan, confirm the new member covers the required
+set, then `UPDATE task SET status = 'todo'` and `UPDATE graph_node SET status = 'pending'`.
 
 ### 3.9 CHANGELOG maintenance
 
@@ -700,8 +756,9 @@ Next check-in, I'll continue with:
 
 - **Gates awaiting you** — `SELECT * FROM v_gates_pending`. The only thing on the board that
   cannot move without the user; it belongs at the top of the wrap-up, not the bottom.
-- **Blocked work and roster gaps** — `v_blocked_tasks`, `v_roster_gaps`. Neither resolves on
-  its own.
+- **Blocked work** — `v_blocked_tasks`. It never resolves on its own, and a `status-blocked`
+  row whose `who` reads `needs:…` is a roster gap: that is an agent file waiting to be
+  written.
 - **Nodes left `failed` or `running`** — a `running` node with no live agent is a crash site
   and it holds everything behind it.
 
@@ -745,19 +802,23 @@ Your own account of what you wrote is not evidence; the board is.
 7. **There is no reviewer fan-out to perform.** The `review` node *is* four nodes; the member
    is the suffix of the node id.
 8. **Read the view, do not re-derive the rule.** `v_next_task`, `v_ready_nodes`,
-   `v_task_actionable`, `v_agent_match`, `v_brief` each hold ONE definition. A second
-   spelling is a second answer, and both look right.
+   `v_task_actionable`, `v_brief` each hold ONE definition. A second spelling is a second
+   answer, and both look right. **The match is the exception and the only one**: it is not a
+   view because the roster is not in the database, so the ONE definition of it is the table
+   in 3.3. Follow it literally rather than judging who seems suitable.
 9. **Serial members are never concurrent**, and a batch that would hold two is a stop-and-
    report, not something you quietly serialize.
 10. **Subagents can't ask the user.** Every agent relays through `NEEDS INPUT:`; you ask, then
     `SendMessage` the answers back. This is also why a gate can never live inside a dispatched
     workflow.
-11. **A ticket names a capability; the matcher names the member.** Dispatch rank 1 when
-    `agent` is empty, honor the pin when it is set, never invent a member for a ticket nobody
-    matched.
-12. **`blocked` means "no guild member can take this bounty" and nothing else.** Written only
-    by you, only after the match came back empty, reported the moment it happens. Recruiting
-    is the fix.
+11. **A ticket names a capability; YOU name the member.** Honor the pin when it is set,
+    otherwise run the 3.3 match against the roster you scanned this session and dispatch
+    rank 1. Never invent a member for a ticket nothing matched, and never widen the superset
+    test to make one fit.
+12. **`blocked` means "no subagent available can take this bounty" and nothing else.**
+    Written only by you, only after the match came back empty, reported the moment it
+    happens. **No view can derive it** — if you skip the write, the ticket silently comes
+    back next check-in. Writing an agent file is the fix.
 13. **You never write an `agents/*.md` file.** Creating a guild member happens in
     `guild:new-requirement`, on an explicit answer from the user, and nowhere else.
 14. **Guard every mutation and read the `RETURNING`.** A failing statement does not stop a
