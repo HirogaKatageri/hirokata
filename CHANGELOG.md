@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Documentation
+- **Every plugin README and CHANGELOG audited against what actually ships.** Findings and fixes:
+  - **The install instructions pointed at a repository that does not exist.** The root README told
+    users to `/plugin marketplace add hirogakatageri/hirokata-cc-marketplace` and to
+    `git clone …/hirokata-cc-marketplace.git`, in six places. The repository is
+    `HirogaKatageri/hirokata`. Section 1.b's "copy plugins into `.claude-plugin/`" procedure was
+    replaced with adding the clone as a local marketplace, which is the path the repo's own
+    `marketplace.json` supports.
+  - **The root README's version badge read 2.3.0**; `marketplace.json` says `6.0.0`. It now carries
+    a plugin/version table instead of one number that has to be remembered.
+  - **The guild plugin had no CHANGELOG.** It has one now —
+    [`plugins/guild/CHANGELOG.md`](plugins/guild/CHANGELOG.md) — reconstructed from this file and
+    the git history, covering 1.0.0 through 7.0.0. Six versions (1.6.2, 1.8.0, 1.8.1, 1.8.2, 3.0.0,
+    3.3.0) had never been written up anywhere and were recovered from their release commits. The
+    guild also had no `LICENSE` file despite its README claiming MIT; the root MIT license was
+    copied in.
+  - **The guild README still described v6.2.** `schema.sql` was listed as *24 tables, 29 views, 45
+    triggers* — the real numbers are **21 / 23 / 40**, confirmed by applying the file to a fresh
+    database. Invariant G5 was named *roster integrity* (v7 renamed it *ticket routing*), three
+    passages described a roster that syncs into the database and a capability gap surfacing in the
+    brief's *Roster Gaps* (v7 deleted `v_roster_gaps` — a gap is now `v_blocked_tasks` with
+    `reason = 'status-blocked'`), and the upgrade section documented only migration 006, reading
+    `schema_version` as `5 → 6`.
+  - **`docs/expectations.md` §8.c asserted a fact that no longer exists.**
+    `SELECT value FROM v_brief WHERE fact = 'roster_gaps'` cannot return a row — `v_brief` has no
+    such fact since v7 — and `COUNT(*) FROM v_brief` was stated as `23`, a v6.1 number that v6.2
+    took to 27 and v7 left at **25**. Corrected against a live schema apply. This one matters more
+    than a README line: `guild:validate` runs these assertions.
+  - **The software plugin's README documented a plugin that was deleted in v1.0.5** — the
+    `/software:develop-project` command, the `comprehensive-review` and `generate-requirements`
+    skills, and all eight agents — plus an embedded "Changelog" section frozen at 0.5.0 that
+    contradicted its own `CHANGELOG.md`. Rewritten for the three skills that ship. Its CHANGELOG
+    had no **1.0.5** entry at all despite `plugin.json` carrying that version; the entry is written,
+    and the file's title no longer says "Develop Plugin".
+  - **The software plugin's marketplace description advertised removed features** ("automated
+    planning, adaptive parallel execution … comprehensive requirements documentation"). Replaced
+    with what the three skills do.
+  - **The guild's description ended "v6 is a fresh rewrite"** while shipping 7.0.0; now "the v6/v7
+    line".
+  - **The root README's guild skill table listed 12 of 22 skills** — `guild:shift`,
+    `guild:validate` and `guild:warehouse` were missing, and the agent-facing skills were
+    unmentioned. It also still offered to place a requirement on a **phase**, renamed to *project*
+    in guild v6.2, and described "what the CLI would hand out next" three versions after the CLI
+    was deleted.
+  - **Research and storytelling were audited and found accurate** — every skill, agent and model in
+    both READMEs matches the files on disk. Both gained a License/Author footer for consistency
+    with the other two plugins.
+
+- **Not fixed, and deliberately left for a decision.** This block has absorbed every marketplace
+  version from **3.0.0 through 6.0.0** without ever being cut into dated release headers — the last
+  one is `[2.7.0] - 2026-06-04` — and the repository has **no git tags at all**, so no version here
+  corresponds to a tagged release. Splitting it needs release dates that only the author can
+  assign.
+
 ### Removed
 - **Guild CLI — `plugins/guild/scripts/` deleted entirely (BREAKING).** 24 files, 34,182 lines: the `guild` dispatcher, all 17 `lib/` modules, the 8,918-line `test-guild.sh` harness, `dashboard.tmpl.html` and `scripts/README.md`. `plugins/guild/templates/*.yaml` went too — the execution templates are knowledge now, at `skills/warehouse/references/templates/*.md`. **Every `guild <verb>` invocation is gone**; nothing replaces the command surface, because the replacement is SQL.
 - **Project Management Plugin** — removed `plugins/project-management` and its marketplace/README entries
@@ -439,4 +493,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **0.0.1 → 0.1.0**: No breaking changes, documentation improvements
 
 ## See Also
+- [Guild Plugin Changelog](plugins/guild/CHANGELOG.md)
 - [Software Plugin Changelog](plugins/software-project/CHANGELOG.md)
+- [Research Plugin Changelog](plugins/research/CHANGELOG.md)
+- [Storytelling Plugin Changelog](plugins/storytelling/CHANGELOG.md)

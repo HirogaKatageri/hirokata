@@ -1722,18 +1722,26 @@ around the triggers.
 **§8.c — the views still answer on a cleared board.** *Verified* on the cleared `messy`:
 
 ```
-SELECT COUNT(*) FROM v_brief;                    -- 23
+SELECT COUNT(*) FROM v_brief;                    -- 25
 SELECT value FROM v_brief WHERE fact = 'next';   -- none
-SELECT value FROM v_brief WHERE fact = 'tasks_todo';    -- 0
-SELECT value FROM v_brief WHERE fact = 'coverage_due';  -- 2
-SELECT value FROM v_brief WHERE fact = 'roster_gaps';   -- 0
+SELECT value FROM v_brief WHERE fact = 'tasks_todo';       -- 0
+SELECT value FROM v_brief WHERE fact = 'tasks_blocked';    -- 0
+SELECT value FROM v_brief WHERE fact = 'coverage_due';     -- 2
 ```
 
-**`coverage_due` is 2 and `roster_gaps` is 0 on a freshly cleared board, and both are correct.**
-The coverage map describes the *product*, which did not go away; the capability requests were
-board rows and went with the board. A member that reads the first as a bug — or that "tidies up"
-by deleting the coverage rows to make the brief quiet — has destroyed the QA discipline's memory
-to fix a number that was telling the truth.
+**`v_brief` is an unconditional `UNION ALL` of 25 facts**, so the count is 25 on every board,
+cleared or not — it is asserting that the view still *answers*, not that it is empty. (This line
+read `23` from v6.1 and was never restated: v6.2 took it to 27, and v7 dropped `roster_gaps` and
+`capability_unknown` to leave 25.)
+
+**`coverage_due` is 2 on a freshly cleared board, and that is correct.** The coverage map describes
+the *product*, which did not go away. A member that reads it as a bug — or that "tidies up" by
+deleting the coverage rows to make the brief quiet — has destroyed the QA discipline's memory to
+fix a number that was telling the truth.
+
+**`roster_gaps` is gone, not zero.** It counted open `capability_request` rows, and v7 dropped the
+table along with `v_roster_gaps`. A ticket nobody covers is now `tasks_blocked`, and the detail is
+`SELECT id, who FROM v_blocked_tasks WHERE reason = 'status-blocked'`.
 
 **§8.d — the event purge, only if asked a second time.** After Step 5:
 

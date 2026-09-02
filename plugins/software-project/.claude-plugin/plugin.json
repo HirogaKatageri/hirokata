@@ -1,7 +1,7 @@
 {
   "name": "software",
   "version": "1.0.5",
-  "description": "A requirements to implementation workflow for software development projects with a breakdown of implementation into phases.",
+  "description": "Three focused skills for planning and committing software work: an 8-phase clean architecture vocabulary for classifying tasks (categorize-task), a planner that splits a master plan into per-phase plan files organized by feature track with complexity scores (split-plan), and an interactive Conventional Commits generator that groups your changes and writes the messages (conventional-commit). The orchestration half of this plugin moved to the guild plugin in v1.0.5.",
   "author": {
     "name": "Gian Patrick Quintana",
     "email": "gian.quintana@hirokata.dev"

@@ -1,9 +1,47 @@
 # Changelog
 
-All notable changes to the Develop Plugin will be documented in this file.
+All notable changes to the Software Plugin will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+> Entries before 1.0.5 describe a plugin that also ran an orchestration workflow. That half moved
+> to the Guild plugin — see [1.0.5](#105---2026-04-12). They are kept as the record of how the
+> phase model and the workflow were reasoned out.
+
+## [Unreleased]
+
+### Changed
+- **README rewritten to match what ships.** It still documented the `/software:develop-project`
+  command, the `comprehensive-review` and `generate-requirements` skills and all eight agents —
+  every one of them deleted in 1.0.5 — and carried an embedded "Changelog" section stuck at 0.5.0
+  that contradicted this file. The README now covers the three skills that exist, marks
+  `split-plan` and `categorize-task` as `user-invocable: false` reference skills rather than
+  commands, records the actual `split-plan` output path
+  (`tasks/{base-name}/plans/{base-name}-{NN}-{phase}.md`), and points at the guild plugin for the
+  orchestration that left.
+
+## [1.0.5] - 2026-04-12
+
+### Removed
+- **The orchestration half of the plugin (BREAKING).** Eight agents and three skills were duplicates
+  of what the Guild plugin already does against a persistent board, so they were consolidated there
+  rather than maintained twice.
+  - Skills: `develop-project` (the 6-step requirements-to-implementation workflow),
+    `generate-requirements`, and `comprehensive-review` with its references and examples.
+  - Agents: `software-architect`, `product-owner`, `senior-developer`, `product-reviewer`,
+    `code-reviewer-business-logic`, `code-reviewer-edge-case`, `code-reviewer-architecture`,
+    `code-reviewer-security`.
+  - **`comprehensive-review` and `product-reviewer` were moved, not dropped** — they live in the
+    guild plugin now. The other seven agents have guild equivalents under different names
+    (`architect`, `product-owner`, `developer`, `reviewer-*`).
+  - **There is no migration.** `/software:develop-project` is gone and nothing in this plugin
+    replaces it; the workflow is `guild:check-in`.
+
+### Retained
+- `conventional-commit`, `split-plan` and `categorize-task` — the parts with no guild equivalent.
+  The 8-phase model, feature tracks and complexity scoring survive here as the vocabulary those
+  skills share.
 
 ## [1.0.4] - 2026-04-12
 

@@ -1,6 +1,13 @@
 # HiroKata Claude Code Plugin Marketplace
 
-A curated collection of Claude Code plugins for enhanced development workflows. **Version 2.3.0** — [View Changelog](CHANGELOG.md)
+A curated collection of Claude Code plugins for enhanced development workflows. **Version 6.0.0** — [View Changelog](CHANGELOG.md)
+
+| Plugin | Version | What it is |
+|--------|---------|------------|
+| [**guild**](plugins/guild) | 7.0.0 | Continuous agent orchestration on a SQLite board whose rules live in the schema |
+| [**software**](plugins/software-project) | 1.0.5 | Task classification by clean-architecture phase, plan splitting, conventional commits |
+| [**research**](plugins/research) | 1.0.0 | Multi-perspective deep research, after Stanford's STORM method |
+| [**storytelling**](plugins/storytelling) | 1.0.0 | Six storytelling frameworks for making a message land |
 
 ---
 
@@ -18,10 +25,10 @@ Run this inside a Claude Code session or from the CLI:
 
 ```bash
 # Inside Claude Code
-/plugin marketplace add hirogakatageri/hirokata-cc-marketplace
+/plugin marketplace add HirogaKatageri/hirokata
 
 # Or from the terminal
-claude plugin marketplace add hirogakatageri/hirokata-cc-marketplace
+claude plugin marketplace add HirogaKatageri/hirokata
 ```
 
 **Step 2 — Install plugins**
@@ -46,41 +53,34 @@ Pull the latest versions at any time:
 
 > **For teams:** Add the marketplace at project scope so it is shared automatically via `.claude/settings.json`:
 > ```bash
-> claude plugin marketplace add hirogakatageri/hirokata-cc-marketplace --scope project
+> claude plugin marketplace add HirogaKatageri/hirokata --scope project
 > ```
 
-### 1.b. Cloning the Repository and Copying a Plugin
+### 1.b. Installing From a Local Clone
 
-For offline environments or when you want to vendor plugins directly into your project, clone the repo and copy plugin directories manually.
+For offline environments, or when you want to modify a plugin before using it, clone the repo and point Claude Code at your copy. The clone is itself a marketplace — `.claude-plugin/marketplace.json` is at its root — so the same install flow works against a path.
 
 **Step 1 — Clone the marketplace**
 
 ```bash
-git clone https://github.com/hirogakatageri/hirokata-cc-marketplace.git
+git clone https://github.com/HirogaKatageri/hirokata.git
 ```
 
-**Step 2 — Copy plugins into your project**
-
-Claude Code automatically discovers and loads every plugin in your project's `.claude-plugin/` directory.
+**Step 2 — Add the clone as a marketplace and install from it**
 
 ```bash
-# Guild plugin
-cp -r hirokata-cc-marketplace/plugins/guild /path/to/your-project/.claude-plugin/guild
+# Inside Claude Code
+/plugin marketplace add ./hirokata
+/plugin install guild@hirokata
 
-# Software plugin
-cp -r hirokata-cc-marketplace/plugins/software-project /path/to/your-project/.claude-plugin/software
+# Or from the terminal
+claude plugin marketplace add ./hirokata
+claude plugin install guild@hirokata
 ```
 
-Your project will look like this:
+Add `--scope project` to the `marketplace add` if you want the path recorded in the project's `.claude/settings.json` so teammates pick it up — in which case use a path everyone will have, or keep the GitHub form from 1.a instead.
 
-```
-your-project/
-└── .claude-plugin/
-    ├── guild/       # Loaded automatically on every session
-    └── software/    # Loaded automatically on every session
-```
-
-> **Tip:** Commit `.claude-plugin/` to your repo so every team member gets the same plugins without any setup.
+Edits you make in the clone reach your sessions the same way an upstream change does: re-run `/plugin marketplace update hirokata`.
 
 **Verify the plugins loaded** by trying a trigger phrase after starting Claude Code:
 
@@ -112,7 +112,7 @@ guild:new-requirement — live 3-way interview (product-owner + architect + you)
     → 4 reviewers in parallel → a review report you act on
 ```
 
-**v6 is a fresh rewrite, and its status is worth reading before you trust it.** The v5 CLI it replaces had four adversarial review rounds and a 2,278-check suite; that code is deleted and none of that assurance carries over. v6 ships with no tests, by design. See the *Status* section in `plugins/guild/README.md`.
+**The v6/v7 line is a fresh rewrite, and its status is worth reading before you trust it.** The v5 CLI it replaced had four adversarial review rounds and a 2,278-check suite; that code is deleted and none of that assurance carries over. It ships with no tests, by design. See the *Status* section in `plugins/guild/README.md`.
 
 **Upgrading an existing board?** `CREATE TABLE IF NOT EXISTS` cannot rename or drop a table, so a live `.guild/guild.db` needs the migrations run once each, in order, with `schema.sql` re-applied at the end. Check `SELECT version FROM schema_version` first and run only the ones above it:
 
@@ -180,7 +180,9 @@ I need a feature: dark mode toggle for the settings page
 
 `guild:new-requirement` runs a **live 3-way interview**: the `product-owner` and the `architect` are spawned directly (not queued as tickets), both relay their questions through the orchestrator, and by the time the skill returns the requirement, the implementation plan and every developer / test-planner / reviewer ticket already exist on the board. You do not write the requirement document manually.
 
-Between the two, the guild offers to place the requirement on a **phase** — an existing one, a new phase, a new goal *and* its first phase, or left unaffiliated. Direction is yours to set: no agent creates a goal or a phase on its own.
+Between the two, the guild offers to place the requirement on a **project** — an existing one, a new project, a new goal *and* its first project, or left unaffiliated. A project can be marked `concurrent` (it runs beside its siblings instead of waiting its turn) and can be cut into its own git worktree. Direction is yours to set: no agent creates a goal or a project on its own.
+
+> `project` was called `phase` through guild v6.1. If you see `PHASE-NNN` anywhere, that board predates the rename — run the migrations above.
 
 > Multiple requirements can be queued. Each is fully planned at the moment it is filed, so the board only ever holds work that is ready to run.
 
@@ -192,7 +194,7 @@ Between the two, the guild offers to place the requirement on a **phase** — an
 check in
 ```
 
-It opens with the **brief** — direction, what is in flight and for how long, open bugs, quality areas due for inspection, what moved since last time, and what the CLI would hand out next:
+It opens with the **brief** — direction, what is in flight and for how long, open bugs, quality areas due for inspection, what moved since last time, and what `v_next_task` says goes out next:
 
 ```
 Guild Brief
@@ -241,6 +243,7 @@ The dashboard is one self-contained file — all CSS and JS inline, deterministi
 | Skill | What it does | Trigger Phrases |
 |-------|-------------|----------------|
 | `guild:check-in` | Start or resume a work session, open with the brief, drive the work cycle | "check in", "clock in", "let's get to work", "I'm here" |
+| `guild:shift` | `check-in` with you taken out of the middle — runs unattended to the next gate, then stops and says why. Never decides a gate | "work a shift", "run unattended" |
 | `guild:brief` | The narrated read of the board — direction, in flight, bugs, what moved, what's next. Read-only | "guild status", "what's the status", "show the board", "where are we", "what changed" |
 | `guild:dashboard` | Build and open `.guild/dashboard.html` — six views, offline, self-contained | "the dashboard", "show the roadmap", "visualize the board", "the activity feed" |
 | `guild:new-requirement` | Live 3-way interview (product-owner + architect + you) that leaves a planned, ticketed requirement on the board | "new requirement", "I need a feature", "I want to build" |
@@ -251,7 +254,11 @@ The dashboard is one self-contained file — all CSS and JS inline, deterministi
 | `guild:discuss` | Summarize conversation context and facilitate focused topic discussions | "discuss", "let's discuss", "discuss [topic]", "summarize the context", "what are we working on" |
 | `guild:release` | Stamp CHANGELOG, snapshot completed requirements from the export, create git tag | "cut a release", "ship it", "tag a version" |
 | `guild:verify-and-fix` | Diagnose an error end-to-end and apply a test-driven fix | "check this error", "I have a bug", "debug this", "this is broken" |
+| `guild:validate` | Run `docs/expectations.md` against the live board — nine global invariants, or one process's postconditions. Read-only | "validate the guild", "check the board is coherent" |
+| `guild:warehouse` | The reference every guild member loads before touching board data — the connection recipe, the six rules, and the canonical queries | loaded by agents, not typed |
 | `guild:guild-status` | Deprecated alias for `guild:brief`; claims no trigger phrases | typed `/guild:guild-status` only |
+
+Agent-facing skills that specialists pre-load rather than users invoking: `guild:qa-mindset`, `guild:qa-artifacts`, the four `guild:svelte-*` reference skills, and `guild:svelte-env-vars-check`.
 
 ### Agents
 
