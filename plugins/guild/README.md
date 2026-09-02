@@ -8,9 +8,10 @@ There is no guild CLI. `tursodb` is already a tool that executes SQL, so the gui
 second one. Every member reaches the board the same way: they load the `guild:warehouse` skill and
 write SQL.
 
-> **v6 is a fresh rewrite.** The v5 CLI it replaces had four adversarial review rounds and a
-> 2,278-check suite behind it. **None of that confidence carries over**, because none of that code
-> exists any more. Read [Status](#status-what-is-verified-and-what-is-not) before you trust this.
+> **The v6 line is a fresh rewrite, and v7 builds on it.** The v5 CLI it replaced had four
+> adversarial review rounds and a 2,278-check suite behind it. **None of that confidence carries
+> over**, because none of that code exists any more. Read
+> [Status](#status-what-is-verified-and-what-is-not) before you trust this.
 
 ---
 
@@ -126,7 +127,7 @@ CHECK constraints. A board that wants them has to rebuild.
 ### 3. Check in
 
 Say **"check in"**. The orchestrator does the rest — it creates `.guild/config.yaml` if it is
-missing, syncs the roster from the agent files, and opens with the brief.
+missing, reads the roster straight from the agent files, and opens with the brief.
 
 ### Storage modes
 
@@ -293,8 +294,19 @@ to first.
 | `qa-tester` | Sonnet | `qa-execution`, `test-authoring`, `e2e` | **`serial: true`** — runs the product and authors e2e specs; Playwright collides on ports, so two may never run concurrently. |
 
 **Hiring is adding a file.** Write `agents/<name>.md` with `name`, `model`, `capabilities` and
-`serial` in the frontmatter, then check in — the roster sync picks it up. A capability the roster
-lacks surfaces in the brief's *Roster Gaps*.
+`serial` in the frontmatter, then check in — the dispatcher reads it on the next scan. **There is
+nothing to sync.**
+
+A capability nobody declares does not surface on its own: the ticket sits in `v_open_bounties`
+once, and then the dispatcher has to write `status = 'blocked'`. No view derives that, so skipping
+the write leaves a board on which nothing knows there is a gap — and a shift will re-pick the same
+ticket all night. Read the gaps with:
+
+```sql
+SELECT id, who FROM v_blocked_tasks WHERE reason = 'status-blocked';
+```
+
+Each `needs:…` in `who` names the agent file somebody has to write.
 
 **Agents write to the board themselves now.** In v5 they reported through a spool and the
 orchestrator drained it. There is no spool and no drain; a member loads `guild:warehouse` and writes
@@ -310,7 +322,7 @@ The plugin:
 
 ```
 plugins/guild/
-├── schema.sql              # THE TOOL. 24 tables, 29 views, 45 triggers, and the guild's rules
+├── schema.sql              # THE TOOL. 21 tables, 23 views, 40 triggers, and the guild's rules
 ├── migrations/             # one-shot upgrades for what IF NOT EXISTS cannot reach —
 │                           # renamed tables and new columns. Run, then re-apply schema.sql
 ├── agents/                 # 14 roster members; frontmatter is the roster source
@@ -319,11 +331,14 @@ plugins/guild/
 │   │   └── references/     # schema.md, queries.md, tursodb-gotchas.md, templates/
 │   ├── validate/           # runs the expectations against the live board
 │   └── …                   # check-in, shift, brief, dashboard, new-requirement, qa, …
-└── docs/
-    ├── v6-architecture.md        # the current design — start here
-    ├── expectations.md           # THE SPEC a member's work is checked against
-    ├── expectations-fixtures.md  # the six known board states it is checked on
-    └── v5-design.md              # historical; the data model and rules are still in force
+├── docs/
+│   ├── v6-architecture.md        # the current design — start here
+│   ├── expectations.md           # THE SPEC a member's work is checked against
+│   ├── expectations-fixtures.md  # the six known board states it is checked on
+│   └── v5-design.md              # historical; the data model and rules are still in force
+├── CHANGELOG.md
+├── LICENSE
+└── README.md
 ```
 
 The board, in your repository:
@@ -359,7 +374,7 @@ expected result**:
 
 | | |
 |---|---|
-| **§3 — nine global invariants** | Hold at all times, whatever just ran: referential health, vocabulary, id shape, gate integrity, roster integrity, closure, event coverage, graph structure, concurrency. |
+| **§3 — nine global invariants** | Hold at all times, whatever just ran: referential health, vocabulary, id shape, gate integrity, ticket routing, closure, event coverage, graph structure, concurrency. |
 | **§4–§12 — one section per process** | Trigger, preconditions, expected sequence, postconditions, anti-expectations, and *cannot be asserted* — for `new-requirement`, `brief`, `dashboard`, `check-in`, `clear-board`, `release`, `guild-status`, `qa` and `shift`. |
 | **`expectations-fixtures.md`** | Six known board states — `empty`, `planned`, `in-flight`, `review-ready`, `messy`, `maintenance` — because an assertion run against an unknown state answers differently every time. |
 
@@ -382,22 +397,31 @@ a green check.
 
 ---
 
-## Upgrading a board from before v6.2
+## Upgrading a live board
 
-`project` was called `phase` until v6.2, and `CREATE TABLE IF NOT EXISTS` cannot rename a table — so
-re-applying `schema.sql` alone will land views and triggers on columns that are not there. Run the
-migration once, first:
+`CREATE TABLE IF NOT EXISTS` cannot rename a table, drop one, or add a column — so re-applying
+`schema.sql` alone lands views and triggers on columns that are not there. Check where the board
+stands first, then run only the migrations above it, in order, and re-apply the schema at the end:
 
 ```bash
 export PATH="$HOME/.turso:$PATH"
 cp .guild/guild.db .guild/guild.db.bak
-tursodb .guild/guild.db < migrations/006-project-and-plan-approval.sql
+tursodb .guild/guild.db "SELECT version FROM schema_version;"
+
+# run only the ones above the reported version, in order
+tursodb .guild/guild.db < migrations/006-project-and-plan-approval.sql   # → 6
+tursodb .guild/guild.db < migrations/007-roster-leaves-the-database.sql  # → 7
 tursodb .guild/guild.db < schema.sql
 ```
 
-`SELECT version FROM schema_version` reads `5` before and `6` after. The migration is **not**
-idempotent — a second run fails on `CREATE TABLE project`, which is the safe direction to fail. A
-fresh board needs none of this.
+| Migration | Takes a board to | What it does |
+|-----------|------------------|--------------|
+| **006** | 6 (v6.2) | Renames `phase` to `project`, rewrites `PHASE-NNN` ids, splits `plan.status` from `plan.approval`. |
+| **007** | 7 (v7.0) | Drops `agent`, `agent_capability` and `capability_request` and the six roster views; rebuilds `task` without the FK to `agent(name)`. |
+
+`schema.sql` seeds version **7**. **Neither migration is idempotent** — a second run of 006 fails on
+`CREATE TABLE project`, which is the safe direction to fail — and **order is not optional**. A fresh
+board needs none of this.
 
 ---
 
@@ -426,7 +450,12 @@ What *is* verified:
   a seeded v6.1 board with the views read back after it, all five fixtures load clean, every
   read-only guard in `docs/expectations.md` runs clean on the empty, messy and maintenance fixtures,
   and the `brief` and `dashboard` scripts were executed in full.
-  **The migration has been run against seeded boards only, never against a board with real history.**
+- **The v7 roster removal** was run end to end against a populated v6 board:
+  `migrations/007-roster-leaves-the-database.sql` followed by `schema.sql` lands **21 tables, 23
+  views, 40 triggers, `schema_version = 7`**, with data and history intact and
+  `PRAGMA integrity_check` clean.
+- **Both migrations have been run against seeded boards only, never against a board with real
+  history.**
 
 What is **not**:
 
@@ -442,15 +471,22 @@ What is **not**:
   unenforced conventions get quietly violated. The expectations are aimed squarely at those eight —
   but aiming at a failure is not the same as having caught one.
 
-Treat v6 as a well-reasoned design that has not yet met its first real requirement. The data model
-and the rules beneath it are inherited from a design that *was* scrutinized heavily — see
-`docs/v5-design.md` — but the expression of them here is new.
+Treat the v6/v7 line as a well-reasoned design that has not yet met its first real requirement. The
+data model and the rules beneath it are inherited from a design that *was* scrutinized heavily —
+see `docs/v5-design.md` — but the expression of them here is new.
+
+---
+
+## Version history
+
+See [CHANGELOG.md](CHANGELOG.md) for the guild's own history, and the
+[marketplace CHANGELOG](../../CHANGELOG.md) for the long-form rationale behind the v5–v7 entries.
 
 ---
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
 
 ## Author
 

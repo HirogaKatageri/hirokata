@@ -154,3 +154,17 @@ rigorous starting point, not a final authority.
 
 This plugin is an independent reimagining of the above as Claude Code skills and agents, not
 affiliated with or endorsed by either source.
+
+---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+## Author
+
+**Gian Patrick Quintana** — <gian.quintana@hirokata.dev> — [@HirogaKatageri](https://github.com/HirogaKatageri)

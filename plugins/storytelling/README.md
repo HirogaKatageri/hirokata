@@ -151,3 +151,17 @@ make your own, not a finished script to read verbatim.
 
 This plugin is an independent implementation of these publicly documented frameworks as Claude Code
 skills and agents, not affiliated with or endorsed by any of the above.
+
+---
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
+
+## License
+
+MIT — see [LICENSE](LICENSE).
+
+## Author
+
+**Gian Patrick Quintana** — <gian.quintana@hirokata.dev> — [@HirogaKatageri](https://github.com/HirogaKatageri)
