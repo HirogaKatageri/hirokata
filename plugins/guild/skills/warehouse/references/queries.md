@@ -214,9 +214,9 @@ RETURNING id;
 for everything sharing its `parallel_group`. Nothing verifies it. Pass `'[]'` for tickets that
 touch no bounded file set (test-plan, review).
 
-Leave `agent` NULL and declare capabilities instead — that is what lets the matcher work and
-what makes a roster gap visible. Set `agent` only when you mean to **pin** a specific member;
-a pin outranks the match and is never reported as a gap.
+Leave `agent` NULL and declare capabilities instead — that is what lets the dispatcher match
+and what makes a roster gap visible. Set `agent` only when you mean to **pin** a specific
+member; a pin skips the match entirely.
 
 ```sql
 -- required decides eligibility; required = 0 ("preferred") only decides rank
@@ -238,12 +238,15 @@ SELECT 'TASK-002', 'TASK-001'
 RETURNING task_id || ' after ' || depends_on;
 ```
 
-Check the words you used against the vocabulary before you walk away — an unknown capability
-inserts fine and then matches nobody, silently:
+Check the words you used before you walk away — an unknown capability inserts fine and then
+matches nobody, silently. **The check is not SQL**: the vocabulary is the agent files, so
+nothing in the database can audit it.
 
-```sql
-SELECT side, owner, capability FROM v_capability_unknown;
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers implement,frontend
 ```
+
+At least one row back is the answer you want, and the first row is who will get the ticket.
 
 ### Bug
 
@@ -424,7 +427,6 @@ SELECT id, task_id, requirement_id, reviewer, severity, disposition, file, line,
   FROM v_open_findings;
 SELECT id, severity, status, found_by, requirement_id, fix_task_id, title FROM v_open_bugs;
 SELECT id, risk, interval_days, days_since, spec_path, area FROM v_coverage_due;
-SELECT id, capability, requirement_id, proposed_agent, covered_by, rationale FROM v_roster_gaps;
 ```
 
 `v_next_task` returning nothing means "nothing to do" — it does **not** mean the board is
@@ -573,103 +575,71 @@ from it.
 
 ---
 
-## 5. The roster
+## 5. The roster — not in this database
 
-### Sync agent files into the roster
+**There is nothing to sync and no roster tables to write.** `agent`, `agent_capability` and
+`capability_request` were dropped in v7. Who the guild's members are, what each declares and
+whether one runs serially are facts about the agent FILES:
 
-One block per agent file, then one retirement sweep. Capabilities are **replaced, not
-merged** — the file is the declaration.
+```bash
+# every subagent available to the user: name | model | serial | scope | capabilities
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py"
 
-```sql
-INSERT INTO agent (name, model, description, active, serial)
-VALUES ('developer-svelte', 'sonnet', CAST(x'<hex-description>' AS TEXT), 1, 0)
-ON CONFLICT(name) DO UPDATE SET
-  model       = excluded.model,
-  description = excluded.description,
-  active      = 1,
-  serial      = excluded.serial
-RETURNING name;
-
-DELETE FROM agent_capability
- WHERE agent = 'developer-svelte'
-   AND capability NOT IN (SELECT value FROM json_each(
-         json_array('implement','frontend','svelte','sveltekit')));
-
-INSERT INTO agent_capability (agent, capability)
-SELECT 'developer-svelte', value
-  FROM json_each(json_array('implement','frontend','svelte','sveltekit'))
- WHERE EXISTS (SELECT 1 FROM agent WHERE name = 'developer-svelte')
-ON CONFLICT DO NOTHING;
+# just the members covering a ticket's REQUIRED set, already specialist-first
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers implement,svelte
 ```
 
-Then, with the full set of names that have files:
-
-```sql
--- RETIRE, never DELETE: a done task from months ago may still name this agent
-UPDATE agent SET active = 0
- WHERE active = 1
-   AND name NOT IN (SELECT value FROM json_each(
-         json_array('developer-svelte','developer','test-writer','qa-tester')))
-RETURNING name;
-
--- admission closes the gap that asked for it, so the board stops reporting it
-UPDATE capability_request SET status = 'created'
- WHERE status = 'open'
-   AND capability IN (SELECT ac.capability FROM agent_capability ac
-                        JOIN agent a ON a.name = ac.agent AND a.active = 1)
-RETURNING id, capability, status;
-```
-
-Never delete a `created` request — the row is what keeps the word in
-`v_capability_vocabulary`, so removing it un-admits the capability on the next sync.
+Adding a member is writing `agents/<name>.md` with `capabilities:` in its frontmatter. That
+is the whole recruitment — no INSERT, no vocabulary to admit the word to, and it works on the
+very next check-in. Retiring one is deleting or emptying that file; old tickets keep the name
+in `task.agent` and `task.claimed_by`, which are plain TEXT precisely so history survives.
 
 ### Match an agent to a task
 
-```sql
--- every candidate, ranked; RESTATE the ORDER BY, a view's ordering is not a contract
-SELECT task_id, agent, source, preferred_covered, preferred_total, capabilities, serial
-  FROM v_agent_match
- WHERE task_id = 'TASK-001'
- ORDER BY branch, preferred_covered DESC, capabilities ASC, agent ASC;
+The match is **not a view** — the database cannot see the agent files. The rule lives in
+check-in §3.3 and this is it:
 
--- just rank 1; '' means nobody is eligible
-SELECT agent FROM v_task_top_agent WHERE task_id = 'TASK-001';
-```
+1. `task.agent` set → dispatch that member, **do not run the match**.
+2. Otherwise ELIGIBLE = the member's declared capabilities ⊇ the ticket's `required = 1` set.
+3. Rank the eligible: preferred (`required = 0`) covered **DESC**, then total declared
+   capabilities **ASC** (a specialist beats a generalist), then name **ASC** so the answer is
+   deterministic. Dispatch rank 1.
 
-`capabilities ASC` is not a typo: it is the agent's *total* capability count, and lower is
-better, so a specialist beats a generalist. `source` tells you which path produced the row —
-`pin` (the ticket named an agent and also declared capabilities), `ticket` (named an agent
-and declared none, so the roster is not consulted at all), or `capability`.
-
-**No rows at all** for a ticket that declared capabilities is a **roster gap**, and it is the
-entire reason for declaring them. `v_blocked_tasks` names the missing word.
-
-### File a capability request
+Read the ticket's half out of SQL, then hand it to the scanner:
 
 ```sql
-INSERT INTO capability_request (capability, requirement_id, rationale, proposed_agent,
-                                proposed_spec, created_at)
-SELECT 'rust', r.id, CAST(x'<hex-rationale>' AS TEXT), 'developer-rust',
-       CAST(x'<hex-spec>' AS TEXT), strftime('%Y-%m-%dT%H:%M:%SZ','now')
-  FROM requirement r WHERE r.id = 'REQ-001'
-RETURNING id, capability;
+SELECT COALESCE(t.agent, '') AS pin,
+       COALESCE((SELECT group_concat(c.capability || ':' || c.required, ' ')
+                   FROM (SELECT capability, required FROM task_capability
+                          WHERE task_id = t.id ORDER BY required DESC, capability) c), '') AS caps
+  FROM task t WHERE t.id = 'TASK-001';
 ```
 
-File it at **plan** time. A gap found at dispatch time is already a failure — the plan is
-approved and a bounty has nobody to take it. Filing is also what legitimizes the word:
-`v_capability_vocabulary` unions in every non-declined request.
+`implement:1 svelte:1 frontend:0` reads as "must have implement and svelte, prefers frontend".
 
-To decline: `UPDATE capability_request SET status = 'declined' WHERE id = 1;` — and the word
-stays out.
+**No output from `--covers`** for a ticket that declared capabilities is a **roster gap**, and
+it is the entire reason for declaring them. Mark it blocked (below) — that write is the only
+thing that makes the gap visible.
+
+### There is no capability request
+
+A capability nobody declares used to be filed as a `capability_request` row so the word could
+be admitted to a vocabulary this database owned. Both are gone. **The fix for a missing
+capability is writing the agent file, and nothing precedes it.**
+
+Record the gap where the guild master will actually see it: the plan's Technical Decisions
+(it rides through `gate-plan`), and the board, as a `blocked` ticket whose `who` column reads
+`needs:implement+rust`.
 
 ### Mark a task blocked when nobody can take it
 
-Reading never does this. It is a decision, so it is a write somebody makes on purpose:
+Reading never does this, and **no view derives it** — skip this write and `v_open_bounties`
+offers the ticket again every check-in. It is a decision, so it is a write somebody makes on
+purpose, after the scan came back empty:
 
 ```sql
 UPDATE task SET status = 'blocked'
  WHERE id = 'TASK-014' AND status = 'todo'
-   AND NOT EXISTS (SELECT 1 FROM v_agent_eligible e WHERE e.task_id = 'TASK-014')
    AND COALESCE(agent, '') = ''
 RETURNING id, status;
 ```

@@ -4,14 +4,13 @@ Orientation, not DDL. The DDL is `${CLAUDE_PLUGIN_ROOT}/schema.sql` and it is he
 commented — read it when you need the exact column list. Read *this* when you are deciding
 **where a piece of information belongs** and **what you can rely on**.
 
-Twenty-four tables. They fall into seven groups:
+Twenty-one tables. They fall into six groups:
 
 | Group | Tables |
 |---|---|
 | bookkeeping | `schema_version` · `guild_state` |
 | direction | `goal` · `project` |
-| work | `requirement` · `plan` · `task` · `task_dependency` |
-| roster | `agent` · `agent_capability` · `task_capability` · `capability_request` |
+| work | `requirement` · `plan` · `task` · `task_dependency` · `task_capability` |
 | execution graph | `graph_node` · `graph_edge` · `graph_deviation` · `gate` |
 | records | `work_log` · `review_finding` · `bug` |
 | maintenance & memory | `coverage` · `inspection` · `inspection_coverage` · `doc` · `event` |
@@ -26,8 +25,12 @@ goal → project → requirement → plan
         work_log · review_finding · task_dependency · task_capability
 ```
 
-Everything else hangs off `requirement` (the graph, capability requests) or off `task`
-(the records), or stands alone and evergreen (`coverage`, `doc`, `agent`).
+Everything else hangs off `requirement` (the graph) or off `task` (the records), or stands
+alone and evergreen (`coverage`, `doc`).
+
+**THE ROSTER IS NOT IN HERE.** Who the guild's members are and what each can do lives in the
+`capabilities:` frontmatter of the agent files, and the orchestrator reads it at dispatch
+time across every subagent available to the user. See *Where the roster went*, below.
 
 ---
 
@@ -81,7 +84,7 @@ in flight at once. Join `v_projects_runnable` on `goal_id` when you need the row
 
 ---
 
-## Work — `requirement`, `plan`, `task`, `task_dependency`
+## Work — `requirement`, `plan`, `task`, `task_dependency`, `task_capability`
 
 **`requirement`** — the unit the guild master asks for. `body` holds the full REQ markdown.
 `project_id` is **nullable**: unaffiliated work is legal and normal.
@@ -114,7 +117,7 @@ something specific:
 | `in-progress` | claimed and running. `v_next_task` resumes one of these before claiming anything new. |
 | `done` | finished. |
 | `failed` | an agent tried and could not — **and a human has already seen it**, because the orchestrator sets it and immediately asks retry-or-skip. Adjudicated, so it does NOT hold the review gate. |
-| `blocked` | **nobody on the roster can take this.** Not a general "stuck" flag: it means the capability match found nobody. A machine verdict nobody has ruled on, so it DOES hold the review gate. |
+| `blocked` | **nobody available can take this.** Not a general "stuck" flag: it means the dispatcher scanned the agent files and found nobody covering the required capabilities. A machine verdict nobody has ruled on, so it DOES hold the review gate. **No view derives it** — the dispatcher writes it, or the gap stays invisible. |
 | `waived` | deliberately skipped by a gate decision. Counts as finished for dependency purposes, exactly like `done`. |
 
 The `failed` / `blocked` asymmetry in the review gate is the most load-bearing judgment in
@@ -123,10 +126,13 @@ loud — the blocked task sits on the board naming the capability nobody has.
 
 Two agent columns, and they are different things:
 
-- **`agent`** — the PIN, a member the architect named on the ticket. Optional. When set it
-  wins the match outright, and the ticket is never reported as a roster gap.
-- **`claimed_by`** — who actually took it, `REFERENCES agent(name)`. Set it with
-  `claimed_at` when you claim.
+- **`agent`** — the PIN, a member the architect named on the ticket, by the `name` in that
+  agent's frontmatter. Optional. When set, the dispatcher spawns it and **does not run the
+  capability match at all**.
+- **`claimed_by`** — who actually took it. Set it with `claimed_at` when you claim.
+
+Neither is a foreign key, and neither can be: there is no table to point at. A name whose
+agent file is long gone still reads correctly on an old ticket, which is the point.
 
 `parallel_group` groups tickets that dispatch together (`v_batch`); `node_key` is the
 back-reference to the template node that produced the ticket. **`files`** is a JSON array of
@@ -141,32 +147,64 @@ needed. Self-dependency is rejected by a CHECK.
 
 ---
 
-## The roster — `agent`, `agent_capability`, `task_capability`, `capability_request`
+## Where the roster went — and `task_capability`, which stayed
 
-Adding an agent file to `agents/` and INSERTing its name and capability tags is the entire
-process of adding a guild member. `v_agent_match` does the rest.
+Through v6 this database held four roster tables: `agent`, `agent_capability`,
+`task_capability` and `capability_request`. **v7 kept exactly one of them.**
 
-**`agent`** — `name` is the primary key and the address. `serial = 1` means "never run
-concurrently with itself" (the qa-tester drives one app and one dev server). **Retire with
-`active = 0`, never DELETE**: a done task from months ago may name an agent whose file is
-gone, and deleting would either break the foreign key or orphan the history that explains
-the board.
+`agent` and `agent_capability` were a **mirror**. Every fact in them — the member's name,
+model, capabilities, whether it runs serially — is already declared in the frontmatter of
+the member's own markdown file:
 
-**`agent_capability`** — what a member can do. A capability is compared for **equality and
-never normalized**, so the alphabet is narrow on purpose (lowercase, digits, `-`) and the
-CHECK enforces it. `e2e` and `E2E` would be two capabilities reading as one, and the matcher
-would quietly stop working.
+```yaml
+---
+name: developer-svelte
+model: sonnet
+capabilities: [implement, frontend, svelte, sveltekit]
+serial: false
+---
+```
 
-**`task_capability`** — what a ticket needs, and the `required` flag is the whole matcher:
+Two copies of one truth is one copy too many, and **the SQL copy was the one that went
+stale**: it was only as fresh as the last sync somebody ran, so a new agent file was
+invisible to the matcher until then. Worse, the mirror could only ever see the plugin's own
+`agents/` directory, while the user has subagents from their project, their home directory
+and every other installed plugin.
 
-- `required = 1` decides **eligibility** — an agent must cover every one of them.
+`capability_request` existed to admit a word to a vocabulary this database owned. Once the
+vocabulary is just "what the agent files declare", **admitting a word is writing the file**,
+and a request row is bookkeeping about bookkeeping.
+
+**Read the roster with:**
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py"
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers implement,svelte
+```
+
+The scan is authoritative for *what a file declares*. It is **not** authoritative for what is
+spawnable — the session's own agent-type list is. When they disagree, the session wins.
+
+**`task_capability`** — the survivor, and the one that was never a mirror. It records what
+the **work** needs, which is board data and belongs here:
+
+- `required = 1` decides **eligibility** — a member must cover every one of them.
 - `required = 0` ("preferred") decides **rank only**. It never excludes anybody.
 
-**`capability_request`** — a capability the architect needs and the roster lacks, filed at
-plan time rather than discovered at dispatch time. `open → created | declined`. Filing one
-is also what **legitimizes a new word**: `v_capability_vocabulary` unions in every
-non-declined request, so the row that admits `rust` into the guild's language outlives the
-recruitment. Never delete a `created` row — that un-admits the word on the next sync.
+A capability is compared for **equality and never normalized**, so the alphabet is narrow on
+purpose (lowercase, digits, `-`) and a CHECK enforces it. `e2e` and `E2E` would be two
+capabilities reading as one, and the match would quietly stop working. The **vocabulary** —
+which words mean anything — is the union of what the agent files declare, and no CHECK can
+reach a directory of markdown, so a misspelled tag inserts fine and matches nobody.
+
+**The matching rule did not die, it moved.** The dispatcher applies it (check-in §3.3):
+
+1. `task.agent` set → spawn it, no match.
+2. Otherwise, eligible = frontmatter `capabilities` ⊇ the ticket's required set. Rank by
+   preferred covered DESC, then **fewest declared capabilities ASC** (a specialist beats a
+   generalist), then name ASC for determinism.
+3. Nobody → the dispatcher **writes** `status = 'blocked'`. That write is the only thing
+   that makes the gap visible; skip it and `v_open_bounties` offers the ticket forever.
 
 ---
 
@@ -249,8 +287,8 @@ cannot be written is worse than an unfamiliar one. Payload is JSON; a status cha
 - Every status/severity/disposition/kind/risk/verdict vocabulary listed above. A typo'd
   status is refused rather than silently disappearing from every view at once.
 - `priority BETWEEN 1 AND 5`; `active`/`serial`/`required` are 0 or 1.
-- The capability **alphabet**: lowercase letters, digits, `-`, 1–64 chars, starting with a
-  letter.
+- The capability **alphabet** on `task_capability`: lowercase letters, digits, `-`, 1–64
+  chars, starting with a letter. The *vocabulary* it belongs to is not enforceable here.
 - `json_valid()` on `task.files` and `event.payload`.
 - `graph_deviation.reason` is non-empty; `task_dependency` and `graph_edge` reject
   self-reference; `schema_version.id = 1`.
@@ -258,8 +296,8 @@ cannot be written is worse than an unfamiliar one. Payload is JSON; a status cha
 **Foreign keys** — but only when you issue `PRAGMA foreign_keys = ON` on that connection.
 
 **Triggers** — every meaningful mutation writes an `event` row and `updated_at` gets
-stamped. You cannot forget to. Deliberately *not* instrumented: capability rows (a roster
-sync rewrites them all and would bury the feed), `graph_node` inserts (only status changes
+stamped. You cannot forget to. Deliberately *not* instrumented: `task_capability` (the
+architect rewrites a ticket's whole set at once and it would bury the feed), `graph_node` inserts (only status changes
 mean something moved), and pure-structure tables (`graph_edge`, `task_dependency`,
 `inspection_coverage`).
 
@@ -281,9 +319,12 @@ convention:
    waiver is only ever consulted for a ticket already at `failed`.
 4. **Concurrently dispatched tickets touch disjoint files.** An assertion in `task.files`. Nothing checks
    it.
-5. **A capability must be in the vocabulary.** A CHECK cannot reference another table, so an
-   unknown capability inserts fine and simply **matches nobody, silently, forever**.
-   `v_capability_unknown` is the audit — run it when the matcher goes unexpectedly quiet.
+5. **A ticket's capabilities name something a real agent declares.** The vocabulary is the
+   agent files, so SQL cannot check a `task_capability` row against it at all — a misspelled
+   tag inserts fine and matches nobody. **There is no audit view any more**: the dispatcher
+   is what makes it speak, by writing the ticket to `blocked` when the scan finds nobody.
+   Skip that write and the gap is silent. `roster.py --covers` before writing the ticket is
+   the check that catches it early.
 6. **A gate is decided by a human.** `gate.status` is a column. Anyone can write it.
 7. **The graph is not acyclic by construction.** `graph_edge` accepts any pair, and a cycle
    makes `v_ready_nodes` return nothing for the whole loop — a *silent stall*, not an error.
@@ -310,11 +351,8 @@ convention:
 | `v_task_actionable` | Which `todo` tasks may be offered right now — **including the review gate**. |
 | `v_next_task` | **The cursor.** Zero or one row: resume the lowest-id `in-progress`, else claim the lowest-id actionable. Ignores dependencies and eligibility on purpose. |
 | `v_batch` | Which open tasks must dispatch together with this one? |
-| `v_agent_eligible` | Whose capabilities are a superset of this ticket's required set? |
-| `v_agent_match` | **The matcher.** Every candidate, already ranked — the rank IS the row's position. |
-| `v_task_top_agent` | Rank 1 as one row per task; `''` when nobody is eligible. |
-| `v_open_bounties` | **What can be dispatched right now**: actionable + no unfinished deps + somebody to give it to. |
-| `v_blocked_tasks` | Everything open that cannot move, and why (`status-blocked` / `deps:…` / `no-eligible-agent:…`). |
+| `v_open_bounties` | **What is ready to be matched**: actionable + no unfinished deps + a pin or at least one capability row. Not a promise anybody can take it. |
+| `v_blocked_tasks` | Everything open that cannot move, and why (`status-blocked` / `deps:…` / `unassigned`). |
 | `v_ready_nodes` | Which graph nodes have all direct predecessors finished? |
 | `v_gates_pending` | Which gates are waiting on a human *right now*? |
 | `v_plans_pending_approval` | Which drafted plans has nobody ruled on yet? (A `todo` plan is still being written, so it is not listed.) |
@@ -324,7 +362,6 @@ convention:
 | `v_requirement_progress` · `v_goal_progress` | The roll-ups. |
 | `v_in_flight` · `v_failed_tasks` · `v_open_findings` · `v_open_bugs` · `v_recent_activity` | The briefing's detail lists. |
 | `v_coverage_due` | Which quality areas are past their risk-weighted interval? |
-| `v_capability_vocabulary` · `v_capability_unknown` · `v_roster_gaps` | The roster audits. |
 | `v_brief` | **The standup**, one fact per row, all derived from the views above so a count and its listing cannot disagree. |
 
 Two pairs that look interchangeable and are not:
@@ -333,9 +370,10 @@ Two pairs that look interchangeable and are not:
   gate applied, dependencies and eligibility deliberately *not* checked. The bounty board
   answers "what can I hand out" — priority order, dependencies and a matched member
   required. Different questions, different views.
-- **`v_agent_match` vs `v_task_top_agent`.** The same branch order on purpose. If they
-  disagreed, one view would name a member and the other would name somebody else for the
-  same ticket.
+- **`v_open_bounties` vs "can anybody take it".** The bounty board says a ticket ASKS for
+  somebody — a pin, or at least one capability row. Whether anybody ANSWERS is settled by
+  the dispatcher against the agent files, and a ticket nobody covers appears here once
+  before it is written to `blocked`.
 
 **Restate the `ORDER BY` yourself if you wrap a view in another query.** A view's internal
 ordering is not a contract SQLite promises to preserve through a join.

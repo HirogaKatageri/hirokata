@@ -101,14 +101,15 @@ and moves the anchor `done` once when the last mission returns.
 > look like product bugs. That is why it is defended in two independent places:
 >
 > 1. **`qa-execute.parallel_group` is NULL**, so no batch query ever groups two of them.
-> 2. **`qa-tester` carries `serial = 1` in the roster**, so the matcher will not hand out a
->    second concurrent assignment even if a caller asks.
+> 2. **`qa-tester` declares `serial: true` in its frontmatter**, so a dispatcher that read the
+>    roster will not hand out a second concurrent assignment even if a caller asks.
 >
 > Two mechanisms, because one missed check here produces a mystery rather than a message.
 >
-> **Be honest about the enforcement:** a NULL `parallel_group` and a roster flag are read by
-> whoever dispatches. Nothing in the schema physically prevents an orchestrator from starting
-> two testers. **Run the guard in §5 before every dispatch.** It is a convention with a check,
+> **Be honest about the enforcement:** a NULL `parallel_group` and a line of frontmatter are
+> read by whoever dispatches — and since v7 the `serial` half is not even in the database, so
+> a dispatcher that skipped the roster scan cannot see it at all. Nothing in the schema
+> physically prevents an orchestrator from starting two testers. **Run the guard in §5 before every dispatch.** It is a convention with a check,
 > not an invariant the database holds for you.
 
 ### `qa-report` — compile and stamp
@@ -185,7 +186,7 @@ SELECT 'TESTER ALREADY RUNNING: ' || n.id
 FROM graph_node n
 WHERE n.node_key = 'qa-execute' AND n.status = 'running';
 
--- Same question from the ticket side — the roster's serial=1 half of the invariant.
+-- Same question from the ticket side — the frontmatter serial:true half of the invariant.
 SELECT 'TESTER ALREADY CLAIMED: ' || t.id
 FROM task t WHERE t.claimed_by = 'qa-tester' AND t.status = 'in-progress';
 ```
@@ -212,13 +213,12 @@ VALUES ('REQ-041', 'reshape', 'qa-execute',
 | **A gate may be neither dropped nor added** | `maintenance` declares exactly **one** gate. Dropping it removes the guild master's control over what gets repaired. Adding one is the subtler mistake: gates are where an unattended shift stops and notifies, so an extra gate turns an overnight inspection into a session that stops to ask a sleeping human. `add-gate` is refused outright, whatever the reason — the cost is not paid at the moment of the decision. |
 | **`qa-execute` may be reshaped, but never to run in parallel** | Reshaping its scope, its mission count or its ordering is fine. Giving it a non-null `parallel_group` is not a deviation, it is a defect (§3). |
 | **Every deviation carries a non-empty reason** | Whitespace-only is empty. Without it there is no way to tell an intentional divergence from a mistake when an inspection goes wrong. |
-| **An `add-node` must name a capability the roster has** | Otherwise the graph cannot run, and you find out mid-shift. Check before you insert (§8). |
+| **An `add-node` must name a capability some available subagent declares** | Otherwise the graph cannot run, and you find out mid-shift. **Nothing in SQL can check this.** Use `roster.py --covers` before you insert (§8). |
 | **Every template key gets at least one node** | What makes "dropped" unambiguous — a key with zero rows was dropped, with no caveat to hide behind. This is why `qa-execute` and `repair` instantiate as anchors rather than as nothing. |
 
 **Legitimate deviations look like:** dropping `qa-plan` for a single-area spot check where the
 strategist's mission list would be one line; adding a `perf-probe` node between `qa-execute` and
-`qa-report` for a latency complaint, when the roster has an active member declaring that
-capability; reshaping `qa-execute` to cover one area instead of six.
+`qa-report` for a latency complaint, when some available subagent declares that capability; reshaping `qa-execute` to cover one area instead of six.
 
 ### What is enforced and what is convention
 
@@ -228,7 +228,7 @@ capability; reshaping `qa-execute` to cover one area instead of six.
 | node id uniqueness, one gate row per gate node, one verdict per (inspection, area) | **the database**, via PRIMARY KEY |
 | readiness, the review gate, the board | **the database**, via views |
 | "exactly one gate", "no dropped required node", "non-empty reason" | **you**, by running §8. A trigger can hold the gate rule if the warehouse schema ships one — check `SELECT name FROM sqlite_schema WHERE type='trigger'` rather than assuming. |
-| **"one tester at a time"** | **you**, via §5 plus the roster's `serial = 1`. The database does not know what a port is. |
+| **"one tester at a time"** | **you**, via §5 plus `serial: true` in the agent's frontmatter. The database does not know what a port is — and since v7 it does not know what `serial` is either. |
 | "manual trigger only" | **you.** `inspection."trigger"` records what started it; nothing rejects an automated caller. |
 | "the orchestrator owns every status transition" | **nobody.** A v4 bash guard, now a convention — the schema has no identity concept and cannot tell whose UPDATE it is. |
 
@@ -432,13 +432,14 @@ FROM graph_node n
 WHERE n.node_key = 'qa-execute' AND n.parallel_group IS NOT NULL;
 ```
 
-Before an `add-node` deviation, confirm the capability exists on an active member:
+Before an `add-node` deviation, confirm some available subagent declares the capability.
+**This one is not SQL** — the roster is the agent files:
 
-```sql
-SELECT 'NO MEMBER FOR: ' || 'perf-probing'
-WHERE NOT EXISTS (SELECT 1 FROM agent_capability ac JOIN agent a ON a.name = ac.agent
-                   WHERE ac.capability = 'perf-probing' AND a.active = 1);
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers perf-probing
 ```
+
+No output means no member. Do not add the node.
 
 Counts, against §2:
 

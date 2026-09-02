@@ -25,16 +25,21 @@ Loading is therefore ordered, and the order is short:
 ```
 schema.sql ──▶ empty
                  │
-                 ├─ 00-roster ──▶ 02-planned ──▶ 03-in-flight ──┬──▶ 04-review-ready
+                 ├─ 02-planned ──▶ 03-in-flight ──────────────┬──▶ 04-review-ready
                  │                                              │
                  │                                              └──▶ 05-messy
                  │
-                 └─ 00-roster ──▶ 06-maintenance
+                 └─ 06-maintenance
 ```
 
-`empty` is `schema.sql` and nothing else — not even the roster. Every other fixture starts with
-the roster block (§0.5), because a board with no members cannot match, cannot dispatch, and
-cannot produce a roster gap, so almost nothing in the schema means anything without it.
+`empty` is `schema.sql` and nothing else.
+
+**There is no roster block, and there was one until v7.** `00-roster.sql` seeded fourteen `agent`
+rows and twenty-six `agent_capability` rows so a fixture board could match a ticket to a member.
+Those tables are gone: the roster is the `capabilities:` frontmatter of the agent files, so **the
+roster a fixture runs against is whatever subagents the machine actually has.** That is a real
+change to what these fixtures can assert — a ticket's *routing* is now checked with
+`roster.py --covers`, outside the database, and nothing in a seed script can fake it.
 
 ### 0.2 The recipe
 
@@ -44,7 +49,6 @@ DB=/tmp/guild-fixture.db
 rm -f "$DB" "$DB"-wal "$DB"-shm
 
 tursodb "$DB" < schema.sql            # prints `wal` and exits 0 — that line is journal_mode
-tursodb "$DB" < 00-roster.sql
 tursodb "$DB" < 02-planned.sql
 tursodb "$DB" < 03-in-flight.sql
 tursodb "$DB" < 05-messy.sql          # → the `messy` fixture
@@ -97,62 +101,10 @@ Consequences, stated so nobody asserts on the wrong column:
 `task` and `requirement` ids are zero-padded to three digits, so text order is numeric order —
 which is what makes `v_next_task`'s `ORDER BY id LIMIT 1` predictable.
 
-### 0.5 The roster block — `00-roster.sql`
-
-The 14 members from `agents/*.md` with their declared capabilities, verbatim. `qa-tester`
-carries `serial = 1`; nobody else does. There is no free text in this block at all —
-every value is a key from a closed alphabet (a name, a model, a capability token) and
-descriptions are `''`, so nothing here needs the hex transport.
-
-The `ON CONFLICT` clauses make it re-runnable, which matters because a validation harness will
-load it more than once against the same scratch directory.
-
-```sql
-PRAGMA foreign_keys = ON;
-UPDATE guild_state SET value = 'orchestrator' WHERE key = 'actor';
-
-INSERT INTO agent (name, model, description, active, serial) VALUES
-  ('architect',               'opus',   '', 1, 0),
-  ('developer',               'sonnet', '', 1, 0),
-  ('developer-svelte',        'sonnet', '', 1, 0),
-  ('product-owner',           'sonnet', '', 1, 0),
-  ('product-reviewer',        'haiku',  '', 1, 0),
-  ('qa-strategist',           'sonnet', '', 1, 0),
-  ('qa-tester',               'sonnet', '', 1, 1),
-  ('researcher',              'haiku',  '', 1, 0),
-  ('reviewer-architecture',   'haiku',  '', 1, 0),
-  ('reviewer-business-logic', 'haiku',  '', 1, 0),
-  ('reviewer-edge-case',      'haiku',  '', 1, 0),
-  ('reviewer-security',       'haiku',  '', 1, 0),
-  ('test-planner',            'sonnet', '', 1, 0),
-  ('test-writer',             'sonnet', '', 1, 0)
-ON CONFLICT(name) DO UPDATE SET model = excluded.model, active = 1, serial = excluded.serial;
-
-INSERT INTO agent_capability (agent, capability) VALUES
-  ('architect','architecture'),
-  ('developer','implement'), ('developer','backend'), ('developer','frontend'),
-  ('developer-svelte','implement'), ('developer-svelte','frontend'),
-  ('developer-svelte','svelte'), ('developer-svelte','sveltekit'),
-  ('product-owner','requirements'),
-  ('product-reviewer','review'), ('product-reviewer','requirements'),
-  ('qa-strategist','qa-planning'),
-  ('qa-tester','qa-execution'), ('qa-tester','test-authoring'), ('qa-tester','e2e'),
-  ('researcher','research'),
-  ('reviewer-architecture','review'), ('reviewer-architecture','architecture'),
-  ('reviewer-business-logic','review'), ('reviewer-business-logic','business-logic'),
-  ('reviewer-edge-case','review'), ('reviewer-edge-case','edge-case'),
-  ('reviewer-security','review'), ('reviewer-security','security'),
-  ('test-planner','test-planning'),
-  ('test-writer','test-authoring')
-ON CONFLICT DO NOTHING;
-```
-
----
-
 ## 1. `empty` — a brand-new guild
 
-**What it represents.** `schema.sql` applied to a fresh file and nothing else. No roster, no
-goal, no task, no event. This is what a member sees on the first check-in of a new project, and
+**What it represents.** `schema.sql` applied to a fresh file and nothing else. No goal, no task,
+no event. This is what a member sees on the first check-in of a new project, and
 it is the fixture that catches the most embarrassing failure: a brief, a board or a dashboard
 that reads an empty guild as a broken one, or that invents work to have something to say.
 
@@ -171,18 +123,20 @@ SELECT (SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table')   AS tables,
        (SELECT COUNT(*) FROM sqlite_schema WHERE type = 'view')    AS views,
        (SELECT COUNT(*) FROM sqlite_schema WHERE type = 'trigger') AS triggers,
        (SELECT version FROM schema_version)                        AS ver,
-       (SELECT COUNT(*) FROM v_capability_vocabulary)              AS vocab,
        (SELECT COUNT(*) FROM v_recent_activity)                    AS events;
 ```
 
 **Expected result — exactly one row:**
 
 ```
-24|29|45|6|17|0
+21|23|40|7|0
 ```
 
-24 tables, 29 views, 45 triggers, schema version 6, the 17 seed capability words, zero events.
-A vocabulary of 17 on an empty board is the point: the words exist before any member does.
+21 tables, 23 views, 40 triggers, schema version 7, zero events. **The `vocab` column is gone**:
+`v_capability_vocabulary` listed seventeen seed words on an empty board, and the point used to be
+that the words existed before any member did. In v7 that is exactly backwards — a word exists
+*because* a member declares it — so there is nothing to count here, and the equivalent check is
+`roster.py`, which reads files rather than this database.
 
 **The traps this fixture sets.**
 
@@ -191,7 +145,7 @@ A vocabulary of 17 on an empty board is the point: the words exist before any me
   wrong.
 - Every list view is empty — `v_board`, `v_open_bounties`, `v_blocked_tasks`, `v_ready_nodes`,
   `v_gates_pending`, `v_plans_pending_approval`, `v_projects_runnable`, `v_project_progress`,
-  `v_goal_progress`, `v_recent_activity` — but `v_brief` still returns its full **27 rows**, all
+  `v_goal_progress`, `v_recent_activity` — but `v_brief` still returns its full **25 rows**, all
   counts `0`. A brief that returns nothing here has skipped the view.
 - `guild_state.actor` is `'orchestrator'` and `last-checkin` is the literal string `'null'`,
   not SQL NULL. Code that tests `IS NULL` on it is wrong; `NULLIF(value,'null')` is the idiom
@@ -201,7 +155,7 @@ A vocabulary of 17 on an empty board is the point: the words exist before any me
 
 ## 2. `planned` — approved nothing, built nothing
 
-**Load:** `schema.sql` → `00-roster.sql` → `02-planned.sql`
+**Load:** `schema.sql` → `02-planned.sql`
 
 **What it represents.** One goal, one project, one requirement, a plan cut into three implement tickets, six
 tickets, and a `standard` graph instantiated over it with **`gate-plan` still `pending`**. Not
@@ -400,14 +354,19 @@ SELECT id, priority, agent, who FROM v_open_bounties;
 ```
 
 ```
-TASK-001|2|developer|needs:backend+implement
-TASK-002|2|developer-svelte|needs:frontend+implement
-TASK-003|2|developer|needs:backend+implement
+TASK-001|2|-|needs:backend+implement
+TASK-002|2|-|needs:frontend+implement
+TASK-003|2|-|needs:backend+implement
 ```
 
+**The `agent` column is `-` on all three, and in v6 it named the matched member.** That column is
+now the *pin* and nothing else: no view can name a member, because the roster is not in this
+database. `who` carries the question instead, and `roster.py --covers backend,implement` carries
+the answer.
+
 **Three tickets are dispatchable while the plan is unapproved.** This is not a bug in
-`v_open_bounties` — that view answers "who could take this", and it knows nothing about the
-graph. Nothing in the schema connects a `task` to the `gate` that ought to precede it. A member
+`v_open_bounties` — that view answers "does this ticket ask for somebody", and it knows nothing
+about the graph. Nothing in the schema connects a `task` to the `gate` that ought to precede it. A member
 that reads the bounty board and starts building has done exactly what the board told it to, and
 has still violated the process. **The only thing standing between this fixture and premature
 work is the member checking `v_gates_pending` first**, which is why that is an expectation and
@@ -419,15 +378,26 @@ Two smaller ones:
   while any other non-reviewer ticket for `REQ-001` is open. It shows in `v_board` under
   `Backlog` and appears in **neither** `v_open_bounties` nor `v_blocked_tasks`. A dashboard that
   claims to show "everything not done" by unioning those two views will lose it.
-- `TASK-002` prefers `svelte` but does not require it, so `developer-svelte` outranks
-  `developer` on it while `developer` wins `TASK-001` and `TASK-003`. A member that hardcodes
-  one developer for the whole requirement gets the wrong one twice.
+- `TASK-002` prefers `svelte` but does not require it, so `developer-svelte` outranks `developer`
+  on it while `developer` wins `TASK-001` and `TASK-003`. A member that hardcodes one developer
+  for the whole requirement gets the wrong one twice. **This is no longer visible in the
+  database** — the preferred row is here, but the ranking that uses it runs in the dispatcher, so
+  the assertion is:
+
+  ```bash
+  python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers frontend,implement
+  ```
+
+  which returns `developer` first on `capabilities ASC` — and then the *preferred* `svelte` row
+  on `TASK-002` is what must move `developer-svelte` ahead of it. Getting that second step wrong
+  is the single easiest way to break routing in v7, because nothing fails: the ticket dispatches,
+  to the wrong member.
 
 ---
 
 ## 3. `in-flight` — approved, two implement tickets done, one running
 
-**Load:** `schema.sql` → `00-roster.sql` → `02-planned.sql` → `03-in-flight.sql`
+**Load:** `schema.sql` → `02-planned.sql` → `03-in-flight.sql`
 
 **What it represents.** The guild master approved `gate-plan` (**all three writes**: the `gate`
 row, the `graph_node`, *and* `plan.approval` — setting `gate.status` moves nothing on its own and
@@ -562,7 +532,7 @@ REQ-001/test-plan|test-plan
 
 ## 4. `review-ready` — everything built, four findings, waiting on a person
 
-**Load:** `schema.sql` → `00-roster.sql` → `02-planned.sql` → `03-in-flight.sql` →
+**Load:** `schema.sql` → `02-planned.sql` → `03-in-flight.sql` →
 `04-review-ready.sql`
 
 **What it represents.** Implementation, test plan and tests are all `done`, all four reviewers
@@ -659,7 +629,7 @@ as an error will fail every well-formed `standard` graph in existence.
 
 ## 5. `messy` — the fixture the brief and the dashboard are actually judged on
 
-**Load:** `schema.sql` → `00-roster.sql` → `02-planned.sql` → `03-in-flight.sql` →
+**Load:** `schema.sql` → `02-planned.sql` → `03-in-flight.sql` →
 `05-messy.sql`
 
 `messy` branches off `in-flight`, not off `review-ready`. It is the same board a week later,
@@ -675,14 +645,13 @@ awkward shape at once:
 | a failed task nobody has ruled on | `TASK-007` — agent report in the work log, no waiver |
 | a failed task the user waived | `TASK-008` — a second log line prefixed `Skipped by user` |
 | a blocked task nobody can take | `TASK-009` — requires `rust`, status already `blocked` |
-| a task with a capability nobody covers | `TASK-010` — requires `embedded`, still `todo` |
+| a second one, blocked for a different word | `TASK-010` — requires `embedded`, also `blocked` |
 | tasks stuck behind an unfinished predecessor | `TASK-004`, `TASK-005`, `TASK-011` |
 | one genuinely dispatchable bounty | `TASK-012` |
 | a review ticket held by the review gate | `TASK-006` |
 | an open bug with no fix task | `BUG-001` |
 | a bug being fixed, linked to its fix ticket | `BUG-002` → `TASK-012` |
 | two stale coverage areas and one fresh | `checkout-flow`, `auth-session`, `admin-panel` |
-| an open roster gap | the `rust` capability request |
 | a requirement with no tasks and no graph | `REQ-002` |
 
 **`BUG-001`'s title is the second transport trap**: it contains a pipe *and* a newline, and the
@@ -732,13 +701,12 @@ INSERT INTO work_log (task_id, ts, agent, entry) VALUES
   ('TASK-008','2026-08-02T10:30:00Z','developer',    CAST(x'4d6967726174696f6e20736372697074206661696c73206f6e2074686520636f6d706f73697465206b65792e20546865206c6567616379207461626c6520686173206475706c69636174652028636f64652c20726567696f6e292070616972732e'  AS TEXT)),
   ('TASK-008','2026-08-02T10:40:00Z','orchestrator', CAST(x'536b6970706564206279207573657220e2809420746865206c656761637920636f75706f6e207461626c65206973206265696e672064726f7070656420696e205245512d30303220696e73746561642e' AS TEXT));
 
--- a roster gap somebody already ruled on: nobody covers rust
+-- two roster gaps the dispatcher already ruled on: nobody declares `rust` or `embedded`.
+-- In v7 THIS WRITE IS THE WHOLE RECORD OF A GAP. There is no capability_request row to seed
+-- any more, and no view derives `blocked` — so a fixture that left these at `todo` would be
+-- seeding a board that silently re-offers them forever, which is not a state the guild reaches.
 UPDATE task SET status = 'blocked', updated_at = '2026-08-02T09:20:00Z' WHERE id = 'TASK-009';
-
-INSERT INTO capability_request (capability, requirement_id, rationale, proposed_agent,
-                                proposed_spec, status, created_at)
-VALUES ('rust', 'REQ-001', CAST(x'546872656520706c616e20736c6963657320696e20746865206e657874207068617365206172652052757374206372617465732e2054686520646576656c6f706572206d656d62657220686173206e6f2052757374206964696f6d2067756964616e636520616e6420776f756c642070726f64756365206e6f6e2d6964696f6d61746963206572726f722068616e646c696e672e' AS TEXT), 'developer-rust',
-        CAST(x'5275737420696d706c656d656e7465722e20546f6f6c733a20526561642c2057726974652c20456469742c20426173682e204d6f64656c3a20736f6e6e65742e' AS TEXT), 'open', '2026-08-02T09:25:00Z');
+UPDATE task SET status = 'blocked', updated_at = '2026-08-02T09:21:00Z' WHERE id = 'TASK-010';
 
 -- bugs
 INSERT INTO bug (id, title, body, repro, severity, status, found_by, requirement_id,
@@ -764,15 +732,17 @@ SELECT (SELECT COUNT(*) FROM v_open_bounties)               AS bounties,
        (SELECT COUNT(*) FROM v_blocked_tasks)               AS stuck,
        (SELECT COUNT(*) FROM v_failed_tasks WHERE waived=0) AS unadjudicated,
        (SELECT COUNT(*) FROM v_open_bugs)                   AS bugs,
-       (SELECT COUNT(*) FROM v_coverage_due)                AS due,
-       (SELECT COUNT(*) FROM v_roster_gaps)                 AS gaps;
+       (SELECT COUNT(*) FROM v_coverage_due)                AS due;
 ```
 
 **Expected result — exactly one row:**
 
 ```
-1|5|1|2|2|1
+1|5|1|2|2
 ```
+
+**The `gaps` column is gone.** `v_roster_gaps` counted open `capability_request` rows. The gap is
+now the blocked ticket itself, so it is already counted in `stuck` — and `who` names the word.
 
 ### 5.1 The pipe-and-newline trap, firing
 
@@ -821,8 +791,10 @@ byte-for-byte against the `printf | xxd` that produced it. Only the rendering wa
 These are the shapes a brief or a dashboard has to get right. They are transcripts.
 
 **Why each stuck ticket is stuck** — `reason` is one blank-free token by design, and the
-ordering of that `CASE` matters: `TASK-009` reports `status-blocked` rather than its missing
-capability, because a human already ruled on it and the status is that ruling.
+ordering of that `CASE` matters: `TASK-009` and `TASK-010` report `status-blocked` rather than
+their missing capability, because somebody already ruled on them and the status is that ruling.
+**`who` is where the missing word survives** — that pairing is the whole roster-gap report in
+v7.
 
 ```sql
 SELECT id, status, reason, who FROM v_blocked_tasks;
@@ -831,7 +803,7 @@ SELECT id, status, reason, who FROM v_blocked_tasks;
 TASK-004|todo|deps:TASK-003|needs:test-planning
 TASK-005|todo|deps:TASK-004|needs:test-authoring
 TASK-009|blocked|status-blocked|needs:rust
-TASK-010|todo|no-eligible-agent:embedded|needs:embedded
+TASK-010|blocked|status-blocked|needs:embedded
 TASK-011|todo|deps:TASK-003|needs:backend+implement
 ```
 
@@ -850,23 +822,30 @@ TASK-007|0|needs:backend+implement|Backfill aborted after 12k of 480k rows. …
 TASK-008|1|needs:backend+implement|Migration script fails on the composite key. …
 ```
 
-**The roster gap, and the word that is not in the vocabulary.** `rust` and `embedded` are both
-outside the seed list, but only `embedded` is reported unknown — filing the `rust` capability
-request is what admitted the word, and `v_capability_vocabulary` unions in every non-declined
-request. That is the whole mechanism, visible in one query:
+**The roster gaps, and where they live now.** `rust` and `embedded` are both words no agent file
+declares. In v6 they were told apart by a vocabulary table — `rust` had been admitted by a
+`capability_request`, `embedded` had not, so only `embedded` showed up in `v_capability_unknown`.
+**That distinction is gone, and it was never a distinction about the work.** Both tickets need a
+word nobody has; both are blocked; both name it:
 
 ```sql
-SELECT side, owner, capability FROM v_capability_unknown;
-SELECT id, capability, proposed_agent, covered_by FROM v_roster_gaps;
+SELECT id, who FROM v_blocked_tasks WHERE reason = 'status-blocked';
 ```
 ```
-task|TASK-010|embedded
-
-1|rust|developer-rust|0
+TASK-009|needs:rust
+TASK-010|needs:embedded
 ```
 
-`covered_by = 0` means the gap is real. A non-zero count on an open request would mean somebody
-filled it and never closed the request.
+That query **is** the roster-gap report. Each `needs:` is an agent file waiting to be written,
+and confirming a gap is real means leaving SQL:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers rust
+```
+
+No output confirms it. **This fixture cannot fake that half** — the scan reads the machine's real
+agent files, so on a machine that happens to have a `rust` member, `TASK-009` is a stale block
+rather than a gap. Say so when you assert on it.
 
 **Coverage.** `days_since` is **NULL** for an area never inspected — not zero, and a surface
 that renders it as "0 days ago" is lying about the state of the product.
@@ -887,20 +866,25 @@ disagreement a finding.
 next|TASK-003                bounties_open|1
 next_reason|resume           bounties_stuck|5
 tasks_in_progress|1          requirements_open|2
-tasks_todo|6                 requirements_done|0
-tasks_blocked|1              bugs_open|2
+tasks_todo|5                 requirements_done|0
+tasks_blocked|2              bugs_open|2
 tasks_failed|2               findings_open|0
 tasks_failed_waived|1        coverage_due|2
-tasks_done|2                 roster_gaps|1
-                             capability_unknown|1
-                             nodes_ready|0
+tasks_done|2                 nodes_ready|0
                              gates_pending|0
+                             plans_pending_approval|0
 ```
+
+**Three of those numbers moved in v7 and the reason is the same one each time.** `roster_gaps`
+and `capability_unknown` are gone — they counted rows in tables that no longer exist. And
+`tasks_blocked` is 2 rather than 1 because `TASK-010`, which used to sit at `todo` while a view
+derived "nobody covers `embedded`", must now be **written** to `blocked` by whoever scanned the
+agent files. The gap did not change; the only place it can be recorded did.
 
 ### 5.3 The traps this fixture sets
 
-- **`tasks_todo` is 6 but `bounties_open` is 1.** Five of the six cannot be handed to anybody
-  right now. A brief that reports the backlog count as available work is wrong by 500%.
+- **`tasks_todo` is 5 but `bounties_open` is 1.** Four of the five cannot be handed to anybody
+  right now. A brief that reports the backlog count as available work is wrong by 400%.
 - **`TASK-006` is in neither bounty view.** It is `todo`, it has no dependencies, and it is
   invisible to both `v_open_bounties` (the review gate holds it) and `v_blocked_tasks` (no
   clause matches a gated reviewer). `tasks_todo` (6) is not `bounties_open` + `bounties_stuck`
@@ -923,7 +907,7 @@ tasks_done|2                 roster_gaps|1
 
 ## 6. `maintenance` — an inspection under way
 
-**Load:** `schema.sql` → `00-roster.sql` → `06-maintenance.sql`
+**Load:** `schema.sql` → `06-maintenance.sql`
 
 This one does **not** build on `planned`. An inspection is a separate template on a separate
 carrier requirement, and mixing it into a feature board is precisely the mistake
@@ -1116,21 +1100,24 @@ who can take it:
 SELECT id, priority, agent, who FROM v_open_bounties;
 ```
 ```
-TASK-904|2|qa-tester|needs:qa-execution
+TASK-904|2|-|needs:qa-execution
 ```
 
-Dispatching it starts a second Playwright run against the same dev server. The matcher hands you
-the signal and does not act on it — `v_agent_match` carries `serial` in the row:
+Dispatching it starts a second Playwright run against the same dev server. **In v6 the matcher at
+least handed you the signal** — `v_agent_match` carried `serial` in the row, so a dispatcher that
+read it could see the problem without leaving SQL. It does not any more:
 
-```sql
-SELECT task_id, agent, source, serial FROM v_agent_match WHERE task_id = 'TASK-904';
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers qa-execution
 ```
 ```
-TASK-904|qa-tester|capability|1
+qa-tester | sonnet | serial | guild | e2e, qa-execution, test-authoring
 ```
 
-`serial = 1`. **Nothing in the database will stop the dispatch.** The guard in §6.1 is a
-convention with a check, and running it before every `qa-execute` dispatch is the expectation.
+The `serial` word in that line is the whole signal, and it comes from `serial: true` in the
+agent's frontmatter. **Nothing in the database will stop the dispatch, and now nothing in the
+database even knows.** The guard in §6.1 is a convention with a check, and running it before
+every `qa-execute` dispatch is the expectation — it matters more in v7 than it did in v6.
 
 Two more:
 
@@ -1167,8 +1154,8 @@ member doing the right one. A failure mode with no fixture is a failure mode not
 | dispatching by hardcoded agent name | **planned**, **messy** | `TASK-002` prefers `svelte`, 001/003 do not |
 | a requirement closed over open tasks | **messy** | `REQ-001` `tasks_open = 6`, `tasks_blocked = 1` |
 | a requirement closed over a *blocked* task | **messy** | `TASK-009` — `tasks_blocked` is its own column for this |
-| more than one tester at a time | **maintenance** | `TASK-904` is a live bounty for a `serial = 1` member |
-| an empty guild read as a broken one | **empty** | `v_brief` returns 23 rows of zeros, not zero rows |
+| more than one tester at a time | **maintenance** | `TASK-904` is a live bounty for a `serial: true` member |
+| an empty guild read as a broken one | **empty** | `v_brief` returns 25 rows of zeros, not zero rows |
 
 Two rows in that table say **"cannot happen"** or **"the engine catches it"**, and they are the
 useful ones to know about: an orphan task and a bad status word are enforced by

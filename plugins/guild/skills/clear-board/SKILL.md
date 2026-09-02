@@ -12,7 +12,8 @@ allowed-tools: Bash(tursodb *)
 # Clear Board — reset the guild
 
 Delete every unit of work from the guild board, keeping the things that outlive a board:
-the roster, the library, the quality map, and the guild's memory.
+the library, the quality map, and the guild's memory. **The roster is not on this list because
+it is not in the database** — it is the agent files, and a board reset cannot reach it.
 
 **This is genuinely destructive and there is no undo.** The v4 file tree and the v5 CLI's
 replayable journal are both gone; the board is one SQLite file and a `DELETE` is final. Back it
@@ -54,7 +55,6 @@ UNION ALL SELECT 'bugs_open',    COUNT(*) FROM bug WHERE status IN ('open','fixi
 UNION ALL SELECT 'work_log',     COUNT(*) FROM work_log
 UNION ALL SELECT 'findings',     COUNT(*) FROM review_finding
 UNION ALL SELECT 'events',       COUNT(*) FROM event
-UNION ALL SELECT 'KEEP:agents',  COUNT(*) FROM agent
 UNION ALL SELECT 'KEEP:coverage',COUNT(*) FROM coverage
 UNION ALL SELECT 'KEEP:docs',    COUNT(*) FROM doc;
 ```
@@ -63,14 +63,14 @@ If every countable row is 0, say `The guild board is already empty — nothing t
 
 **What a clear deletes:** `goal`, `project`, `requirement`, `plan`, `task`,
 `task_dependency`, `task_capability`, `graph_node`, `graph_edge`, `graph_deviation`, `gate`,
-`work_log`, `review_finding`, `bug`, `capability_request`, `inspection`, `inspection_coverage`,
-and the `graph-template:REQ-NNN` keys in `guild_state`.
+`work_log`, `review_finding`, `bug`, `inspection`, `inspection_coverage`, and the
+`graph-template:REQ-NNN` keys in `guild_state`.
 
 **What survives, and why:**
 
 | Kept | Because |
 |---|---|
-| `agent` · `agent_capability` | the roster is the guild, not the board. Retire a member with `active = 0`, never DELETE |
+| the agent files | **not in the database at all.** The roster is the guild, not the board — `agents/*.md` is untouched by anything here |
 | `coverage` | evergreen. It describes the **product**, and the product did not go away |
 | `doc` | the library. Knowledge the guild looked up once and should not look up again |
 | `event` | the guild's memory. Deleting it is a separate, louder decision — see Step 5 |
@@ -97,7 +97,8 @@ Current board:
 
 This DELETES all of it, permanently. There is no undo.
 
-Kept: the agent roster, the coverage map, the doc library, and the event feed.
+Kept: the coverage map, the doc library, and the event feed. (The agent roster
+lives in the agent files and is not affected either way.)
 Backed up first: .guild/guild.db.bak-{stamp}
 
 Clear the board? (yes / no)
@@ -117,10 +118,14 @@ everything after that is a straight child-to-parent sweep.
 PRAGMA foreign_keys = ON;
 UPDATE guild_state SET value = 'orchestrator' WHERE key = 'actor';
 
--- break the two reference cycles first
-UPDATE plan           SET task_id     = NULL;
-UPDATE review_finding SET fix_task_id = NULL;
-UPDATE bug            SET fix_task_id = NULL;
+-- break the reference cycles first. `plan.gate_node_id` is the one that is easy to miss:
+-- it points FORWARD into `graph_node`, so without this line `DELETE FROM graph_node` fails
+-- the foreign key and every delete after it cascades into failure — and because tursodb has
+-- no `-bail`, the script runs to the end and reports a clear that never happened.
+UPDATE plan           SET task_id      = NULL;
+UPDATE plan           SET gate_node_id = NULL;
+UPDATE review_finding SET fix_task_id  = NULL;
+UPDATE bug            SET fix_task_id  = NULL;
 
 -- the execution graph
 DELETE FROM gate;
@@ -138,7 +143,6 @@ DELETE FROM task_capability;
 DELETE FROM task_dependency;
 DELETE FROM task;
 DELETE FROM plan;
-DELETE FROM capability_request;
 
 -- maintenance runs (the coverage rows they point at STAY)
 DELETE FROM inspection_coverage;
@@ -153,7 +157,7 @@ DELETE FROM goal;
 DELETE FROM guild_state WHERE key LIKE 'graph-template:%';
 
 SELECT 'left', (SELECT COUNT(*) FROM task), (SELECT COUNT(*) FROM requirement),
-               (SELECT COUNT(*) FROM graph_node), (SELECT COUNT(*) FROM agent),
+               (SELECT COUNT(*) FROM graph_node),
                (SELECT COUNT(*) FROM coverage), (SELECT COUNT(*) FROM doc);
 ```
 
@@ -201,8 +205,8 @@ now points at nothing. Delete the backup when you are sure.
 
 Run `guild:validate clear-board`. §8 of `docs/expectations.md` is symmetrical and the second
 half is the one that matters: §8.a asserts every board table is empty, §8.b diffs the *keep*
-fingerprint — Step 2's counts — to prove the roster, the coverage map, the library and the
-event feed came through untouched. **Report any line that moved.** A clear that took an
+fingerprint — Step 2's counts — to prove the coverage map, the library and the event feed came
+through untouched. **Report any line that moved.** A clear that took an
 evergreen row destroyed something a board reset was never allowed to reach.
 
 ## Rules

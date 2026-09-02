@@ -238,16 +238,16 @@ Zero-padding to three digits is what keeps text order equal to numeric order, wh
 relies on. `node_key = 'test-write'` records which graph node produced the ticket — the
 `test-write` node is an anchor and the tickets are the work under it.
 
-Check the capability landed in the vocabulary — an unknown word inserts fine and then matches
-nobody, silently, forever:
+Check somebody actually declares the capability — an unknown word inserts fine and then matches
+nobody, silently. **The check is not SQL**: the vocabulary is the agent files, and nothing in
+the database can see them.
 
 ```bash
-printf "SELECT side, owner, capability FROM v_capability_unknown;\n" | tursodb -q -m list "$DB"
-printf "SELECT agent FROM v_task_top_agent WHERE task_id='TASK-0NN';\n" | tursodb -q -m list "$DB"
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers test-authoring
 ```
 
-An empty `agent` from the second query means nobody is eligible — say so in your report rather
-than pinning a member to paper over it.
+No output means nobody is eligible — say so in your report rather than pinning a member to
+paper over it.
 
 For a small feature (a handful of cases), create **one** combined ticket instead
 (`"Write unit & integration tests for {feature}"`). Never create more than two test-writer
@@ -284,7 +284,8 @@ created — the orchestrator owns status transitions.
 - **Don't create the reviewer ticket.** The architect already created it, and the review gate
   (`v_task_actionable`) holds it closed while anything else on the requirement is still open
 - **Don't invent a capability word.** An unknown capability inserts fine, matches nobody, and the
-  ticket goes `blocked` — which *does* hold the review gate. Check `v_capability_unknown`
+  ticket goes `blocked` — which *does* hold the review gate. **No view will catch it**; check
+  with `roster.py --covers` before you write the ticket
 - **Don't write to `event` by hand.** The triggers write it. It is the guild's memory, and a
   memory you can edit is not one.
 - Don't manage guild state or move tickets — the orchestrator owns status transitions, and that

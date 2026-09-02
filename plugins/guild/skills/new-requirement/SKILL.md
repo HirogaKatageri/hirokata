@@ -122,27 +122,29 @@ Nothing back means the guild has no direction yet. That is normal on a young boa
 **Do not create a goal or a project here.** Direction is the guild master's call — Step 6.5 is
 where the user makes it.
 
-### 2.6. Load the Roster
+### 2.6. Read the Roster
 
-The architect writes tickets that name a **capability**, not a member, and the matcher can only
-see synced members. Sync before spawning it: read every `agents/*.md` frontmatter (`name`,
-`model`, `capabilities`, `serial`, `description`) and apply the upsert / capability-replace /
-retire / admit block from `guild:warehouse` → `references/queries.md` §5. It is idempotent —
-re-running with nothing changed rewrites the same rows.
+The architect writes tickets that name a **capability**, not a member. **There is nothing to
+sync** — the roster is the frontmatter of the agent files, not a table — but you do have to
+read it, so you can tell the architect what the guild can actually do:
 
-Then audit what you wrote:
-
-```sql
-SELECT side, owner, capability FROM v_capability_unknown;
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py"
 ```
 
-**Why this is not optional:** on an unsynced guild the roster is empty, so a ticket declaring
-`implement` matches nobody and lands blocked the moment check-in reaches it. (A ticket that
-pins `agent` directly is unaffected — that path never consults the roster.)
+One line per subagent available to the user: `name | model | serial | scope | capabilities`,
+across this plugin, the project's `.claude/agents/`, the user's `~/.claude/agents/` and every
+other installed plugin. **The union of that last column is the whole vocabulary** — there is no
+seed list, and a word is legal exactly when some agent declares it.
 
-A row in `v_capability_unknown` is a tag outside the vocabulary. It inserts fine and then
-**matches nobody, silently, forever.** Report it; the fix is either a `capability_request`
-(Step 6.6) or a corrected agent file — never a shrug.
+**Why this is not optional:** the architect has to aim its `task_capability` rows at words
+somebody actually declares. A tag nobody has inserts fine and then **matches nobody, silently**
+— no view can catch it, because the database cannot see the agent files. Pass the members and
+their capabilities into the architect's prompt (Step 3) so it is aiming at the real roster
+rather than at the table in its own instructions.
+
+The script also flags members declaring **no** capabilities. Those can still be pinned by name;
+they simply never win a capability match.
 
 ### 3. Do NOT Create the Requirement Yet
 
@@ -218,14 +220,16 @@ Agent(
            until I tell you the requirement is finalized. I will also tell you which project (if
            any) it lands on, and that project's isolation; goals and projects are the guild
            master's, so never insert one.
-           The roster is loaded ({N} active members) — declare each ticket's capabilities as
+           The roster ({N} members) is: {name: [capabilities], ...} — read from the agent
+           files, which are the only place it lives. Declare each ticket's capabilities as
            task_capability rows (required = 1 decides eligibility, required = 0 only ranks)
-           and leave `agent` NULL unless you mean to pin. Check your words against
-           v_capability_vocabulary before you finish: an unknown capability matches nobody,
-           silently. If the plan needs a capability the guild lacks, INSERT the
-           capability_request first, then raise it as a `NEEDS INPUT: ROSTER GAP` block and
-           hold that ticket until I answer. You may not create an agent file; only the
-           guild master can.
+           and leave `agent` NULL unless you mean to pin. Check every word against that
+           roster with `roster.py --covers` before you finish: an unknown capability matches
+           nobody, silently, and NO VIEW WILL CATCH IT. If the plan needs a capability nobody
+           declares, raise it as a `NEEDS INPUT: ROSTER GAP` block, record it in the plan's
+           Technical Decisions, and hold that ticket until I answer. There is no
+           capability_request table any more — writing the agent file IS the recruitment, and
+           you may not write one; only the guild master can.
            Your deliverable is the full set: the plan, the TICKETS with each ticket's `files`
            JSON array — that is the disjoint-file assertion parallel dispatch depends on —
            their capabilities and parallel groups, and then the EXECUTION
@@ -324,24 +328,24 @@ does not need a goal.
 ### 6.6. Recruiting — the Architect Hit a Roster Gap
 
 This step runs **only** when the architect's `NEEDS INPUT:` block opens with `ROSTER GAP`. The
-plan needs a capability no member has, the architect has already filed the `capability_request`
-recording it, and it is now the **guild master's decision** — the roster is their layer, exactly
-like goals and projects.
+plan needs a capability no available subagent declares, and it is now the **guild master's
+decision** — the roster is their layer, exactly like goals and projects.
 
 > **Nothing here creates an agent without the user saying so.** Not you, not the architect, not
 > on a "reasonable inference". An agent file is a permanent addition to the guild.
 
-**Why live rather than at `gate-plan`.** The request is a permanent record and it **also**
-surfaces at `gate-plan` with the plan — but the architect cannot write the affected
+**Why live rather than at `gate-plan`.** The gap is written into the plan's Technical
+Decisions, so it **also** surfaces at `gate-plan` — but the architect cannot write the affected
 ticket until it knows the answer, and its session does not survive the gate.
 
-**1. Read the gap back before you ask.** The architect's block is a claim; this is the record:
+**1. Verify the gap before you ask.** The architect's block is a claim; this is the check:
 
-```sql
-SELECT id, capability, requirement_id, proposed_agent, covered_by, rationale FROM v_roster_gaps;
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers implement,rust
 ```
 
-`covered_by > 0` means the roster already has it and the request should simply be closed.
+**Any output at all means there is no gap** — somebody already declares it, and the architect
+should simply use them. Only empty output justifies the question below.
 
 **2. Ask once, with AskUserQuestion**, putting the rationale and the proposed spec in the
 question body so the decision is informed:
@@ -376,26 +380,20 @@ question body so the decision is informed:
    `plugin-dev:agent-development` is the skill to load for help writing the body well.
 2. **Show the user the file and get their sign-off before syncing.** They asked for a member,
    not for whatever you wrote; this is a review, not a notification.
-3. Admit it to the roster: run the Step 2.6 sync, which upserts the agent, replaces its
-   capabilities, and closes the request that asked for it:
+3. **Writing the file IS the recruitment.** There is nothing to admit, sync or close — the
+   capability is legal the moment the frontmatter declares it.
+4. Confirm with the scan, which is now the only check there is:
 
-   ```sql
-   UPDATE capability_request SET status = 'created'
-    WHERE status = 'open'
-      AND capability IN (SELECT ac.capability FROM agent_capability ac
-                           JOIN agent a ON a.name = ac.agent AND a.active = 1)
-   RETURNING id, capability, status;
+   ```bash
+   python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers implement,rust
    ```
 
-   **Never delete a `created` request** — that row is what keeps the word in
-   `v_capability_vocabulary`, so removing it un-admits the capability on the next sync.
-4. Confirm with `SELECT side, owner, capability FROM v_capability_unknown;` — a row means the
-   file declares a tag nothing legitimized (a typo, or a second capability nobody filed for).
-   Fix the file, do not file a second request to paper over it.
-5. `SendMessage` the architect: `"Roster gap resolved: developer-rust is on the roster and
-   declares [implement, backend, rust]. Create the held tickets requiring implement + rust."`
+   No output means the file's `capabilities:` does not actually say what you think — a typo, a
+   malformed list, or a file in a directory the scan does not reach. Fix the file.
+5. `SendMessage` the architect: `"Roster gap resolved: developer-rust exists and declares
+   [implement, backend, rust]. Create the held tickets requiring implement + rust."`
 
-   **A newly added agent file is on the roster immediately, but the `Agent` tool resolves
+   **A newly added agent file is in the roster immediately, but the `Agent` tool resolves
    `subagent_type: "guild:{name}"` from the plugin manifest the session loaded at startup.** If
    a later dispatch reports an unknown subagent type, that is what happened: tell the user to
    restart Claude Code, and until they do, the ticket is dispatchable only by pinning it to an
@@ -406,19 +404,18 @@ tickets — pin `agent` **and** declare the capabilities, so the board records b
 what the work actually required. Two things to say out loud, because both look like problems
 later and neither is:
 
-- **The request stays open.** Nothing but recruiting closes it, so the capability keeps
-  appearing under roster gaps. That is the design working — the guild still cannot do this work
-  well.
-- **`v_blocked_tasks` will name the pinned ticket** with `no-eligible-agent:implement,rust`,
-  because the reason column reports the capability question and ignores the pin. The ticket is
-  still dispatchable: `v_task_top_agent` returns the pin, and check-in dispatches on it.
+- **The gap does not go away.** Nothing but a real agent file closes it, so it stays in the
+  plan's Technical Decisions as the record that the guild still cannot do this work well.
+- **The pinned ticket dispatches normally.** A pin skips the capability match entirely, so it
+  will not go `blocked` and it will not appear as a gap on the board. The record of what the
+  work actually required is the `task_capability` rows the architect wrote alongside the pin —
+  that is what makes the pin reviewable later.
 
 **3c. On "revise the plan":** `SendMessage` the architect what the user wants changed and let it
 redraw them. The same note about the request staying open applies.
 
-**4. Never do any of these:** write an agent file the user did not approve; file the
-`capability_request` yourself (the architect files it — you resolve it); create or re-create a
-ticket to work around a gap; or treat "the user did not answer" as consent. If the answer is
+**4. Never do any of these:** write an agent file the user did not approve; create or re-create
+a ticket to work around a gap; or treat "the user did not answer" as consent. If the answer is
 ambiguous, ask again rather than picking.
 
 ### 6.7. Check the Graph Before You Take It to the User
@@ -441,12 +438,17 @@ SELECT kind, node_key, reason FROM graph_deviation WHERE requirement_id = 'REQ-N
 
 SELECT id, node_key, kind FROM v_ready_nodes WHERE requirement_id = 'REQ-NNN';
 
-SELECT t.id, COALESCE(m.agent,'') AS matched, w.who, t.title
-  FROM task t JOIN v_task_top_agent m ON m.task_id = t.id
-              JOIN v_task_who       w ON w.task_id = t.id
+SELECT t.id, COALESCE(t.agent,'') AS pin, w.who, t.title
+  FROM task t JOIN v_task_who w ON w.task_id = t.id
  WHERE t.requirement_id = 'REQ-NNN' ORDER BY t.id;
+```
 
-SELECT side, owner, capability FROM v_capability_unknown;
+Then check every unpinned ticket's `who` against the roster — `needs:implement+svelte` becomes
+`--covers implement,svelte`. **No SQL can do this for you**, and a ticket nobody covers is the
+one failure below that will not surface until the middle of a shift:
+
+```bash
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers implement,svelte
 ```
 
 Read them against `guild:warehouse` → `references/templates/standard.md`. Seven things fail a
@@ -463,7 +465,7 @@ nobody justified:
 | a node key not in the template, with no `graph_deviation` row | the shape changed and nothing recorded why |
 | a template key absent, with no `drop-node` deviation | same, in the other direction |
 | `v_ready_nodes` empty for the requirement | the graph cannot start: no root, or a cycle. With no `WITH RECURSIVE` there is no traversal to find one, so the rule is written at build time — every edge points backwards in declaration order |
-| a ticket whose `matched` is `''`, or a row in `v_capability_unknown` | a roster gap or a typo'd tag — Step 6.6, not something to paper over |
+| an unpinned ticket whose `--covers` scan returns nothing | a roster gap or a typo'd tag — Step 6.6, not something to paper over |
 
 An empty `reason` is impossible (the CHECK rejects it) and an edge to a node that does not exist
 is impossible (the foreign key rejects it, when `PRAGMA foreign_keys = ON` was set) — those two
@@ -495,13 +497,14 @@ REQ-007 — Session-backed authentication
   Then: implement → test-plan → test-write → review, running to completion without stopping,
         and stopping next at gate-repairs.
 
-⚠ Roster gap: `rust` — capability request 3, still open. Assigned to `developer` for now.
+⚠ Roster gap: `rust` — no available subagent declares it. Assigned to `developer` for now.
 
 Approve implementation?
 ```
 
-Include the roster-gap block **only** when a request is still open (`v_roster_gaps`) — it goes
-in front of the guild master here, with the plan, as part of the same decision.
+Include the roster-gap block **only** when the architect raised one and it is still unresolved
+— read it from the plan's Technical Decisions. It goes in front of the guild master here, with
+the plan, as part of the same decision.
 
 **3. Ask with AskUserQuestion.** Three answers, and all three are real:
 
@@ -593,8 +596,9 @@ so and say that **the checkout is not cut for you** — nothing in the schema cr
 is not a surprise later:
 
 ```
-  Open roster gap: `rust` — assigned to `developer` for now. It stays on the brief
-  under roster gaps until a member declares it.
+  Open roster gap: `rust` — assigned to `developer` for now. Nothing tracks it but the
+  plan's Technical Decisions, so it is on you to remember it: writing an agent file
+  declaring `rust` is the whole fix.
 ```
 
 ### 9. Verify against §4

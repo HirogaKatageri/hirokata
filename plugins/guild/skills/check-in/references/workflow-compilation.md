@@ -80,7 +80,7 @@ await pipeline([
 ### `dispatch(node)` — what goes in the prompt
 
 The same prompt SKILL.md Step 3.3 uses. Compose it in the orchestrator, not in the workflow:
-resolving the member is a query against `v_task_top_agent`, and the ticket move must happen
+resolving the member is the pin/capability rule in check-in §3.3, and the ticket move must happen
 before the agent starts.
 
 ---

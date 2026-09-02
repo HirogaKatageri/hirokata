@@ -260,19 +260,22 @@ Based on the requirement and codebase analysis:
 ### 3.5 Resolve Capabilities — Before You Write a Single Ticket
 
 **A ticket names the CAPABILITY the work requires, not the member who does it.** That is the whole
-point of the roster (design §5): `agents/developer-rust.md` with the right tags becomes eligible for
-work the moment it is synced — no plan rewrite, no skill edit, no chain rewiring. Your job here is to
-decide, per ticket, what the work actually requires.
+point: `agents/developer-rust.md` declaring the right tags becomes eligible for work **the moment
+the file exists** — no plan rewrite, no skill edit, no sync step. Your job here is to decide, per
+ticket, what the work actually requires.
 
-**The vocabulary is a view, not a list you have to remember.** Read it:
+**THE VOCABULARY IS THE AGENT FILES, NOT A TABLE.** There is no `v_capability_vocabulary` — it was
+dropped with the rest of the roster in v7, because a hand-maintained word list in SQL could only
+ever drift from the files that actually declare the words. Read the real thing:
 
 ```bash
-printf "SELECT capability FROM v_capability_vocabulary ORDER BY capability;\n" \
-  | tursodb -q -m list "$DB"
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py"
 ```
 
-Its base is these seventeen words, plus every capability a non-declined `capability_request` has
-legitimized:
+One line per subagent available to the user — `name | model | serial | scope | capabilities` —
+across this plugin, the project's `.claude/agents/`, the user's `~/.claude/agents/` and every other
+installed plugin. **The union of the `capabilities` column IS the vocabulary.** For the guild's own
+members that is these seventeen words:
 
 ```
 implement · frontend · backend · svelte · sveltekit
@@ -281,16 +284,18 @@ review · security · architecture · business-logic · edge-case
 research · qa-planning · qa-execution · requirements
 ```
 
-It is small on purpose: two agents tagged `e2e` and `end-to-end` are one capability the matcher
-quietly stops seeing. **Never invent a word.** A `task_capability` CHECK enforces the *alphabet*
-(lowercase, digits, `-`) but **a CHECK cannot reference another table**, so an unknown capability
-inserts fine and then matches nobody, silently, forever. Anything the plan needs that is not in the
-view is a roster gap, and §3.6 below is how you raise it.
+It is small on purpose: two agents tagged `e2e` and `end-to-end` are one capability the match
+quietly stops seeing. **Never invent a word.** The `task_capability` CHECK enforces the *alphabet*
+(lowercase, digits, `-`) and nothing more — no CHECK can reach a directory of markdown files — so a
+word no agent declares inserts fine and then matches nobody. Anything the plan needs that the scan
+does not show is a roster gap, and §3.6 below is how you raise it.
 
-**How the matcher picks (§5.2), so you can aim it.** Capabilities go in `task_capability`, and the
-`required` flag is the whole matcher:
+**How the match picks, so you can aim it.** Capabilities go in `task_capability`, and the `required`
+flag is the whole of it. **The orchestrator runs this at dispatch** (check-in §3.3) against the
+scan above — it is no longer a view, but the rule is unchanged:
 
-1. **`required = 1` decides ELIGIBILITY** — an active member must cover *every* one of them.
+1. **`required = 1` decides ELIGIBILITY** — a member's declared capabilities must cover *every*
+   one of them.
 2. **`required = 0` ("preferred") decides RANK ONLY.** It never excludes anybody.
 3. Ranked by preferred-covered (desc) → total capability count (**asc — a specialist beats a
    generalist**) → name. The orchestrator dispatches rank 1.
@@ -331,9 +336,9 @@ actually write:
 | End-to-end spec authoring | `test-authoring` | `e2e` | `qa-tester` |
 | Technology research (standalone ticket) | `research` | — | `researcher` |
 
-The right-hand column is what the matcher *ranked* against a 14-member roster, not an assumption —
-but it is a property of the roster on that day, so **confirm it against the board you are on**
-(step 5) rather than trusting the table.
+The right-hand column is what the match *ranked* against a 14-member guild roster, not an
+assumption — but it is a property of the agent files on that day, so **confirm it against the
+machine you are on** (step 5) rather than trusting the table.
 
 Use the **Svelte signals you already know** to decide whether to add the `svelte,sveltekit`
 preferred pair: the project has `svelte` or `@sveltejs/kit` in `package.json`, and the ticket's
@@ -362,74 +367,59 @@ capabilities record what the work required, and that is what makes the pin revie
   specialized reviewers; the fan-out is the graph's, not yours. Do not create four review tickets,
   and do not require `review,security` and friends on it.
 
-**Sanity check before you move on:** every capability you are about to write is in
-`v_capability_vocabulary`, or has an `open` `capability_request` behind it. Nothing else. After the
-tickets exist, `v_capability_unknown` is the audit that proves it:
+**Sanity check before you move on — and it is now the only one there is.** No view can audit a
+`task_capability` row against a vocabulary the database cannot see, so run the check yourself, per
+ticket, with the ticket's required set:
 
 ```bash
-printf "SELECT side, owner, capability FROM v_capability_unknown;\n" | tursodb -q -m list "$DB"
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers implement,frontend
 ```
 
-Zero rows is the answer you want. A row on the `task` side means that ticket will match nobody and
-go `blocked` — and `blocked` **holds the review gate**, deliberately, because a roster gap should
-be loud.
+**At least one row back is the answer you want**, and the first row is who will get the ticket.
+Empty output means that ticket will match nobody at dispatch and go `blocked` — and `blocked`
+**holds the review gate**, deliberately, because a roster gap should be loud. Catching it here,
+before the plan is approved, is the entire reason this step exists.
 
-### 3.6 Recruiting — When the Plan Needs a Capability the Guild Does Not Have (§5.4)
+### 3.6 Recruiting — When the Plan Needs a Capability Nobody Declares
 
 A roster gap found at *dispatch* time is already a failure: the plan is approved, work is underway,
 and a bounty has nobody to take it. So you resolve it **here, at plan time, while nothing has been
 built yet** — and you do **not** quietly route it to the nearest generalist.
 
-You know you have a gap when the plan genuinely needs something outside §5.3's seventeen words
+You know you have a gap when the scan comes back empty for something the plan genuinely needs
 (`rust`, `embedded`, `terraform`, `ios`). Do this, in this order:
 
-**1. File the gap.** The `NOT EXISTS` against the vocabulary is what makes this statement its own
-check: if the word is already admitted, it writes nothing and returns no rows.
+**1. Confirm the gap is real.** One command, and it is the same one that will run at dispatch:
 
 ```bash
-rat=$(printf '%s' "Three implement tickets are Rust crates; 'developer' has no Rust idiom guidance and
-would produce non-idiomatic error handling." | xxd -p | tr -d '\n')
-spec=$(printf '%s' "Sonnet · tools Read/Grep/Glob/Write/Edit/Bash · owns Rust implementation
-tickets, follows the plan's crate boundaries" | xxd -p | tr -d '\n')
-{ printf "PRAGMA foreign_keys = ON;\n"
-  printf "UPDATE guild_state SET value = 'architect' WHERE key = 'actor';\n"
-  printf "INSERT INTO capability_request (capability, requirement_id, rationale,
-                                          proposed_agent, proposed_spec, created_at)
-          SELECT 'rust', r.id, CAST(x'$rat' AS TEXT), 'developer-rust',
-                 CAST(x'$spec' AS TEXT), strftime('%%Y-%%m-%%dT%%H:%%M:%%SZ','now')
-            FROM requirement r
-           WHERE r.id='REQ-NNN'
-             AND NOT EXISTS (SELECT 1 FROM v_capability_vocabulary v WHERE v.capability='rust')
-          RETURNING id, capability;\n"
-} | tursodb -q -m list "$DB"
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers implement,rust
 ```
 
-Zero rows back means the word is **already in the vocabulary** — either it is one of the seventeen
-or somebody already filed for it. Check before you conclude you have a gap:
+Empty output is a gap. **Any output at all is not** — read the row before you conclude anything,
+because a member you had not thought of may already declare the word.
 
-```bash
-printf "SELECT COUNT(*) FROM agent_capability ac JOIN agent a ON a.name = ac.agent
-  WHERE a.active = 1 AND ac.capability='rust';\n" | tursodb -q -m list "$DB"
-```
+**THERE IS NO `capability_request` TABLE.** v7 removed it along with the rest of the roster. A row
+whose only job was to admit a word to a vocabulary is pure bookkeeping once the vocabulary is just
+"what the agent files say" — **the fix for a missing capability is writing the agent file, and
+nothing precedes it.**
 
-The row does three jobs: it records a decision the guild master has not made yet, it puts the gap
-in `v_roster_gaps` (and so in `v_brief`), and **it admits the word to the vocabulary** —
-`v_capability_vocabulary` unions in every non-declined request, which is what lets an agent file
-declaring `rust` be synced later.
+**So the gap lives in two places, both of which the guild master actually reads:**
 
-**Filing is one-way — file only a gap you are sure of.** A request is created `open` and the only
-thing that moves it is the roster sync admitting an agent that declares the capability
-(`open → created`). Nothing sets `declined` on its own, so a speculative request sits in the guild
-master's briefing forever. And **never delete a `created` row**: it is what keeps the word in the
-vocabulary, so removing it un-admits the capability on the next sync.
+- **your plan's Technical Decisions**, as a named gap with the rationale and the member you propose.
+  The plan goes through `gate-plan`, so this is what puts the decision in front of them — write it
+  down even if you also raise it live, because your session does not survive the gate and the plan
+  does.
+- **the board**, if a ticket needing it is created anyway: it goes `blocked` at dispatch with
+  `who = needs:implement+rust`, and check-in reports it by name. Louder than a request row ever
+  was, because it names the ticket that is actually stuck.
 
 **2. Stop and ask. You may not create an agent, and neither may the orchestrator without the user.**
 Raise it through the normal relay — this is exactly what `NEEDS INPUT:` is for:
 
 ```
 NEEDS INPUT:
-1. ROSTER GAP — this plan needs a capability the guild does not have: `rust`
-   Filed as capability request 3 (visible in `v_roster_gaps`).
+1. ROSTER GAP — this plan needs a capability no available subagent declares: `rust`
+   Confirmed with: roster.py --covers implement,rust  (no rows).
    Rationale: three implement tickets are Rust crates; `developer` has no Rust idiom guidance.
    Proposed member: developer-rust — Sonnet · tools Read/Grep/Glob/Write/Edit/Bash ·
    owns Rust implementation tickets, follows the plan's crate boundaries.
@@ -441,13 +431,12 @@ NEEDS INPUT:
    (c) Revise the plan so the capability is not needed — tell me how and I will redraw the tickets
 ```
 
-**Why you raise it live rather than leaving it for the gate.** The request itself is a permanent
-record and it **surfaces at `gate-plan`** with the plan (§5.4) — the guild master sees it whether or
-not you say anything. But you cannot write the affected ticket until you know the answer,
-and your session does not survive the gate, so the decision has to be made while you are still here.
-The gate then shows what was decided, and any request still `open` when the plan is presented rides
-along with it. **An agent is never created behind the guild master's back** — not by you, not by the
-orchestrator, not at the gate.
+**Why you raise it live rather than leaving it for the gate.** The gap written into Technical
+Decisions **surfaces at `gate-plan`** with the plan, so the guild master sees it whether or not you
+say anything. But you cannot write the affected ticket until you know the answer, and your session
+does not survive the gate, so the decision has to be made while you are still here. The gate then
+shows what was decided. **An agent is never created behind the guild master's back** — not by you,
+not by the orchestrator, not at the gate.
 
 **3. Do not create the affected ticket until the answer comes back.** A ticket written
 before the decision is one you would have to fix by hand afterwards — and the honest way to fix a
@@ -458,12 +447,12 @@ ticket is still held** (Step 6 explains why the order matters).
 
 **4. Act on the answer:**
 
-- **(a) create** — the orchestrator scaffolds `agents/developer-rust.md` from your proposed spec,
-  the user reviews it, and the roster sync admits it (INSERT into `agent` + `agent_capability`,
-  and the `open` request moves to `created`). Then write the tickets requiring `implement,rust` as
-  you would any other. **Verified end to end:** after the file was added and synced,
-  `v_agent_match` ranked `developer-rust` first for an `implement,rust` ticket and the bounty went
-  from `blocked / no-eligible-agent:implement,rust` to a live row in `v_open_bounties`.
+- **(a) create** — the orchestrator scaffolds the agent file from your proposed spec and the user
+  reviews it. **That is the entire recruitment**: writing `capabilities: [implement, rust]` in the
+  frontmatter is what admits the word, and there is nothing to sync afterwards. Confirm with
+  `roster.py --covers implement,rust`, then write the tickets requiring `implement,rust` as you
+  would any other. **Verified end to end:** with the file in place the scan returns
+  `developer-rust`, and the ticket dispatches on the next check-in instead of going `blocked`.
 - **(b) assign anyway** — pin `agent = 'developer'`, still require `implement,rust`, and write the
   pin into Technical Decisions with the reason. The gap stays open in the briefing, which is
   correct: the guild still cannot do this work well, and the record says so. Note in your report
@@ -684,30 +673,28 @@ ungrouped only when it is foundational or its file set can't be confidently boun
 `parallel_group` on the test-planner or reviewer ticket.
 
 **Routing is Step 3.5's table, not a choice you make here.** Declare what the ticket requires and
-let the matcher answer; do not hand-pick `developer` vs `developer-svelte` per ticket. Then
-**verify it against the board you are actually on** — the table records what a 14-member roster
-ranked on one day, and your roster may differ:
+let the match answer; do not hand-pick `developer` vs `developer-svelte` per ticket. Then **verify
+it against the machine you are actually on** — the table records what a 14-member guild roster
+ranked on one day, and the subagents available here may differ:
 
 ```bash
-# rank 1, one row per task; '' means NOBODY is eligible
-printf "SELECT agent FROM v_task_top_agent WHERE task_id='TASK-NNN';\n" | tursodb -q -m list "$DB"
-
-# the full ranking, with the reason — RESTATE the ORDER BY, a view's ordering is not a contract
-printf "SELECT task_id, agent, source, preferred_covered, preferred_total, capabilities, serial
-   FROM v_agent_match WHERE task_id='TASK-NNN'
-  ORDER BY branch, preferred_covered DESC, capabilities ASC, agent ASC;\n" \
-  | tursodb -q -m list "$DB"
+# who covers this ticket's REQUIRED set, already specialist-first — the first row is rank 1
+python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers implement,frontend
 ```
 
-`capabilities ASC` is not a typo — it is the agent's *total* capability count, and lower is better,
-so a specialist beats a generalist. `source` tells you which path produced the row: `pin` (you
-named an agent and also declared capabilities), `ticket` (named an agent and declared none, so the
-roster is never consulted), or `capability`.
+Order the required set into that flag exactly as you wrote it into `task_capability`. The script
+applies the superset test and the last two ranking keys (fewest capabilities, then name); the
+preferred rows are yours to weigh over whatever comes back, because the script cannot see the
+ticket.
 
-**No rows at all** for a ticket that declared capabilities is a **roster gap** — that is the entire
-reason for declaring them, and `v_blocked_tasks` names the missing word. Go back and resolve it in
-Step 3.6 rather than patching the ticket: dropping and recreating is the honest fix, because the
-ticket's id may already be referenced by the graph and by sibling `task_dependency` rows.
+**No output at all** for a ticket that declared capabilities is a **roster gap** — that is the
+entire reason for declaring them. Go back and resolve it in Step 3.6 rather than patching the
+ticket: dropping and recreating is the honest fix, because the ticket's id may already be
+referenced by the graph and by sibling `task_dependency` rows.
+
+**And nothing will tell you later.** No view can audit a capability against the agent files, so if
+you skip this check the gap surfaces at dispatch as a `blocked` ticket holding its requirement's
+review gate — weeks of ordering, discovered mid-shift.
 
 Every developer ticket MUST carry its file set in `files`. The test-planner and reviewer tickets
 orient from the overview and the implementation itself, so their `files` stays `'[]'`.
@@ -800,13 +787,12 @@ The rules, and **who enforces each one — read this before you trust it:**
 - **A `required: true` node may be reshaped, never dropped.** `gate-plan`, `implement`, `review`
   and `gate-repairs` are required. Review always happens; how wide it fans out is negotiable.
   Dropping it is a judgement about the guild's standards, which is not yours to make.
-- **`add-node` must name a capability an ACTIVE member declares.** A node nobody is eligible for is
-  a node the run stalls at forever, discovered mid-shift. Check before you insert:
+- **`add-node` must name a capability some available subagent declares.** A node nobody is
+  eligible for is a node the run stalls at forever, discovered mid-shift. Check before you insert:
   ```bash
-  printf "SELECT COUNT(*) FROM agent_capability ac JOIN agent a ON a.name = ac.agent
-    WHERE a.active = 1 AND ac.capability='{cap}';\n" | tursodb -q -m list "$DB"
+  python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers {cap}
   ```
-  Zero means a roster gap — Step 3.6, not a workaround.
+  No output means a roster gap — Step 3.6, not a workaround.
 - **An empty reason is refused by a CHECK**, and whitespace-only counts as empty. Write it for the
   person who diffs this graph against the template six weeks from now: what about *this*
   requirement made the standard shape wrong.
@@ -885,9 +871,10 @@ deviations against — it is not a column on `graph_node`:
 } | tursodb -q -m list "$DB"
 ```
 
-If you filed any `capability_request`, say so on its own line with its id and how it was resolved
+If you found any roster gap, say so on its own line with the capability and how it was resolved
 (agent created / pinned to an existing member / plan revised) — the orchestrator reports that to the
-user at the gate, and it stays in `v_roster_gaps` until somebody actually recruits for it.
+user at the gate. **It must also be in the plan's Technical Decisions**: your session ends at the
+gate and the plan is the only part of this that the guild master still has in front of them.
 
 ## What NOT to Do
 
@@ -906,14 +893,17 @@ user at the gate, and it stays in `v_roster_gaps` until somebody actually recrui
 - **Don't approve your own plan.** `plan.status = 'done'` says you finished writing it;
   `plan.approval` is the user's ruling and is not yours to write. Leave it `pending` and let the
   gate reach them
-- **Don't invent a capability.** The vocabulary is `v_capability_vocabulary`. A ticket declaring a
-  word nobody has inserts fine, matches nobody, goes `blocked`, and `blocked` holds its
-  requirement's review gate closed. `v_capability_unknown` is the audit — run it
+- **Don't invent a capability.** The vocabulary is the `capabilities:` frontmatter of the agent
+  files — `roster.py` prints it. A ticket declaring a word nobody has inserts fine, matches nobody,
+  goes `blocked`, and `blocked` holds its requirement's review gate closed. **No audit view will
+  catch it for you**; `roster.py --covers` before you write the ticket is the only check there is
 - **Don't drop `agent = 'reviewer'` from the review ticket.** It is the literal string
   `v_task_actionable` keys the review gate on; a NULL agent there opens the gate immediately
 - **Don't create an agent file, and don't tell the orchestrator to create one on your say-so.** The
-  roster is the guild master's layer, exactly like goals and projects. You file the gap and propose
-  the spec; the user decides
+  roster is the guild master's layer, exactly like goals and projects — and now that a capability
+  is admitted by writing a file rather than by a row somebody approves, that boundary is the ONLY
+  thing standing between a gap and a member you invented. You name the gap and propose the spec;
+  the user decides
 - **Don't create a ticket whose capability gap is unresolved** — the honest fix
   afterwards is to drop it and recreate it, and its id may already be referenced by the graph
 - **Don't fold two units of work into one ticket.** The implement tickets are how the `implement`
