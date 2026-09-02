@@ -99,7 +99,7 @@ guild status
 
 ## How to Use the Guild Plugin
 
-The Guild plugin (v6.1.0) provides continuous agent orchestration through a persistent, database-backed work cycle. The guild tracks direction, requirements, tasks, bugs and quality coverage across sessions — no per-session setup required.
+The Guild plugin (v6.2.0) provides continuous agent orchestration through a persistent, database-backed work cycle. The guild tracks direction, requirements, tasks, bugs and quality coverage across sessions — no per-session setup required.
 
 **The plugin is a schema and a set of skills — not a program.** `tursodb` already executes SQL, so the guild ships no second tool that does the same thing: members write their own SQL, and the guild's rules live *in the database* as CHECK constraints (the status vocabularies), views (the derived rules — the cursor, the review gate, readiness, the matcher, the board, each with one definition) and triggers (the `event` record, written on every mutation). A member can forget to call a command; a member cannot bypass a trigger or a CHECK.
 
@@ -111,6 +111,17 @@ guild:new-requirement — live 3-way interview (product-owner + architect + you)
 ```
 
 **v6 is a fresh rewrite, and its status is worth reading before you trust it.** The v5 CLI it replaces had four adversarial review rounds and a 2,278-check suite; that code is deleted and none of that assurance carries over. v6 ships with no tests, by design. See the *Status* section in `plugins/guild/README.md`.
+
+**Upgrading a board created before v6.2?** The work hierarchy is `goal → project → requirement → plan → task`, and `project` was called `phase` until v6.2. `CREATE TABLE IF NOT EXISTS` cannot rename a table, so an existing `.guild/guild.db` needs the migration run once, in this order:
+
+```bash
+export PATH="$HOME/.turso:$PATH"
+cp .guild/guild.db .guild/guild.db.bak
+tursodb .guild/guild.db < plugins/guild/migrations/006-project-and-plan-approval.sql
+tursodb .guild/guild.db < plugins/guild/schema.sql
+```
+
+`SELECT version FROM schema_version` reads `5` before and `6` after. A fresh board needs none of this.
 
 ### Setting Up
 
@@ -187,7 +198,8 @@ Next:      TASK-004
 Summary:   2 requirement(s), 0 done · 1 in flight · 2 open bounty(ies) · 1 open bug(s) (1 critical)
 
 Direction:
-  GOAL-001  [p1 in-progress]  Ship the notifications overhaul  ·  on PHASE-002 Preferences UI  ·  0/2 req done
+  GOAL-001  [p1 in-progress]  Ship the notifications overhaul  ·  2 of 3 projects runnable
+            PROJ-002 Preferences UI (next in sequence)  ·  PROJ-003 Docs refresh (concurrent, worktree)  ·  0/2 req done
 
 In Flight:
   TASK-004  Build the preferences API  ·  developer  ·  REQ-002  ·  just now

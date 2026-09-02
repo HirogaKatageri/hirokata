@@ -16,7 +16,7 @@
 >
 > | Section | Why it still holds |
 > |---------|--------------------|
-> | **§3 Schema**, especially **§3.2 DDL** and **§3.3 IDs** | The tables, columns and relationships are the ones in `schema.sql` today. v6 added CHECK constraints, views and triggers on top; it removed nothing. |
+> | **§3 Schema**, especially **§3.2 DDL** and **§3.3 IDs** | The tables, columns and relationships are still the ones in `schema.sql`, with **one rename since**: `phase` is now `project` (`requirement.phase_id` → `project_id`, `PHASE-NNN` → `PROJ-NNN`), and it gained `body`, `priority`, `concurrent`, `isolation` and `worktree_path` while `ordinal` became nullable — a project may run *beside* its siblings, which a phase could not. `plan` gained `approval`/`approved_by`/`approved_at`/`gate_node_id`. Read §3.2 for the reasoning, `schema.sql` for the columns. |
 > | **§3.0 Portability rule** | The tursodb constraints (no `WITH RECURSIVE`, no FTS5, STRICT types) are engine facts, not CLI facts. |
 > | **§5 Capabilities and bounties** | The roster, the capability vocabulary and the deterministic matcher are `v_agent_match` now, with the same rules. |
 > | **§6 The execution graph** | The templates, the two gates, deviation and the segment/gate boundary are unchanged. Templates are now markdown under `skills/warehouse/references/templates/`. |

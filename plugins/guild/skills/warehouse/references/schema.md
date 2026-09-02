@@ -4,12 +4,12 @@ Orientation, not DDL. The DDL is `${CLAUDE_PLUGIN_ROOT}/schema.sql` and it is he
 commented — read it when you need the exact column list. Read *this* when you are deciding
 **where a piece of information belongs** and **what you can rely on**.
 
-Twenty-five tables. They fall into seven groups:
+Twenty-four tables. They fall into seven groups:
 
 | Group | Tables |
 |---|---|
 | bookkeeping | `schema_version` · `guild_state` |
-| direction | `goal` · `phase` |
+| direction | `goal` · `project` |
 | work | `requirement` · `plan` · `task` · `task_dependency` |
 | roster | `agent` · `agent_capability` · `task_capability` · `capability_request` |
 | execution graph | `graph_node` · `graph_edge` · `graph_deviation` · `gate` |
@@ -19,9 +19,9 @@ Twenty-five tables. They fall into seven groups:
 The spine is one containment chain:
 
 ```
-goal → phase → requirement → plan
-                    ↓           ↓
-                   task ────────┘
+goal → project → requirement → plan
+                       ↓           ↓
+                      task ────────┘
                     ↓
         work_log · review_finding · task_dependency · task_capability
 ```
@@ -44,27 +44,63 @@ Everything else hangs off `requirement` (the graph, capability requests) or off 
 
 ---
 
-## Direction — `goal`, `phase`
+## Direction — `goal`, `project`
 
-Long-lived intent. A `goal` is a direction; a `phase` is an ordered stage within one
-(`ordinal`, 1-based). Both use the SHORT status vocabulary — `todo | in-progress | done` —
-deliberately: `blocked` and `waived` are words about a unit of work, and a direction is not
-a unit of work.
+Long-lived intent. A `goal` is a high-level target; a `project` is a named group of work
+that has to be done to reach it. Both use the SHORT status vocabulary —
+`todo | in-progress | done` — deliberately: `blocked` and `waived` are words about a unit
+of work, and a direction is not a unit of work.
 
-`priority` is 1 (highest) to 5 (lowest) everywhere it appears in this schema.
+`priority` is 1 (highest) to 5 (lowest) everywhere it appears in this schema, `project`
+included.
 
-`v_goal_progress` gives you each open goal with its *current phase* — the lowest-ordinal
-phase not yet done — and its requirement counts.
+**This table was called `phase` through v6.1.** The rename is not cosmetic. A phase is a
+*stage*, which implies one runs at a time, and `ordinal NOT NULL` said exactly that. A
+project may run **beside** its siblings:
+
+| column | what it decides |
+|---|---|
+| `ordinal` | position in the goal's sequence, 1-based, and **nullable**. NULL means *unordered* — waits for nobody. It does not mean *first*. |
+| `concurrent` | `1` = never waits its turn, runs beside its siblings. `0` (the default) = waits for every lower-ordinal sequential project in the goal. |
+| `isolation` | `shared` = tasks run in the repository's working tree. `worktree` = tasks run in their own git worktree, so cross-project file collisions are impossible. |
+| `worktree_path` | the checkout. NULL until one exists, so a project can be *marked* for isolation before it is cut. A `shared` project may not carry one — a CHECK says so. |
+
+Nothing creates, verifies or cleans up a worktree. The column records a decision; honouring
+it is the orchestrator's job.
+
+**`v_projects_runnable` is the only place the parallelism rule lives.** Read it instead of
+re-deriving "may this project run" — a project earns a place there by being `concurrent`,
+by being unordered, or by having every lower-ordinal sequential sibling done.
+`v_project_progress` is the same list with requirement and task counters, and a `runnable`
+flag derived from that view rather than restated.
+
+`v_goal_progress` gives each open goal its project counts, how many are runnable, and a
+comma-joined `runnable_project_ids` for display. Through v6.1 it reported a single
+*current phase*; that column is gone, because several projects under one goal may now be
+in flight at once. Join `v_projects_runnable` on `goal_id` when you need the rows.
 
 ---
 
 ## Work — `requirement`, `plan`, `task`, `task_dependency`
 
 **`requirement`** — the unit the guild master asks for. `body` holds the full REQ markdown.
-`phase_id` is **nullable**: unaffiliated work is legal and normal.
+`project_id` is **nullable**: unaffiliated work is legal and normal.
 
 **`plan`** — the architect's implementation plan for a requirement. `task_id` is optional
 and means "a plan written FOR one ticket" rather than for the whole requirement.
+
+A plan carries **two independent states**, and conflating them was the old shape's worst
+loss of information:
+
+| column | question it answers |
+|---|---|
+| `status` | *is the document written?* `todo → in-progress → done`. The architect's drafting lifecycle. It says nothing about whether anybody agreed. |
+| `approval` | *did the user say yes?* `pending → approved \| rejected`. The architect writes the plan; a **human** rules on it, and nothing is built until they do. |
+
+`approved_by` and `approved_at` record the ruling. `gate_node_id` links the plan to the
+`gate-plan` node carrying the same decision, so a reader can go from either end — but
+approving the gate does **not** write `plan.approval`. They are two writes, exactly like
+moving a gate's node, and `v_plans_pending_approval` is what tells you they drifted.
 
 There is no intermediate row between a plan and its tickets. The decomposition lands on the
 tickets, and `task.files` carries the file set each one owns.
@@ -256,6 +292,14 @@ convention:
    template. Edges that all point backwards in declaration order cannot form a cycle.
 8. **Timestamps are UTC by convention.** The triggers use `strftime(…, 'now')`, which is
    UTC. Whatever you write by hand is whatever you wrote.
+9. **A `worktree` project's tasks run in its worktree.** `project.worktree_path` is a
+   string. Nothing creates the checkout, nothing verifies it exists, and nothing makes a
+   dispatched agent honour it. The CHECK only stops a `shared` project from carrying a
+   path — which is the half a column *can* police.
+10. **An approved gate approves its plan.** `gate.status` and `plan.approval` are two
+    columns on two tables, so approving a plan is **two writes**, exactly like moving a
+    gate's node. `plan.gate_node_id` ties them for a reader; it does not keep them in
+    step. `v_plans_pending_approval` is what tells you they drifted.
 
 # The views, and which question each answers
 
@@ -273,7 +317,10 @@ convention:
 | `v_blocked_tasks` | Everything open that cannot move, and why (`status-blocked` / `deps:…` / `no-eligible-agent:…`). |
 | `v_ready_nodes` | Which graph nodes have all direct predecessors finished? |
 | `v_gates_pending` | Which gates are waiting on a human *right now*? |
+| `v_plans_pending_approval` | Which drafted plans has nobody ruled on yet? (A `todo` plan is still being written, so it is not listed.) |
 | `v_board` | The live board, one row per task, tagged with its section and print order. |
+| `v_projects_runnable` | **The parallelism rule.** Which projects may run right now, and why (`concurrent` / `unordered` / `next in sequence`), with their `isolation` and worktree. |
+| `v_project_progress` | Every project with its requirement and task counters, plus a `runnable` flag derived from the view above. |
 | `v_requirement_progress` · `v_goal_progress` | The roll-ups. |
 | `v_in_flight` · `v_failed_tasks` · `v_open_findings` · `v_open_bugs` · `v_recent_activity` | The briefing's detail lists. |
 | `v_coverage_due` | Which quality areas are past their risk-weighted interval? |

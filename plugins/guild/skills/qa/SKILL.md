@@ -89,7 +89,7 @@ hex=$(xxd -p < /tmp/qa-umbrella.md | tr -d '\n')       # never echo; never round
 PRAGMA foreign_keys = ON;
 UPDATE guild_state SET value = 'orchestrator' WHERE key = 'actor';
 
-INSERT INTO requirement (id, phase_id, title, body, status, priority, created_at, updated_at)
+INSERT INTO requirement (id, project_id, title, body, status, priority, created_at, updated_at)
 SELECT 'REQ-' || printf('%03d', COALESCE(MAX(CAST(substr(id, instr(id,'-')+1) AS INTEGER)), 0) + 1),
        NULL, 'Product QA & E2E Regression', CAST(x'<hex-body>' AS TEXT), 'in-progress', 3,
        strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')
@@ -98,7 +98,7 @@ RETURNING id, status;
 ```
 
 It opens `in-progress` and **stays there forever** — it is standing work, not a feature, and it
-is deliberately never included in a release. `phase_id` is NULL: QA is not a stage of anything.
+is deliberately never included in a release. `project_id` is NULL: QA is not part of any one project.
 
 The umbrella's body, for reference:
 

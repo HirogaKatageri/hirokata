@@ -49,7 +49,7 @@ skills/warehouse/
 
 ## 3. What the database now enforces
 
-`schema.sql` is 24 tables, 26 views and 43 triggers.
+`schema.sql` is 24 tables, 29 views and 45 triggers.
 
 **CHECK constraints are the vocabularies.** Every status and enum column carries its word list. A
 value outside it is rejected by the engine, on every connection, from every member, forever. v5's
@@ -155,6 +155,8 @@ constraints. A board that wants them rebuilds.
 ```
 plugins/guild/
 ├── schema.sql              # THE TOOL — tables, CHECKs, views, triggers, and the rules in its header
+├── migrations/             # one-shot scripts for what CREATE TABLE IF NOT EXISTS cannot reach:
+│                           # renamed tables and new columns. Run in order, once each, then re-apply schema.sql
 ├── agents/                 # 14 members; frontmatter (name, model, capabilities, serial) IS the roster
 ├── skills/
 │   ├── warehouse/          # the guide to the board — every member loads this first
@@ -172,7 +174,7 @@ plugins/guild/
     └── v5-design.md              # historical; the model and rules it reasons out are still in force
 ```
 
-The board, in a project:
+The board, in a repository:
 
 ```
 .guild/
@@ -182,7 +184,7 @@ The board, in a project:
 ├── qa/                 # evergreen QA artifacts
 ├── reviews/REQ-NNN.md  # per-requirement review records
 ├── dashboard.html      # gitignored, regenerated wholesale
-└── templates/*.yaml    # optional project override of the execution templates
+└── templates/*.yaml    # optional per-repo override of the execution templates
 ```
 
 `guild.db` is gitignored because a binary file is a bad thing to merge — which means **the board is

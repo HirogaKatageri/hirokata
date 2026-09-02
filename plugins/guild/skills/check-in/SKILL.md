@@ -186,6 +186,7 @@ SELECT id, severity, status, found_by, requirement_id, title FROM v_open_bugs;
 SELECT id, who, waived, reason, title FROM v_failed_tasks;
 SELECT id, task_id, reviewer, severity, disposition, file, line, summary FROM v_open_findings;
 SELECT node_id, requirement_id, kind, prompt FROM v_gates_pending;
+SELECT id, requirement_id, status, gate_node_id, title FROM v_plans_pending_approval;
 SELECT json_object('ts', ts, 'actor', actor, 'verb', verb, 'type', subject_type,
                    'id', subject_id, 'title', subject_title, 'phrase', phrase)
   FROM v_recent_activity
@@ -195,7 +196,8 @@ SELECT json_object('ts', ts, 'actor', actor, 'verb', verb, 'type', subject_type,
 
 **Narrate it — do not paste the rows.** Three or four lines is right at check-in:
 
-- which goal/phase the work serves, if `v_goal_progress` has rows;
+- which goal/project the work serves, if `v_goal_progress` has rows — and if `projects_runnable`
+  is more than 1, name every project in flight, not just one;
 - what is in flight and for how long — `minutes` in the **hundreds** on a task that normally
   takes minutes is a crashed dispatch, not work in progress; say so;
 - the risks, worst first: open bugs (name every `critical` one), unresolved failed tasks with
@@ -204,7 +206,9 @@ SELECT json_object('ts', ts, 'actor', actor, 'verb', verb, 'type', subject_type,
   and neither will ever be handed out. If `bounties_open` is 0 and `bounties_stuck` is not,
   that **is** the headline;
 - **what is waiting on the guild master** — every `v_gates_pending` row is a decision that
-  cannot progress without them. Name it;
+  cannot progress without them. Name it. **`v_plans_pending_approval` belongs in the same
+  breath**: a drafted plan nobody has ruled on blocks every ticket under it, and a row there
+  with an empty `gate_node_id` has no gate to surface it — without this line it is invisible;
 - what moved since the last check-in, summarized by subject rather than recited by timestamp.
 
 **Empty guild** (`requirements_open` and `requirements_done` both 0): say the board is empty
@@ -278,6 +282,14 @@ built one. Do not improvise a chain. Go to **3.7**.
 
 **A pending `gate-plan` is not yours.** `guild:new-requirement` presents it. Say so, offer to
 hand it back to that skill, and never approve it yourself or build past it.
+
+**An approved `gate-plan` over a `pending` plan is a drift, not a green light.** Approving is
+three writes — the gate, the node, and `plan.approval` — and a board where the first two landed
+and the third did not will show the plan in `v_plans_pending_approval` forever. Say which it is
+before you dispatch: if the gate carries an approval decision, the fix is the missing write
+(`UPDATE plan SET approval='approved', approved_by='user', approved_at=…, gate_node_id=…`), and
+it is the guild master's word you are recording, not a new decision. If the gate is genuinely
+undecided, hand it back and build nothing.
 
 ### 3.2 Advance the requirement, and form ONE batch
 
@@ -577,9 +589,13 @@ SELECT id, status, tasks_total, tasks_done, tasks_open, tasks_blocked, tasks_fai
 ```
 
 `tasks_open = 0` → `UPDATE requirement SET status = 'done' WHERE id = 'REQ-NNN' AND status <>
-'done' RETURNING id, status;` then roll the direction above it up — a phase whose
-requirements are all done is `done`, a goal whose phases are all done is `done` — then append
+'done' RETURNING id, status;` then roll the direction above it up — a project whose
+requirements are all done is `done`, a goal whose projects are all done is `done` — then append
 a bullet to `CHANGELOG.md` (3.9).
+
+Closing a **sequential** project is what releases the next one in its goal, so re-read
+`v_projects_runnable` after the roll-up: a project that was not runnable a moment ago may be
+now, and that is the next thing to dispatch.
 
 **`tasks_open` counts `blocked`, and that is the point.** `failed` was adjudicated at the
 gate; `blocked` is a machine verdict nobody has looked at, and closing a requirement over one

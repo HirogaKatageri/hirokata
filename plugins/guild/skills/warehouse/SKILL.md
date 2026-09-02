@@ -3,7 +3,7 @@ name: warehouse
 description: >
   The guild's warehouse — how to read and write guild data with SQL. Load this
   before touching anything in the guild database: tasks, requirements, plans,
-  goals, phases, bugs, review findings, work logs, docs, coverage, the execution
+  goals, projects, bugs, review findings, work logs, docs, coverage, the execution
   graph, gates, the agent roster, capabilities, or the event feed. Also load it
   for the board, the brief, bounties, "what's next", "what moved", roster gaps,
   or a capability match. Trigger phrases include "guild board", "guild brief",

@@ -49,7 +49,7 @@ It is not a formality: they are handing an unsupervised process their working tr
 | File bugs and review findings | Delete anything, or rewrite history |
 | Append to `work_log` and `review_finding` | Push to a remote |
 | Commit per completed task, on `guild/REQ-NNN` | Commit to the default branch |
-| | Change goals, phases or priorities |
+| | Change goals, projects or priorities |
 | | Create a guild member |
 
 **The asymmetry is the point: an unattended guild can do work and record problems, but every
@@ -359,6 +359,11 @@ SELECT CAST((julianday('now') - julianday(
 
 -- is any gate waiting?
 SELECT COUNT(*) FROM v_gates_pending;
+
+-- is any DRAFTED PLAN waiting on a person? A plan with no gate node behind it stops the
+-- shift for the same reason a gate does — only a human can rule on it — and nothing else
+-- in this loop would ever surface it.
+SELECT COUNT(*) FROM v_plans_pending_approval;
 ```
 
 **The stall detector.** Compare `used` with `guild_state['shift:used']` from the previous turn.
@@ -379,7 +384,7 @@ increments never decrements.
 
 | # | Reason | Condition |
 |---|---|---|
-| 1 | `gate` | no candidate has ready work **and** `v_gates_pending` is non-empty |
+| 1 | `gate` | no candidate has ready work **and** `v_gates_pending` or `v_plans_pending_approval` is non-empty |
 | 2 | `infrastructure` | the stall counter reached 2 |
 | 3 | `max-tasks` | `used >= max_tasks` |
 | 4 | `max-minutes` | `minutes >= max_minutes` |
@@ -388,7 +393,9 @@ increments never decrements.
 | 7 | `operator` | the user ended it |
 
 `gate` outranks the ceilings deliberately: if both are true at once, "a decision is waiting" is
-actionable and "out of budget" is noise. `infrastructure` outranks them too, because a stalled
+actionable and "out of budget" is noise. A pending **plan approval** counts as a gate here even
+when no `gate` row exists for it — the shift cannot rule on a plan any more than it can decide
+a gate, so name the plan in the stop report exactly as you would name the gate. `infrastructure` outranks them too, because a stalled
 loop reported as `max-tasks` is a lie that costs a whole night — it would say the shift did its
 ten when in fact it did nothing ten times.
 
@@ -437,7 +444,12 @@ probably have picked, stop.
 
 ```sql
 SELECT node_id, requirement_id, node_key, kind, prompt FROM v_gates_pending;
+SELECT id, requirement_id, status, gate_node_id, title FROM v_plans_pending_approval;
 ```
+
+The second query is not redundant. A plan can be waiting on a person with **no gate row behind
+it** — approved in conversation on a small change, or a `gate_node_id` never linked — and the
+first query cannot see it. Present both lists.
 
 ### `gate-plan` — before anything is built
 
@@ -538,6 +550,7 @@ SELECT json_object('ts', ts, 'actor', actor, 'verb', verb, 'type', subject_type,
 SELECT * FROM v_failed_tasks;
 SELECT id, requirement_id, status, who, reason FROM v_blocked_tasks ORDER BY id;
 SELECT node_id, requirement_id, node_key, kind FROM v_gates_pending;
+SELECT id, requirement_id, gate_node_id, title FROM v_plans_pending_approval;
 ```
 
 Narrate stop reason first, then what got done, then the decisions waiting, then what you would do
@@ -609,7 +622,7 @@ that mattered — arrives silenced.
    stalls everything behind it, and at 3am there is nobody to notice.
 7. **Never improvise a member.** No eligible agent means the ticket is a roster gap; block it and
    move on.
-8. **Never change direction.** No `goal`, no `phase`, no `priority`, no retitling somebody else's
+8. **Never change direction.** No `goal`, no `project`, no `priority`, no retitling somebody else's
    work. A shift executes the plan; it does not edit it.
 9. **`started` and `ended` are the only `event` rows you write by hand,** and they are never
    updated or deleted. Everything else in `event` is the triggers' to write.
