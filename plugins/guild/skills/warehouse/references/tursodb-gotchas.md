@@ -400,6 +400,10 @@ for so long.
 | Plain CTE `WITH x AS (…)` | ✅ |
 | `NOT EXISTS` correlated subquery | ✅ — this is what replaces recursion |
 | `LEFT JOIN` + `GROUP BY` + `COUNT` / `SUM(CASE WHEN …)` / `MAX` | ✅ |
+| `LEFT JOIN` onto a **VIEW** (incl. one built from `UNION ALL`) | ✅ — `v_doc_neighbors` resolves an edge's polymorphic endpoint this way |
+| Correlated `NOT EXISTS` against a **VIEW** built from `UNION ALL` | ✅ — this is how `v_knowledge_dangling` stands in for the foreign key an edge cannot have |
+| `group_concat(col)` and `group_concat(col, sep)` | ✅ — `v_decision_log` builds its id lists with it. **Ids only**: it is a whitespace-separated column, so a title in there forges a field |
+| `AFTER DELETE` trigger | ✅ verified firing — `trg_edge_unlinked` records a retracted assertion |
 | `UNION ALL` compound with one trailing `ORDER BY` | ✅ ordering applies across the whole compound |
 | `ORDER BY CASE … END`, `LIMIT` | ✅ |
 | `printf('%03d', 7)` → `TASK-007` | ✅ |

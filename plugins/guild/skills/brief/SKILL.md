@@ -67,6 +67,11 @@ SELECT '## findings';     SELECT json_object('id',id,'task',task_id,'sev',severi
                                  'what',summary) FROM v_open_findings;
 SELECT '## coverage';     SELECT json_object('id',id,'risk',risk,'due',interval_days,
                                  'since',COALESCE(days_since,-1),'area',area) FROM v_coverage_due;
+SELECT '## docs-stale';   SELECT json_object('slug',slug,'kind',kind,'subject',
+                                 subject_type || ':' || subject_id,'moved',subject_moved_at,
+                                 'title',title) FROM v_doc_stale;
+SELECT '## undocumented'; SELECT json_object('id',id,'at',finished_at,'title',title)
+                            FROM v_undocumented_work;
 SELECT '## gates';        SELECT json_object('node',node_id,'req',requirement_id,
                                  'kind',kind,'prompt',prompt) FROM v_gates_pending;
 SELECT '## approvals';    SELECT json_object('id',id,'req',requirement_id,'status',status,
@@ -109,7 +114,8 @@ the user's to ask for, and Step 4's last rule tells you to **name the query** ra
 
 `v_brief` is the standup as one fact per row: `next`, `next_reason`, the task counts,
 `bounties_open` / `bounties_stuck`, `bugs_open`, `findings_open`, `coverage_due`,
-`nodes_ready`, `gates_pending`, `plans_pending_approval`, `events_since_checkin`.
+`nodes_ready`, `gates_pending`, `plans_pending_approval`, `events_since_checkin`,
+`docs_current`, `docs_stale`, `work_undocumented`.
 Every count comes from the same view its detail list comes from, so **a count and its listing
 cannot disagree.** Never state a number that is not in these rows.
 
@@ -138,6 +144,12 @@ What each block teaches:
   not a glitch: the vocabulary is open by design.
 - **`## coverage` reports `since = -1` for an area that has never been inspected.** That is not
   "0 days ago", and rendering it as such lies about the state of the product.
+- **`## docs-stale` and `## undocumented` are the library's two failure modes**, and they are
+  different sentences. A stale page has a subject that MOVED after the page was last touched —
+  it names `subject` and `moved`, so say which requirement or task moved and when. Undocumented
+  work is a `done` requirement no page claims at all. Neither blocks anything, so **do not lead
+  with them**: they belong in the risk beat, after the work, unless the user asked about
+  documentation. A count with no example is not a briefing — name one slug or one REQ.
 
 **An empty block is good news stated by its absence.** No `## bugs` rows means nothing is
 open. Do not announce empty categories, and do not invent one.
@@ -193,7 +205,10 @@ them. Skip any part the data does not support.
 3. **Risks — named, never counted.** Open bugs worst-severity first, every `critical` one by id
    and title. Then the unadjudicated failed tasks, with their reason. Then the findings, at
    least the critical and major ones, each as severity + reviewer + what + where. Then coverage
-   areas overdue or never inspected. **End the risk beat with the roster gaps** — a
+   areas overdue or never inspected. Then the library, **only when it has something to say** —
+   stale pages named by slug with the subject that moved, and undocumented finished work named
+   by REQ. It is the softest risk on the page and it goes last inside this beat, because a
+   documentation gap never blocks a ticket. **End the risk beat with the roster gaps** — a
    `status-blocked` row is a risk with a known remedy, which is the most useful kind to state:
    "TASK-005 has needed `rust` since REQ-001, and no available subagent declares it."
 4. **What moved** — summarize by subject rather than reciting timestamps: "since your last

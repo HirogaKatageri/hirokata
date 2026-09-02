@@ -7,9 +7,9 @@
 **Shape:** approve the plan, then run to completion.
 
 ```
-gate-plan ─▶ implement (× tickets) ─▶ test-plan ─▶ test-write ─▶ review (× 4) ─▶ gate-repairs ─▶ repair
+gate-plan ─▶ implement (× tickets) ─▶ test-plan ─▶ test-write ─▶ review (× 4) ─▶ gate-repairs ─▶ repair ─▶ document
    GATE                                                                            GATE
-   └──────────────── segment 1: runs without stopping ──────────────┘              └─ segment 2 ─┘
+   └──────────────── segment 1: runs without stopping ──────────────┘              └───── segment 2 ─────┘
 ```
 
 Use it for every requirement that produces code. For inspecting code that already exists, use
@@ -28,8 +28,9 @@ Use it for every requirement that produces code. For inspecting code that alread
 | 5 | `review` | work | `test-write` | **fixed at 4 named reviewers** | all four together | yes |
 | 6 | `gate-repairs` | gate | `review` (all four) | none, always one | n/a | yes |
 | 7 | `repair` | work | `gate-repairs` | one **anchor**, tickets underneath | tickets sharing a `parallel_group` | no |
+| 8 | `document` | work | `repair` | none, always one | no | yes |
 
-With *N* implement tickets that is **N + 9 nodes and 2N + 10 edges**. Two tickets → 11 nodes, 14
+With *N* implement tickets that is **N + 10 nodes and 2N + 11 edges**. Two tickets → 12 nodes, 15
 edges, 2 gate rows. That is the number to check your INSERT against.
 
 ---
@@ -120,6 +121,33 @@ Capability: `implement`. Produces: **fixes for the approved findings only.**
 Nominally `per-approved-finding`; same anchor rule as `test-write`. Tickets inherit the
 `parallel_group` of the ticket they repair, so disjoint repairs still run concurrently.
 
+### `document` — the requirement writes itself down
+
+Capability: `document`. Produces: **typed `doc` rows, and the `knowledge_edge` rows that link
+them to this requirement.**
+
+**It runs last, after `repair`, because documentation of a moving target is waste.** By this
+point the code is final, the reviewers have spoken and the guild master has ruled on what gets
+fixed — so what the librarian writes is what actually shipped, including the findings that were
+deliberately waived, which are among the most useful things a future reader can learn.
+
+It reads the requirement, the plan, the **gate decisions**, the review findings, the
+`graph_deviation` reasons and the diff, then writes at most four things: the domain rules this
+work established (`business`), how the subsystem now works (`technical`), each choice that a
+reasonable engineer could have made differently (`decision`), and any operation somebody will
+have to perform (`runbook`). Requirements that produced none of those get a work-log line saying
+so, which takes a minute and is a legitimate outcome — see the note on `required` below.
+
+**Why it is `required: true`.** A node that may be dropped is a node that gets dropped, and the
+cost is invisible for months and then enormous. The architect may still RESHAPE it — a
+docs-only requirement might route it to a single `technical` update — but "we'll write it up
+later" is not a reshape, and there is no later.
+
+**It is the only node that writes to the library**, which is why nothing before it needs to
+remember to. The researcher and the architect still write `doc` rows as they go (research
+findings, decisions taken at plan time); the librarian's job is the sweep at the end that
+catches what they did not.
+
 ---
 
 ## 3. What may run at the same time
@@ -132,6 +160,9 @@ the same non-null label form one batch. A NULL label means "run me alone".
 | `implement.<TASK-ID>` | the implement ticket's own `parallel_group` | tickets the architect declared disjoint run together |
 | `review.<agent>` | the literal `'review'` | all four reviewers in one wave |
 | everything else | `NULL` | serial |
+
+`document` is deliberately in "everything else". It runs alone, after everything, and it is the
+last thing the requirement does.
 
 **The disjointness assertion belongs to the architect, not to the database.** `task.files`
 is where you record which files a ticket owns; if two tickets share a file, give them different
@@ -292,6 +323,11 @@ INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_gr
 SELECT 'REQ-007/repair', r.id, 'repair', 'work', NULL, NULL, 'pending'
 FROM requirement r WHERE r.id = 'REQ-007';
 
+-- 8. document — the requirement writes itself down. Last, and always one -----------
+INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
+SELECT 'REQ-007/document', r.id, 'document', 'work', NULL, NULL, 'pending'
+FROM requirement r WHERE r.id = 'REQ-007';
+
 -- EDGES: one statement per (predecessor key, successor key) pair.
 -- A CROSS JOIN over the INSTANCES of the two keys, so a fanned predecessor becomes a
 -- real barrier: test-plan waits for every implement.<TASK-ID>. Template-sized, never
@@ -320,6 +356,13 @@ INSERT INTO graph_edge (from_node, to_node)
 SELECT f.id, t.id FROM graph_node f, graph_node t
 WHERE f.requirement_id = 'REQ-007' AND t.requirement_id = 'REQ-007'
   AND f.node_key = 'gate-repairs' AND t.node_key = 'repair' AND f.id <> t.id;
+-- `repair` may finish as `skipped` when the gate approved nothing. `done` and `skipped`
+-- both count as finished, so `document` becomes ready either way — which is the point:
+-- a requirement with no repairs still gets written down.
+INSERT INTO graph_edge (from_node, to_node)
+SELECT f.id, t.id FROM graph_node f, graph_node t
+WHERE f.requirement_id = 'REQ-007' AND t.requirement_id = 'REQ-007'
+  AND f.node_key = 'repair' AND t.node_key = 'document' AND f.id <> t.id;
 
 -- GATE ROWS. Prompts as hex — always single-line, so the splitter cannot tear them.
 INSERT INTO gate (node_id, prompt, kind, status, decision, decided_at)
@@ -406,7 +449,7 @@ Run these after any deviation. Each returns **zero rows when the graph is sound*
 -- (a) a template key with no instance = a DROPPED node
 WITH tpl(k, required) AS (VALUES
   ('gate-plan',1),('implement',1),('test-plan',0),('test-write',0),
-  ('review',1),('gate-repairs',1),('repair',0))
+  ('review',1),('gate-repairs',1),('repair',0),('document',1))
 SELECT 'DROPPED' || CASE WHEN tpl.required = 1 THEN ' (REQUIRED)' ELSE '' END || ': ' || tpl.k
 FROM tpl
 WHERE NOT EXISTS (SELECT 1 FROM graph_node n

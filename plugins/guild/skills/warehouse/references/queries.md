@@ -267,30 +267,177 @@ no `nit` — a bug is not a nit.
 ### Doc — upsert into the library
 
 ```sql
-INSERT INTO doc (slug, title, body, source, updated_at)
-VALUES ('sveltekit-form-actions', 'SvelteKit form actions',
-        CAST(x'<hex-body>' AS TEXT), 'researcher',
-        strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+INSERT INTO doc (slug, title, body, kind, status, area, source, created_at, updated_at)
+VALUES ('adr-session-store', 'Sessions live in Redis',
+        CAST(x'<hex-body>' AS TEXT), 'decision', 'current', 'auth', 'architect',
+        strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 ON CONFLICT(slug) DO UPDATE SET
   title      = excluded.title,
   body       = excluded.body,
+  kind       = excluded.kind,
+  area       = excluded.area,
   source     = excluded.source,
   updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
 RETURNING slug;
 ```
 
+**`created_at` is not in the DO UPDATE list, and `status` is not either.** The first is a
+birth date and an upsert must not reset it. The second is a *lifecycle*, moved by the
+deliberate two-write supersession below — never as a side effect of somebody re-saving a
+page.
+
+**Pick `kind` on purpose.** It is the first thing every reader branches on:
+
+| kind | for |
+|---|---|
+| `business` | the domain's own rules — what a refund *is*, when an account is dormant |
+| `technical` | how a subsystem works right now |
+| `decision` | **an ADR.** One choice, its context, its alternatives, its consequences |
+| `research` | an external lookup the guild should not have to repeat |
+| `runbook` | the steps for an operation somebody performs |
+| `reference` | everything else. The default, and deliberately boring |
+
 The slug is a **key**: someone has to retype it. Validate it against a closed alphabet at the
 door rather than slugifying silently — storing `my-notes` for `My Notes` makes the next
 lookup report not-found, which reads as data loss.
 
+**The rewrite is snapshotted for you.** `trg_doc_revised` copies the OLD body into
+`doc_revision` on every body change, so you never have to remember to keep history — and
+the newest revision row is the text that came *before* the live one.
+
+### Linking — the edge, and the referential check that is not a foreign key
+
+`knowledge_edge` endpoints are polymorphic, so **there is no foreign key on either end**
+(schema.sql, "cannot enforce" item 11). Write every edge as
+`INSERT ... SELECT ... FROM <target table>` so a missing endpoint produces **zero rows
+instead of a dangling edge** — the `FROM` clause *is* the check.
+
+```sql
+-- this decision governs REQ-004. If REQ-004 does not exist, nothing is written
+INSERT INTO knowledge_edge (rel, from_type, from_id, to_type, to_id, note, created_by, created_at)
+SELECT 'decides', 'doc', 'adr-session-store', 'requirement', r.id,
+       CAST(x'<hex-note>' AS TEXT), 'architect', strftime('%Y-%m-%dT%H:%M:%SZ','now')
+  FROM requirement r WHERE r.id = 'REQ-004'
+RETURNING id;
+```
+
+**Zero rows back means the target was not there.** That is the whole point of the shape, and
+it is why `RETURNING` is not optional here — the write is otherwise indistinguishable from a
+successful one.
+
+The relations, and what each is for:
+
+| rel | shape | means |
+|---|---|---|
+| `describes` | doc → work | this page explains that requirement/task/project |
+| `decides` | doc → work | this **decision** governs that work |
+| `supersedes` | doc → doc | **the evolution edge.** This replaces that |
+| `refines` | doc → doc | a narrower topic under that one |
+| `depends-on` | doc → doc | read that first |
+| `contradicts` | doc → doc | these two disagree and somebody should resolve it |
+| `derived-from` | doc → anything | provenance: this came out of that plan/finding/bug |
+| `evidence-for` | anything → doc | that bug/finding is empirical support for this page |
+
+The rel/type pairings are **CHECK constraints**, not conventions — `supersedes` between two
+non-docs is refused by the engine. Verified on 0.7.2.
+
+### Superseding a decision — two writes, and the order matters
+
+Changing your mind is the single most valuable thing this library records, so it gets its own
+recipe. **Never edit the old decision's body to say "we don't do this any more."** That
+destroys the record of what was believed and substitutes a note about it.
+
+```sql
+-- 1. the new decision, as its own document
+INSERT INTO doc (slug, title, body, kind, status, area, source, created_at, updated_at)
+VALUES ('adr-session-store-v2', 'Sessions move to Postgres',
+        CAST(x'<hex-body>' AS TEXT), 'decision', 'current', 'auth', 'architect',
+        strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))
+RETURNING slug;
+
+-- 2. the edge, which is what actually retires the old one
+INSERT INTO knowledge_edge (rel, from_type, from_id, to_type, to_id, note, created_by, created_at)
+SELECT 'supersedes', 'doc', 'adr-session-store-v2', 'doc', d.slug,
+       CAST(x'<hex-reason>' AS TEXT), 'architect', strftime('%Y-%m-%dT%H:%M:%SZ','now')
+  FROM doc d WHERE d.slug = 'adr-session-store'
+RETURNING id;
+
+-- 3. optional, and only cosmetic
+UPDATE doc SET status = 'superseded' WHERE slug = 'adr-session-store' RETURNING slug;
+```
+
+**Step 3 is optional on purpose.** `v_doc_current` hides a document that has an inbound
+`supersedes` edge whatever its `status` says, so the edge alone is enough. Setting the status
+makes the row read correctly on its own, which is worth doing — but the view does not depend
+on you remembering.
+
+**The old row stays.** A superseded decision is how the project's evolution is read;
+`v_decision_log` lists it with `superseded_by` filled in.
+
+### Reading the graph — one hop, because there is no `WITH RECURSIVE`
+
+```sql
+-- the neighbourhood: everything this page relates to, both directions, with titles
+SELECT direction, rel, other_type, other_id, other_title, note
+  FROM v_doc_neighbors WHERE slug = 'adr-session-store'
+ ORDER BY direction, rel;
+
+-- what this project decided, including what it un-decided
+SELECT slug, title, status, supersedes, superseded_by, governs, revisions
+  FROM v_decision_log;
+
+-- how one page's text changed. The live body is in `doc`; these are what came before
+SELECT id, replaced_at, title FROM doc_revision WHERE slug = 'refund-rules'
+ ORDER BY replaced_at DESC;
+SELECT body FROM doc_revision WHERE id = 12;   -- one column, so stdout IS the body
+```
+
+**A supersession chain three deep is three queries, not one.** `WITH RECURSIVE` is a parse
+error on tursodb. Loop in the caller, one hop per round trip, and **cap the loop** — unlike
+`graph_edge`, this graph is allowed to contain a cycle (`contradicts` and `depends-on` both
+legitimately go both ways):
+
+```bash
+slug='adr-session-store'; seen=''; n=0
+while [ -n "$slug" ] && [ "$n" -lt 20 ]; do
+  case " $seen " in *" $slug "*) echo "cycle at $slug"; break;; esac
+  seen="$seen $slug"; n=$((n+1))
+  slug=$(printf "SELECT from_id FROM knowledge_edge
+                  WHERE rel='supersedes' AND to_type='doc' AND to_id='%s' LIMIT 1;\n" "$slug" \
+         | tursodb -q -m list "$DB")
+done
+```
+
+### The two drift reads — documentation coverage as a query
+
+```sql
+-- the work moved and the page did not
+SELECT slug, title, subject_type, subject_id, doc_updated_at, subject_moved_at
+  FROM v_doc_stale;
+
+-- shipped, and nobody wrote it down
+SELECT id, title, finished_at, tasks_done FROM v_undocumented_work;
+
+-- linked to nothing, so invisible to both of the above
+SELECT slug, title, kind FROM v_doc_current WHERE edges = 0;
+```
+
+`v_doc_stale` emits **one row per (page, moved subject)**, so `COUNT(DISTINCT slug)` is the
+number of pages needing attention — which is what `v_brief.docs_stale` reports.
+
+**`v_knowledge_dangling` must always be empty.** It is a global invariant, it is the foreign
+key the engine cannot give us, and `guild:validate` runs it. A non-empty result means
+something an edge pointed at was deleted.
+
 ### Searching the library — no FTS5, so `LIKE` with escapes
 
 ```sql
-SELECT slug, title FROM doc
- WHERE lower(title) || char(10) || lower(body) LIKE
+SELECT slug, kind, title FROM doc
+ WHERE status <> 'rejected'
+   AND lower(title) || char(10) || lower(body) LIKE
        '%' || replace(replace(replace(lower('fail()'), '\', '\\'), '%', '\%'), '_', '\_') || '%'
        ESCAPE '\'
- ORDER BY slug;
+ ORDER BY kind, slug;
 ```
 
 Escape the backslash **first**, so nothing introduced later gets double-escaped. Do it in
@@ -298,6 +445,8 @@ SQL, not the shell. `lower()` on both sides so behavior does not depend on the e
 `case_sensitive_like` — its honest limit is that `lower()` is ASCII-only. **Refuse an empty
 query**: it escapes to `%%` and quietly answers "everything".
 
+**Filter by `kind` before you search when you know what you want.** "What are the business
+rules for billing" is `WHERE kind = 'business' AND area = 'billing'` and needs no LIKE at all.
 ---
 
 ## 2. Moving something through status

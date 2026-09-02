@@ -7,6 +7,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Guild Plugin v8.0.0 — the library becomes a knowledge graph (BREAKING).** `doc` was a flat
+  pile: a slug, a title, a body and a source, with nothing pointing at anything. Three things it
+  could not do, each of which cost something real. It could not say what a document was **for**, so
+  a domain rule, a subsystem walkthrough and an API lookup were the same kind of row. It could not
+  hold a **decision** at all — architectural choices lived in `plan.body` prose and in
+  `gate.decision` JSON, both attached to a ticket and both archived when the ticket closed, which
+  made *"why is it like this"* the most expensive question the guild could be asked. And nothing
+  related to anything, so nothing could be derived.
+
+  **`doc` gains `kind`, `status`, `area` and `created_at`**; `kind` is `business` · `technical` ·
+  `decision` · `research` · `runbook` · `reference`, and one `status` vocabulary serves prose and
+  ADRs both (`draft` reads as *proposed* on a decision, `current` as *accepted*). **Superseded and
+  rejected rows are never deleted** — they are how a project's evolution is read, and the options
+  it did *not* take are half of why it looks the way it does.
+
+  **`knowledge_edge` is the new table that matters.** Typed, directed relations that may point at
+  **any** board row, which is what makes this a graph *over the work* rather than a second database
+  beside it: `describes` and `decides` (doc → requirement/task/project), `supersedes` · `refines` ·
+  `depends-on` · `contradicts` (doc → doc), `derived-from` (provenance) and `evidence-for`. The
+  rel/type pairings are CHECK constraints — `supersedes` between two non-docs is refused by the
+  engine. **The endpoints have no foreign key**, because SQLite cannot `REFERENCES` a table chosen
+  at runtime; the write-time shape `INSERT … SELECT … FROM <target> WHERE id = …` stops you
+  creating a dangling edge, and **G10**, a new global invariant, catches one created by deleting
+  the other end later.
+
+  **`doc_revision` is written by a trigger**, so documentation history needs no discipline from
+  anybody, and it deliberately has **no foreign key to `doc`**: a revision must survive its
+  document being deleted, or it is not history.
+
+  **Two views make the library maintain itself.** `v_doc_stale` reports any page whose subject has
+  an `event` newer than the page — documentation drift derived from a record the board was already
+  keeping, so nobody files a "docs are out of date" ticket. `v_undocumented_work` lists finished
+  requirements nothing describes, in the idiom `v_coverage_due` already uses for quality.
+
+  **Every requirement now documents itself.** The `standard` template's last node is `document`,
+  run by a new `librarian` agent after `repair` — so what gets written is what actually shipped,
+  including the findings the guild master waived. Graph arithmetic moves to **N + 10 nodes,
+  2N + 11 edges**; gates stay at exactly **2**. The architect now also extracts each plan-time
+  decision into an ADR and reads the decision log *before* designing, and
+  `reviewer-architecture` reads it too — code that quietly violates a recorded decision is an
+  architecture finding even when it matches the plan in front of it.
+
+  **Migrating: `plugins/guild/migrations/008-the-library-becomes-a-graph.sql`, then re-apply
+  `schema.sql`.** Schema version **7 → 8**. **Check `SELECT version FROM schema_version` reads 7
+  first** — a second run does *not* fail safely, it resets every document's tagging, and no guard
+  inside the file can prevent that because a failing statement does not stop a tursodb script. A
+  `guild_state` tripwire makes a re-run exit non-zero so you find out afterwards; the version check
+  is what tells you beforehand. The backfill guesses two things and says so: `created_at` copies
+  `updated_at`, and `kind` is `research` when `source = 'researcher'`, `reference` otherwise. **No
+  edges are invented** — an edge is an assertion about meaning and a script cannot make one — so
+  every finished requirement appears in `v_undocumented_work` on the first read after upgrading.
+  That number is the backlog becoming visible, not a fault.
+
+  Verified end to end against tursodb 0.7.2: `23` tables, `30` views, `44` triggers, every new
+  CHECK rejecting its bad row, every trigger firing (and correctly *not* firing on a no-op
+  rewrite), G10 firing on both clauses, and a seeded v7 board round-tripping with
+  `PRAGMA integrity_check` clean. Four SQL constructs the schema had not used before —
+  `group_concat(col, sep)`, a `LEFT JOIN` onto a view, a correlated `NOT EXISTS` against a
+  `UNION ALL` view, and `AFTER DELETE` triggers — were each verified and added to §7 of
+  `tursodb-gotchas.md`.
+
 ### Documentation
 - **Every plugin README and CHANGELOG audited against what actually ships.** Findings and fixes:
   - **The install instructions pointed at a repository that does not exist.** The root README told

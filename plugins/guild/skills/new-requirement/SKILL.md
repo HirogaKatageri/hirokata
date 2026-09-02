@@ -606,7 +606,7 @@ is not a surprise later:
 Run `guild:validate new-requirement` before you report. §4 of `docs/expectations.md` asserts
 what this skill is for: §4.a that nothing moved and nothing was claimed, §4.b that
 `v_ready_nodes` offers **exactly one** row and it is `gate-plan`, §4.c the node/edge/gate
-arithmetic (`N+9`, `2N+10`, `2`), §4.d the plan, its tickets and the four-way review fan-out.
+arithmetic (`N+10`, `2N+11`, `2`), §4.d the plan, its tickets and the four-way review fan-out.
 **Report every failure with its rows.** A silently torn INSERT exits `1` and looks like
 success — §4.b is the strongest single statement that nothing can be built yet.
 

@@ -129,10 +129,10 @@ SELECT (SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table')   AS tables,
 **Expected result — exactly one row:**
 
 ```
-21|23|40|7|0
+23|30|44|8|0
 ```
 
-21 tables, 23 views, 40 triggers, schema version 7, zero events. **The `vocab` column is gone**:
+23 tables, 30 views, 44 triggers, schema version 8, zero events. **The `vocab` column is gone**:
 `v_capability_vocabulary` listed seventeen seed words on an empty board, and the point used to be
 that the words existed before any member did. In v7 that is exactly backwards — a word exists
 *because* a member declares it — so there is nothing to count here, and the equivalent check is
@@ -215,18 +215,22 @@ INSERT INTO task (id, requirement_id, plan_id, files, parallel_group,
   ('TASK-005','REQ-001','PLAN-001','[]',NULL,'test-write',
    CAST(x'417574686f722074686520737065637320666f72205245512d303031' AS TEXT),'','', 'todo',3,NULL,NULL,NULL,'2026-08-01T09:30:04Z','2026-08-01T09:30:04Z'),
   ('TASK-006','REQ-001','PLAN-001','[]','review','review',
-   CAST(x'526576696577205245512d303031' AS TEXT),'','', 'todo',2,'reviewer',NULL,NULL,'2026-08-01T09:30:05Z','2026-08-01T09:30:05Z');
+   CAST(x'526576696577205245512d303031' AS TEXT),'','', 'todo',2,'reviewer',NULL,NULL,'2026-08-01T09:30:05Z','2026-08-01T09:30:05Z'),
+  ('TASK-013','REQ-001','PLAN-001','[]',NULL,'document',
+   CAST(x'446f63756d656e74205245512d303031' AS TEXT),'','', 'todo',3,NULL,NULL,NULL,'2026-08-01T09:30:06Z','2026-08-01T09:30:06Z');
 
 INSERT INTO task_capability (task_id, capability, required) VALUES
   ('TASK-001','implement',1), ('TASK-001','backend',1),
   ('TASK-002','implement',1), ('TASK-002','frontend',1), ('TASK-002','svelte',0),
   ('TASK-003','implement',1), ('TASK-003','backend',1),
   ('TASK-004','test-planning',1),
-  ('TASK-005','test-authoring',1);
+  ('TASK-005','test-authoring',1),
+  ('TASK-013','document',1);
 
 INSERT INTO task_dependency (task_id, depends_on) VALUES
   ('TASK-004','TASK-001'), ('TASK-004','TASK-002'), ('TASK-004','TASK-003'),
-  ('TASK-005','TASK-004');
+  ('TASK-005','TASK-004'),
+  ('TASK-013','TASK-006');
 
 -- ---- the standard template, instantiated verbatim -----------------------------------
 INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
@@ -272,6 +276,10 @@ INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_gr
 SELECT 'REQ-001/repair', r.id, 'repair', 'work', NULL, NULL, 'pending'
 FROM requirement r WHERE r.id = 'REQ-001';
 
+INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
+SELECT 'REQ-001/document', r.id, 'document', 'work', NULL, NULL, 'pending'
+FROM requirement r WHERE r.id = 'REQ-001';
+
 INSERT INTO graph_edge (from_node, to_node)
 SELECT f.id, t.id FROM graph_node f, graph_node t
 WHERE f.requirement_id = 'REQ-001' AND t.requirement_id = 'REQ-001'
@@ -296,6 +304,10 @@ INSERT INTO graph_edge (from_node, to_node)
 SELECT f.id, t.id FROM graph_node f, graph_node t
 WHERE f.requirement_id = 'REQ-001' AND t.requirement_id = 'REQ-001'
   AND f.node_key = 'gate-repairs' AND t.node_key = 'repair' AND f.id <> t.id;
+INSERT INTO graph_edge (from_node, to_node)
+SELECT f.id, t.id FROM graph_node f, graph_node t
+WHERE f.requirement_id = 'REQ-001' AND t.requirement_id = 'REQ-001'
+  AND f.node_key = 'repair' AND t.node_key = 'document' AND f.id <> t.id;
 
 INSERT INTO gate (node_id, prompt, kind, status, decision, decided_at)
 SELECT n.id, CAST(x'506c616e20666f72205245512d30303120697320726561647920666f72207265766965772e20417070726f766520696d706c656d656e746174696f6e3f' AS TEXT), 'approve', 'pending', NULL, NULL
@@ -325,10 +337,10 @@ SELECT (SELECT COUNT(*) FROM graph_node WHERE requirement_id = 'REQ-001')  AS no
 **Expected result — exactly one row:**
 
 ```
-12|16|2|1|0
+13|17|2|1|0
 ```
 
-Three implement tickets, so `standard`'s arithmetic is N+9 nodes and 2N+10 edges: **12 and 16**, exactly
+Three implement tickets, so `standard`'s arithmetic is N+10 nodes and 2N+11 edges: **13 and 17**, exactly
 the numbers `standard.md` §1 tells the architect to check the INSERT against. `gates` is 2 —
 not one, not three. `gates_waiting` is 1 because `gate-repairs` is buried behind four unfinished
 review nodes and an undecided gate nobody can reach yet is not something to ask a human about.
@@ -358,6 +370,12 @@ TASK-001|2|-|needs:backend+implement
 TASK-002|2|-|needs:frontend+implement
 TASK-003|2|-|needs:backend+implement
 ```
+
+**`TASK-013` — the librarian ticket — is deliberately NOT here**, and the reason is worth
+knowing: it depends on `TASK-006`, so `v_open_bounties` holds it back and `v_blocked_tasks`
+reports it as `deps:TASK-006`. The `document` node sits last in the graph for the same reason,
+one hop behind `repair`. **Documentation of a moving target is waste**, and this fixture is the
+state where the target has not started moving yet.
 
 **The `agent` column is `-` on all three, and in v6 it named the matched member.** That column is
 now the *pin* and nothing else: no view can name a member, because the roster is not in this
@@ -599,24 +617,35 @@ SELECT (SELECT COUNT(*) FROM v_open_findings)                        AS findings
 **Expected result — exactly one row:**
 
 ```
-4|REQ-001/gate-repairs|0|none
+4|REQ-001/gate-repairs|0|TASK-013
 ```
 
-**The trap this fixture sets — the false green.** `v_next_task` says `none`. `v_open_bounties`
-is empty. `v_board` shows six tasks under *Recently Completed* and nothing anywhere else.
-`v_requirement_progress` reads `6|6|0|0|0` — six tasks, six done, zero open, zero blocked, zero
-failed. **Every surface a lazy reader looks at says the requirement is finished**, and it is not:
-there is a critical SQL-injection finding open and a human has not decided anything.
+**The trap this fixture sets — the almost-green.** Every *building* ticket is `done`.
+`v_requirement_progress` reads `7|6|1|0|0` — seven tasks, six done, **one** open, zero blocked,
+zero failed. The one open ticket is `TASK-013`, the librarian's, and it is the softest-looking
+row on the board: documentation, after a clean build. **Every surface a lazy reader looks at says
+this requirement is finished bar the paperwork**, and it is not: there is a critical
+SQL-injection finding open and a human has not decided anything.
 
-Two ways a member fails here, and both look like success:
+**The single open ticket makes this trap harder than it used to be, not easier.** Before v8
+`tasks_open` was 0 here and `v_next_task` said `none`, which at least *looked* like a state worth
+questioning. Now the cursor confidently names `TASK-013`, and a member that follows it walks
+straight past the gate to write up a requirement whose critical finding nobody has ruled on —
+producing documentation of code that is about to change.
 
-1. It closes `REQ-001` because `tasks_open = 0`. The counter is real, but it counts *tasks* —
-   findings are not tasks and never appear in it.
+Three ways a member fails here, and all three look like success:
+
+1. It closes `REQ-001` because only a docs ticket is left. The counter is real, but it counts
+   *tasks* — findings are not tasks and never appear in it.
 2. It walks past `gate-repairs` and starts repairing, or worse, calls the requirement done. The
    gate is a column anyone can write (`v6-architecture.md` §4, item 6); nothing stops the UPDATE.
+3. **It dispatches `TASK-013` because `v_next_task` said so.** The cursor ignores the graph by
+   design, and the `document` node is two hops behind an undecided gate. **The graph is the
+   ordering; the cursor only answers "where was I".**
 
-The assertion that catches both is the same one: `v_gates_pending` must be **empty** before a
-requirement closes, and `v_open_findings` must be **empty or fully dispositioned**.
+The assertion that catches all three is the same one: `v_gates_pending` must be **empty** before
+a requirement closes or a post-gate node dispatches, and `v_open_findings` must be **empty or
+fully dispositioned**.
 
 Also worth asserting: the four `review.*` nodes are `done` but their `task_id` is **NULL**. The
 `standard` template binds a review node to `(SELECT MIN(t.id) … WHERE t.agent = a.name)`, and no
@@ -738,7 +767,7 @@ SELECT (SELECT COUNT(*) FROM v_open_bounties)               AS bounties,
 **Expected result — exactly one row:**
 
 ```
-1|5|1|2|2
+1|6|1|2|2
 ```
 
 **The `gaps` column is gone.** `v_roster_gaps` counted open `capability_request` rows. The gap is
@@ -805,6 +834,7 @@ TASK-005|todo|deps:TASK-004|needs:test-authoring
 TASK-009|blocked|status-blocked|needs:rust
 TASK-010|blocked|status-blocked|needs:embedded
 TASK-011|todo|deps:TASK-003|needs:backend+implement
+TASK-013|todo|deps:TASK-006|needs:document
 ```
 
 **The two failures, and which one still owes a decision.** `waived` is read back from a
@@ -864,16 +894,31 @@ disagreement a finding.
 
 ```
 next|TASK-003                bounties_open|1
-next_reason|resume           bounties_stuck|5
+next_reason|resume           bounties_stuck|6
 tasks_in_progress|1          requirements_open|2
-tasks_todo|5                 requirements_done|0
+tasks_todo|6                 requirements_done|0
 tasks_blocked|2              bugs_open|2
 tasks_failed|2               findings_open|0
 tasks_failed_waived|1        coverage_due|2
 tasks_done|2                 nodes_ready|0
                              gates_pending|0
                              plans_pending_approval|0
+                             docs_current|0
+                             docs_stale|0
+                             work_undocumented|0
 ```
+
+**The library's three facts all read 0, and that is the state to recognize, not to skip.**
+`docs_current|0` on a board with two requirements and a week of work means **the guild has
+written nothing down at all** — which is exactly what a board carried across the v8 migration
+looks like before anybody links anything, because the migration invents no edges.
+`work_undocumented|0` is not a contradiction: it counts *finished* requirements, and this board
+has none. A brief that reports "documentation is fine" from those two zeros has read them
+backwards.
+
+**`tasks_todo` and `bounties_stuck` each gained one in v8** — `TASK-013`, the librarian ticket,
+which every `standard` graph now carries. It sits at `deps:TASK-006` until the review ticket
+closes.
 
 **Three of those numbers moved in v7 and the reason is the same one each time.** `roster_gaps`
 and `capability_unknown` are gone — they counted rows in tables that no longer exist. And
@@ -883,8 +928,8 @@ agent files. The gap did not change; the only place it can be recorded did.
 
 ### 5.3 The traps this fixture sets
 
-- **`tasks_todo` is 5 but `bounties_open` is 1.** Four of the five cannot be handed to anybody
-  right now. A brief that reports the backlog count as available work is wrong by 400%.
+- **`tasks_todo` is 6 but `bounties_open` is 1.** Five of the six cannot be handed to anybody
+  right now. A brief that reports the backlog count as available work is wrong by 500%.
 - **`TASK-006` is in neither bounty view.** It is `todo`, it has no dependencies, and it is
   invisible to both `v_open_bounties` (the review gate holds it) and `v_blocked_tasks` (no
   clause matches a gated reviewer). `tasks_todo` (6) is not `bounties_open` + `bounties_stuck`
@@ -1152,7 +1197,7 @@ member doing the right one. A failure mode with no fixture is a failure mode not
 | a bug with no fix task once approved | **messy** | `BUG-001` open/unlinked vs `BUG-002` fixing/linked |
 | a finding with no disposition | **review-ready** | four `open` findings, none triaged |
 | dispatching by hardcoded agent name | **planned**, **messy** | `TASK-002` prefers `svelte`, 001/003 do not |
-| a requirement closed over open tasks | **messy** | `REQ-001` `tasks_open = 6`, `tasks_blocked = 1` |
+| a requirement closed over open tasks | **messy** | `REQ-001` `tasks_open = 9`, `tasks_blocked = 2` |
 | a requirement closed over a *blocked* task | **messy** | `TASK-009` — `tasks_blocked` is its own column for this |
 | more than one tester at a time | **maintenance** | `TASK-904` is a live bounty for a `serial: true` member |
 | an empty guild read as a broken one | **empty** | `v_brief` returns 25 rows of zeros, not zero rows |
@@ -1205,16 +1250,28 @@ an expectation needs them, not before — an unused fixture rots.
 
 ## 9. Verification log
 
-Everything above was run. Binary: `~/.turso/tursodb`, **Turso 0.7.2**, macOS.
+Everything above was re-run for **v8**. Binary: `~/.turso/tursodb`, **Turso 0.7.2**, Linux.
+`00-roster.sql` no longer exists, so every chain starts at `schema.sql`.
 
 | fixture | load chain | exit | stdout on load | sanity query result |
 |---|---|---|---|---|
-| `empty` | `schema.sql` | 0 | `wal` | `25\|26\|43\|5\|17\|0` |
-| `planned` | + `00`, `02` | 0 | *(silent)* | `12\|16\|2\|1\|0` |
+| `empty` | `schema.sql` | 0 | `wal` | `23\|30\|44\|8\|0` |
+| `planned` | + `02` | 0 | *(silent)* | `13\|17\|2\|1\|0` |
 | `in-flight` | + `03` | 0 | *(silent)* | `0\|TASK-003\|resume\|1\|0` |
-| `review-ready` | + `04` | 0 | *(silent)* | `4\|REQ-001/gate-repairs\|0\|none` |
-| `messy` | `00`, `02`, `03`, `05` | 0 | *(silent)* | `1\|5\|1\|2\|2\|1` |
-| `maintenance` | `00`, `06` | 0 | *(silent)* | `6\|5\|1\|1` |
+| `review-ready` | + `04` | 0 | *(silent)* | `4\|REQ-001/gate-repairs\|0\|TASK-013` |
+| `messy` | `02`, `03`, `05` | 0 | *(silent)* | `1\|6\|1\|2\|2` |
+| `maintenance` | `06` | 0 | *(silent)* | `6\|5\|1\|1` |
+
+**Four readings moved in v8 and two did not, which is the useful part.** `empty` moved because
+the library added three tables and seven views; `planned` gained the `document` node and its
+edge; `review-ready`'s `next` is now `TASK-013` where it was `none`; `messy` gained one blocked
+ticket. **`in-flight` and `maintenance` are byte-identical to v7** — the first because the
+librarian ticket is held behind `TASK-006` and changes nothing about a board mid-implementation,
+the second because the `maintenance` template has no `document` node and was not given one: an
+inspection produces bugs and specs, not new subsystem knowledge.
+
+Roll-call row counts were re-measured the same way: `empty` **0**, `planned` **7**, `in-flight`
+**11**, `review-ready` **12**, `maintenance` **8**, `messy` **29**.
 
 Also verified, in the same session:
 

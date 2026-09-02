@@ -49,9 +49,9 @@ skills/warehouse/
 
 ## 3. What the database now enforces
 
-`schema.sql` is 21 tables, 23 views and 40 triggers, at `schema_version = 7`. (It was 24 / 29 / 45
-through v6.2; v7 dropped the three roster tables and their six views — see
-[CHANGELOG.md](../CHANGELOG.md#700---2026-09-02).)
+`schema.sql` is 23 tables, 30 views and 44 triggers, at `schema_version = 8`. (24 / 29 / 45 through
+v6.2; v7 dropped the three roster tables and their six views, and v8 added the library's three
+tables and seven views — see [CHANGELOG.md](../CHANGELOG.md).)
 
 **CHECK constraints are the vocabularies.** Every status and enum column carries its word list. A
 value outside it is rejected by the engine, on every connection, from every member, forever. v5's
@@ -103,12 +103,20 @@ the `schema.sql` header, in `README.md`, and here, and nowhere else.
    `WITH RECURSIVE` there is no way to detect one in SQL, so this is a review duty.
 8. **Timestamps are UTC by convention.** The triggers use UTC. Hand-written values are whatever was
    written.
+9. **"Every `knowledge_edge` points at something that exists."** Its endpoints are polymorphic, so
+   there is no foreign key on either end and **G1 cannot cover them**. The write-time shape stops
+   you *creating* a dangling edge; nothing stops you creating one by deleting the other end later.
+   **G10** is the assertion that stands in, and it is the reason `guild:clear-board` cuts the
+   library's edges into the work before it deletes the work.
+10. **"A document describes the code as it is now."** Nothing can know that. `v_doc_stale` is the
+    honest approximation — a page whose subject has an `event` newer than the page — and it is a
+    *signal*, never an invariant. A stale page is not a breach.
 
 Where this document or any skill says a rule holds, check which list it is on.
 
-**These eight are exactly what `docs/expectations.md` asserts.** A rule the engine enforces needs
+**These ten are exactly what `docs/expectations.md` asserts.** A rule the engine enforces needs
 no assertion — a bad status word is rejected by a CHECK on every connection, forever, and spending
-an expectation on it buys nothing. The eight above are the ones nothing enforces at all, so each is
+an expectation on it buys nothing. The ten above are the ones nothing enforces at all, so each is
 carried instead by a SQL assertion with a stated expected result: G6 catches the requirement closed
 over an open task, G5 the capability outside the vocabulary, G4 the gate approved without the node
 moved, G7 the mutation that wrote around the triggers. Items 1 and 7 — the lying actor and the long
@@ -120,12 +128,22 @@ Verified against tursodb 0.7.2. Each of these shaped the schema.
 
 - **No `WITH RECURSIVE`.** Readiness and dependency logic join **direct** predecessors only — one
   hop — and propagate as work completes. Never write a traversal.
-- **No FTS5.** Text search is `LIKE`, with `%` and `_` escaped by the caller.
+- **No FTS5.** Text search is `LIKE`, with `%` and `_` escaped by the caller. This is also why the
+  library filters on `kind` and `area` before it searches at all — a column lookup beats a scan,
+  and "what are the business rules for billing" never needed a text search.
 - **No `lag`/`lead`/`ntile`/`percent_rank`/`cume_dist`.** Ranking is an `ORDER BY`; the rank is the
   row's position, assigned by the reader (see `v_open_bounties`).
 - **STRICT** accepts only INT, INTEGER, REAL, TEXT, BLOB, ANY. Every column is TEXT or INTEGER.
 - **Working:** STRICT, RETURNING, ON CONFLICT DO UPDATE, printf(), plain CTEs, WAL, foreign_keys,
-  JSON functions, CHECK, VIEW, TRIGGER, `UPDATE OF <col>` triggers.
+  JSON functions, CHECK, VIEW, TRIGGER, `UPDATE OF <col>` triggers — and, added in v8:
+  `group_concat(col, sep)`, a `LEFT JOIN` onto a view, a correlated `NOT EXISTS` against a view
+  built from `UNION ALL`, and `AFTER DELETE` triggers.
+- **No polymorphic foreign key**, which is not a tursodb limitation but a SQLite one: `REFERENCES`
+  names a table at declaration time. `knowledge_edge` endpoints may be a doc, a requirement, a task
+  or a bug, so the constraint is replaced by a write-time shape
+  (`INSERT … SELECT … FROM <target> WHERE id = …`, where a missing endpoint yields zero rows) and by
+  `v_knowledge_dangling`, asserted as global invariant **G10**. The rel/type *pairings* are still
+  real CHECKs — `supersedes` between two non-docs is refused.
 
 **The statement splitter.** tursodb ends a statement at a `;` that terminates a line — *even inside
 an open string literal*. Requirement bodies quote code, so free text must cross as

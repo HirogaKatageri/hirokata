@@ -56,15 +56,33 @@ UNION ALL SELECT 'work_log',     COUNT(*) FROM work_log
 UNION ALL SELECT 'findings',     COUNT(*) FROM review_finding
 UNION ALL SELECT 'events',       COUNT(*) FROM event
 UNION ALL SELECT 'KEEP:coverage',COUNT(*) FROM coverage
-UNION ALL SELECT 'KEEP:docs',    COUNT(*) FROM doc;
+UNION ALL SELECT 'KEEP:docs',    COUNT(*) FROM doc
+UNION ALL SELECT 'KEEP:revisions',COUNT(*) FROM doc_revision
+UNION ALL SELECT 'KEEP:doc_links',COUNT(*) FROM knowledge_edge
+                                   WHERE from_type = 'doc' AND to_type = 'doc'
+UNION ALL SELECT 'links_to_work', COUNT(*) FROM knowledge_edge
+                                   WHERE from_type <> 'doc' OR to_type <> 'doc';
 ```
 
 If every countable row is 0, say `The guild board is already empty — nothing to clear.` and stop.
 
 **What a clear deletes:** `goal`, `project`, `requirement`, `plan`, `task`,
 `task_dependency`, `task_capability`, `graph_node`, `graph_edge`, `graph_deviation`, `gate`,
-`work_log`, `review_finding`, `bug`, `inspection`, `inspection_coverage`, and the
-`graph-template:REQ-NNN` keys in `guild_state`.
+`work_log`, `review_finding`, `bug`, `inspection`, `inspection_coverage`, the
+`graph-template:REQ-NNN` keys in `guild_state`, **and every `knowledge_edge` that touches one
+of those rows.**
+
+**That last clause is not optional and it is easy to miss.** A `knowledge_edge` has no foreign
+key — its endpoints are polymorphic and the engine cannot cascade — so deleting a requirement
+leaves any `describes` or `decides` edge pointing at it **silently dangling**, which breaks the
+`v_knowledge_dangling` global invariant on the very next `guild:validate`. Step 4 deletes those
+edges explicitly, **first**, before the rows they point at.
+
+**The library keeps its own shape.** Only edges touching the work are cut. `doc → doc` edges —
+`supersedes`, `refines`, `depends-on`, `contradicts` — survive untouched, so the decision log
+and its chains read exactly as before. What is genuinely lost is *provenance*: a decision that
+governed `REQ-004` can no longer say so, because `REQ-004` is gone. Nothing can preserve that,
+and pretending otherwise with a dangling edge is worse than losing it cleanly.
 
 **What survives, and why:**
 
@@ -72,7 +90,9 @@ If every countable row is 0, say `The guild board is already empty — nothing t
 |---|---|
 | the agent files | **not in the database at all.** The roster is the guild, not the board — `agents/*.md` is untouched by anything here |
 | `coverage` | evergreen. It describes the **product**, and the product did not go away |
-| `doc` | the library. Knowledge the guild looked up once and should not look up again |
+| `doc` | the library. The business rules, the technical pages and **every decision this project ever made** — none of which stopped being true because the board was reset |
+| `doc_revision` | the library's own history, and the reason a superseded page can still be read |
+| `knowledge_edge`, **doc → doc only** | the supersession and refinement chains. The edges into the work are cut with the work |
 | `event` | the guild's memory. Deleting it is a separate, louder decision — see Step 5 |
 | `guild_state` (except `graph-template:*`) | `actor` and `last-checkin` are board plumbing |
 | `.guild/docs/` · `.guild/qa/` on disk | evergreen for exactly the same reasons as `doc` and `coverage` |
@@ -156,10 +176,28 @@ DELETE FROM goal;
 -- the per-requirement template keys; `actor` and `last-checkin` stay
 DELETE FROM guild_state WHERE key LIKE 'graph-template:%';
 
+-- NOTE: the knowledge_edge delete belongs at the TOP of this script, not here — see below.
+
 SELECT 'left', (SELECT COUNT(*) FROM task), (SELECT COUNT(*) FROM requirement),
                (SELECT COUNT(*) FROM graph_node),
-               (SELECT COUNT(*) FROM coverage), (SELECT COUNT(*) FROM doc);
+               (SELECT COUNT(*) FROM coverage), (SELECT COUNT(*) FROM doc),
+               (SELECT COUNT(*) FROM v_knowledge_dangling);
 ```
+
+**The very first delete in the script must be the library's edges into the work**, before
+anything they point at is gone. Put this at the top, above the `work_log` delete:
+
+```sql
+-- Cut the library's links INTO the board. doc -> doc edges are untouched, so the decision
+-- log and its supersession chains survive intact.
+-- There is no cascade to do this for us: an edge's endpoints are polymorphic, so the engine
+-- has no foreign key on either end. Skipping this leaves dangling edges and breaks the
+-- v_knowledge_dangling invariant on the next validate.
+DELETE FROM knowledge_edge WHERE from_type <> 'doc' OR to_type <> 'doc';
+```
+
+**`v_knowledge_dangling` must read 0 in the verification SELECT.** If it does not, an edge
+survived pointing at something that did not — say so and stop rather than deleting more.
 
 **Verify with that last SELECT and report what it actually says.** A failing statement does not
 stop a tursodb script and the errors arrive on *stdout*, so "no error scrolled past" proves
@@ -218,8 +256,12 @@ evergreen row destroyed something a board reset was never allowed to reach.
 - **Never `DELETE FROM agent`.** Retire with `active = 0`. A done task from months ago may still
   name a member whose file is gone, and deleting either breaks the foreign key or orphans the
   history that explains the board.
-- **Never delete `coverage` or `doc`.** They describe the product and the guild's knowledge, both
-  of which survive any number of boards.
+- **Never delete `coverage`, `doc` or `doc_revision`.** They describe the product and the
+  guild's knowledge — including every decision it ever made — and all of that survives any
+  number of boards.
+- **Do delete the `knowledge_edge` rows that point into the work, and do it first.** There is
+  no cascade. Leaving them behind breaks a global invariant, and the dangling edge claims a
+  requirement exists that does not. `doc → doc` edges stay.
 - **`event` is a separate question**, asked separately, answered separately.
 - **Verify by reading the counts back**, not by the absence of an error message.
 - **A fresh board can also be a fresh file** — `GUILD_DIR=.guild-next` with the schema applied to

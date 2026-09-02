@@ -340,7 +340,8 @@ For each node in the batch:
 
 - **Bound** → use it.
 - **Unbound** (`task` is empty) → the node is one the architect could not bind unambiguously
-  (`test-plan`, `qa-plan`, every `review.*`). Find the requirement's open ticket for that work:
+  (`test-plan`, `qa-plan`, `document`, every `review.*`). Find the requirement's open ticket for
+  that work:
 
   ```sql
   SELECT id, priority, who, parallel_group, title FROM v_open_bounties
@@ -348,8 +349,9 @@ For each node in the batch:
   ```
 
   Pick the one whose title and `who` (`needs:…`) match the node's key — `test-plan` takes the
-  `needs:test-planning` bounty, `review.*` takes the reviewer ticket — then **bind it** when
-  you move the node, so nobody has to guess again.
+  `needs:test-planning` bounty, `review.*` takes the reviewer ticket, `document` takes the
+  `needs:document` bounty — then **bind it** when you move the node, so nobody has to guess
+  again.
 - **Unbound and no bounty for it** → the node is an **anchor** for a fanout that has not
   happened yet. See *Anchors* below.
 

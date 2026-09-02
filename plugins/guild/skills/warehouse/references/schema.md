@@ -4,7 +4,7 @@ Orientation, not DDL. The DDL is `${CLAUDE_PLUGIN_ROOT}/schema.sql` and it is he
 commented — read it when you need the exact column list. Read *this* when you are deciding
 **where a piece of information belongs** and **what you can rely on**.
 
-Twenty-one tables. They fall into six groups:
+Twenty-three tables. They fall into seven groups:
 
 | Group | Tables |
 |---|---|
@@ -13,7 +13,8 @@ Twenty-one tables. They fall into six groups:
 | work | `requirement` · `plan` · `task` · `task_dependency` · `task_capability` |
 | execution graph | `graph_node` · `graph_edge` · `graph_deviation` · `gate` |
 | records | `work_log` · `review_finding` · `bug` |
-| maintenance & memory | `coverage` · `inspection` · `inspection_coverage` · `doc` · `event` |
+| maintenance | `coverage` · `inspection` · `inspection_coverage` |
+| library & memory | `doc` · `knowledge_edge` · `doc_revision` · `event` |
 
 The spine is one containment chain:
 
@@ -27,6 +28,11 @@ goal → project → requirement → plan
 
 Everything else hangs off `requirement` (the graph) or off `task` (the records), or stands
 alone and evergreen (`coverage`, `doc`).
+
+**The library is the one thing that crosses the spine rather than hanging off it.** A
+`knowledge_edge` may point at *any* row above — a requirement, a plan, a task, a bug — which
+is what makes the documentation a graph *over the work* instead of a second database beside
+it. Most of its nodes already exist; what v8 added was the edges.
 
 **THE ROSTER IS NOT IN HERE.** Who the guild's members are and what each can do lives in the
 `capabilities:` frontmatter of the agent files, and the orchestrator reads it at dispatch
@@ -253,7 +259,7 @@ or `'user'`.
 
 ---
 
-## Maintenance and memory — `coverage`, `inspection`, `inspection_coverage`, `doc`, `event`
+## Maintenance — `coverage`, `inspection`, `inspection_coverage`
 
 **`coverage`** — what the product is made of, from a quality standpoint. **Evergreen**: it
 survives releases and board resets. `risk` + `last_inspected_at` is what makes "what needs
@@ -267,9 +273,62 @@ did — it is not NULL and it is not a pass.** `inspection."trigger"` is the one
 open on purpose (today only `'manual'`), so a cadence can be added later without rebuilding
 the table.
 
-**`doc`** — the library. Long-lived knowledge the guild looked up once and should not look
-up again. Keyed by `slug`. **Search it with `LIKE`** — there is no FTS5 — and escape `%`
-and `_` in the query (see `queries.md`).
+## The library — `doc`, `knowledge_edge`, `doc_revision`
+
+**Evergreen**, like `coverage`: it survives releases and board resets, because a decision does
+not stop being true when the ticket that caused it ships.
+
+**`doc`** — the nodes. One row per topic, keyed by `slug`. Two columns decide how every reader
+treats it:
+
+| `kind` | what belongs there |
+|---|---|
+| `business` | the domain's own rules. What a refund *is*, when an account is dormant, which invariants the product promises. Most likely to outlive the code that implements it. |
+| `technical` | how a subsystem works **right now**. |
+| `decision` | **an ADR** — one choice, its context, alternatives, consequences. |
+| `research` | an external lookup the guild should not have to repeat. |
+| `runbook` | the steps for an operation somebody performs. |
+| `reference` | everything else. The default, and deliberately boring. |
+
+| `status` | prose | a decision |
+|---|---|---|
+| `draft` | being written | **proposed** |
+| `current` | live | **accepted** |
+| `superseded` | replaced — **the row stays** | replaced |
+| `rejected` | declined — **the row stays** | declined |
+
+**Superseded and rejected rows are never deleted.** They are how the project's evolution is
+read, and the decisions a project did *not* take are half of why it looks the way it does.
+`v_doc_current` is what keeps them out of ordinary reads.
+
+`area` ('auth', 'billing') is a free key and deliberately **not** CHECKed — a vocabulary you
+have to migrate to add a subsystem is a vocabulary people route around. Overlap it with
+`coverage.id` where it makes sense.
+
+**`knowledge_edge`** — the relations. One row is one assertion: `<from> --rel--> <to>`, with an
+optional `note` saying why. Eight relations, closed by CHECK: `describes` and `decides`
+(doc → work), `supersedes` / `refines` / `depends-on` / `contradicts` (doc → doc),
+`derived-from` (doc → anything, provenance) and `evidence-for` (anything → doc).
+
+**Its endpoints are polymorphic, so there is no foreign key on either end** — SQLite cannot
+`REFERENCES` a table chosen at runtime. Two things stand in, and *neither* is the engine
+refusing a bad write: the write-time check (`INSERT … SELECT … FROM <target> WHERE id = …`,
+so a missing endpoint yields zero rows) and `v_knowledge_dangling`, which is a **global
+invariant** `guild:validate` runs. The rel/type *pairings* are real CHECKs, though —
+`supersedes` between two non-docs is refused.
+
+**`doc_revision`** — the history, **written by a trigger** on every body change. Append-only,
+treated like `event`: never INSERT by hand, never UPDATE, never DELETE. It stores the **old**
+body, so the newest revision row is the text that came *before* the live one — the single
+mistake this table invites. It has **no foreign key to `doc` on purpose**: a revision must
+survive its document being deleted, or it is not history.
+
+**Where a decision used to go, and why that was the problem.** Before v8 an architectural
+choice lived in `plan.body` prose and in `gate.decision` JSON — both attached to a ticket, both
+archived when the ticket closed. "Why is it like this" was the most expensive question the
+guild could be asked. It is now `SELECT * FROM v_decision_log`.
+
+## Memory — `event`
 
 **`event`** — the guild's memory, **written by triggers**. You do not normally INSERT here
 by hand, and you never UPDATE or DELETE: a memory you can edit is not one. `subject_type` is
@@ -292,11 +351,20 @@ cannot be written is worse than an unfamiliar one. Payload is JSON; a status cha
 - `json_valid()` on `task.files` and `event.payload`.
 - `graph_deviation.reason` is non-empty; `task_dependency` and `graph_edge` reject
   self-reference; `schema_version.id = 1`.
+- **The `knowledge_edge` rel/type pairings.** `supersedes`, `refines`, `depends-on` and
+  `contradicts` must be doc → doc; `describes`, `decides` and `derived-from` must start at a
+  doc; `evidence-for` must end at one. A self-edge is refused. So is a duplicate — the
+  `UNIQUE (rel, from_type, from_id, to_type, to_id)` means asserting the same thing twice is
+  one row. What is **not** checked is whether the endpoints exist: see item 11 below.
 
 **Foreign keys** — but only when you issue `PRAGMA foreign_keys = ON` on that connection.
 
 **Triggers** — every meaningful mutation writes an `event` row and `updated_at` gets
-stamped. You cannot forget to. Deliberately *not* instrumented: `task_capability` (the
+stamped. You cannot forget to. **`doc_revision` is written the same way**: `trg_doc_revised`
+snapshots the old body on every body change, so documentation history needs no discipline
+from anybody. `knowledge_edge` is instrumented on INSERT *and* DELETE — unlike `graph_edge`,
+it is not structure but an assertion somebody made, and retracting one is as much a decision
+as making it. Deliberately *not* instrumented: `task_capability` (the
 architect rewrites a ticket's whole set at once and it would bury the feed), `graph_node` inserts (only status changes
 mean something moved), and pure-structure tables (`graph_edge`, `task_dependency`,
 `inspection_coverage`).
@@ -341,6 +409,16 @@ convention:
     columns on two tables, so approving a plan is **two writes**, exactly like moving a
     gate's node. `plan.gate_node_id` ties them for a reader; it does not keep them in
     step. `v_plans_pending_approval` is what tells you they drifted.
+11. **Every `knowledge_edge` points at something that exists.** Its endpoints are
+    polymorphic, so there is no foreign key on either end. Write the edge as
+    `INSERT … SELECT … FROM <target> WHERE id = …` (zero rows instead of a dangling edge),
+    and read **`v_knowledge_dangling`**, which must always be empty and which
+    `guild:validate` runs. Deleting a requirement silently orphans its edges.
+12. **A document describes the code as it is now.** Nothing can know that. `v_doc_stale` is
+    the honest approximation — a doc whose subject has an `event` newer than the doc's own
+    `updated_at`. It catches "the work moved and nobody revisited the page" and misses "the
+    code changed under a doc nobody linked", which is why `v_undocumented_work` and
+    `v_doc_current WHERE edges = 0` exist beside it.
 
 # The views, and which question each answers
 
@@ -362,6 +440,13 @@ convention:
 | `v_requirement_progress` · `v_goal_progress` | The roll-ups. |
 | `v_in_flight` · `v_failed_tasks` · `v_open_findings` · `v_open_bugs` · `v_recent_activity` | The briefing's detail lists. |
 | `v_coverage_due` | Which quality areas are past their risk-weighted interval? |
+| `v_knowledge_ref` | Every row an edge may point at, with its title. The helper the library's views stand on. |
+| `v_doc_current` | The library as it stands — nothing superseded, nothing rejected — with each page's revision and edge counts. |
+| `v_doc_neighbors` | What does this page relate to, **one hop**, both directions, with titles resolved? |
+| `v_doc_stale` | **Which pages went stale** because something they describe has moved since? One row per (page, subject). |
+| `v_undocumented_work` | Which finished requirements has nobody documented? |
+| `v_decision_log` | What did this project decide, in order, **including what it un-decided**? |
+| `v_knowledge_dangling` | **A global invariant.** Which edges point at something that no longer exists? Must be empty. |
 | `v_brief` | **The standup**, one fact per row, all derived from the views above so a count and its listing cannot disagree. |
 
 Two pairs that look interchangeable and are not:
