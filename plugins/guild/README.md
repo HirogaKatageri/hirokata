@@ -140,12 +140,18 @@ missing, syncs the roster from the agent files, and opens with the brief.
 The hierarchy, widest to narrowest:
 
 ```
-goal → phase → requirement → plan → task
+goal → project → requirement → plan → task
 ```
 
-A goal is direction. A phase is a stage of that goal. A requirement is one unit of shipped value. A
-plan is how the architect intends to build it; a task is a bounty a guild member can claim, carrying
-the file set it owns in `files`.
+A goal is a high-level target. A project is a named group of work that has to be done to reach it —
+it can run beside its sibling projects (`concurrent`) and can be cut into its own git worktree
+(`isolation`, `worktree_path`). A requirement is one unit of shipped value. A plan is how the
+architect intends to build it, and **nothing is built until a human approves it** (`plan.approval`,
+separate from `plan.status`, which only says whether the document is written). A task is a bounty a
+guild member can claim, carrying the file set it owns in `files`.
+
+`project` was called `phase` through v6.1. Existing boards migrate with
+`migrations/006-project-and-plan-approval.sql` — run it before re-applying `schema.sql`.
 
 Alongside them: `graph_node` / `graph_edge` / `gate` (the execution graph), `agent` /
 `agent_capability` / `task_capability` (the roster and the matcher), `bug`, `coverage`,
@@ -163,14 +169,17 @@ Read the view; do not re-derive the rule. The ones you will use most:
 
 | View | Answers |
 |------|---------|
-| `v_brief` | Where does the project stand? |
+| `v_brief` | Where does the guild stand? |
 | `v_board` | Everything in flight, by status. |
 | `v_next_task` / `v_batch` | What runs next, and what can run in parallel. |
 | `v_open_bounties` | What can be claimed — and underneath, what cannot, with a reason. |
 | `v_task_actionable` / `v_task_blockers` | Is this task workable, and if not, why not? |
 | `v_ready_nodes` | Which graph nodes have all direct predecessors done. |
 | `v_gates_pending` | What is waiting on the guild master. |
+| `v_plans_pending_approval` | Which drafted plans nobody has ruled on yet. |
 | `v_agent_match` / `v_task_top_agent` | Who should take this. |
+| `v_projects_runnable` | Which projects may run right now, and why — the parallelism rule, defined once. |
+| `v_project_progress` | Every project with its counters, isolation and worktree. |
 | `v_requirement_progress` / `v_goal_progress` | How far along. |
 | `v_failed_tasks`, `v_open_findings`, `v_open_bugs`, `v_coverage_due` | What still needs attention. |
 | `v_roster_gaps`, `v_capability_unknown` | Why the matcher went quiet. |
@@ -287,7 +296,9 @@ The plugin:
 
 ```
 plugins/guild/
-├── schema.sql              # THE TOOL. 24 tables, 26 views, 43 triggers, and the guild's rules
+├── schema.sql              # THE TOOL. 24 tables, 29 views, 45 triggers, and the guild's rules
+├── migrations/             # one-shot upgrades for what IF NOT EXISTS cannot reach —
+│                           # renamed tables and new columns. Run, then re-apply schema.sql
 ├── agents/                 # 14 roster members; frontmatter is the roster source
 ├── skills/
 │   ├── warehouse/          # how to reach the board — the skill every member loads
@@ -301,7 +312,7 @@ plugins/guild/
     └── v5-design.md              # historical; the data model and rules are still in force
 ```
 
-The board, in your project:
+The board, in your repository:
 
 ```
 .guild/
@@ -357,6 +368,25 @@ a green check.
 
 ---
 
+## Upgrading a board from before v6.2
+
+`project` was called `phase` until v6.2, and `CREATE TABLE IF NOT EXISTS` cannot rename a table — so
+re-applying `schema.sql` alone will land views and triggers on columns that are not there. Run the
+migration once, first:
+
+```bash
+export PATH="$HOME/.turso:$PATH"
+cp .guild/guild.db .guild/guild.db.bak
+tursodb .guild/guild.db < migrations/006-project-and-plan-approval.sql
+tursodb .guild/guild.db < schema.sql
+```
+
+`SELECT version FROM schema_version` reads `5` before and `6` after. The migration is **not**
+idempotent — a second run fails on `CREATE TABLE project`, which is the safe direction to fail. A
+fresh board needs none of this.
+
+---
+
 ## Status: what is verified, and what is not
 
 **Read this before trusting anything above.**
@@ -377,6 +407,12 @@ What *is* verified:
   was executed** against a real tursodb 0.7.2 database — confirmed to pass on a healthy board, and,
   for the nine invariants, confirmed to *fire* on a deliberately injected breach. An assertion that
   has never been seen to fail is not an assertion, it is a wish.
+- **The v6.2 `project` rename and plan approval** were verified the same way: the schema applies to a
+  fresh board at version 6, `migrations/006-project-and-plan-approval.sql` was run end to end against
+  a seeded v6.1 board with the views read back after it, all five fixtures load clean, every
+  read-only guard in `docs/expectations.md` runs clean on the empty, messy and maintenance fixtures,
+  and the `brief` and `dashboard` scripts were executed in full.
+  **The migration has been run against seeded boards only, never against a board with real history.**
 
 What is **not**:
 

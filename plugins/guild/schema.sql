@@ -12,6 +12,17 @@
 -- file is how you upgrade a rule). Seed rows are guarded by `WHERE NOT EXISTS`. Run it as
 -- often as you like.
 --
+-- THAT IDEMPOTENCE IS ALSO ITS LIMIT: `CREATE TABLE IF NOT EXISTS` sees an existing table
+-- and moves on, so a RENAMED table or a NEW COLUMN never reaches a live board from this
+-- file. Those ship as one-shot scripts in `migrations/`, run in order, once each:
+--
+--   tursodb .guild/guild.db < migrations/006-project-and-plan-approval.sql
+--   tursodb .guild/guild.db < schema.sql
+--
+-- Check `SELECT version FROM schema_version` against the number seeded below. This file
+-- is at version 6. A board reporting 5 has not been migrated, and applying this file over
+-- it lands the views and triggers on columns that are not there.
+--
 -- ------------------------------------------------------------------------------------
 -- WHAT THIS FILE IS
 --
@@ -64,6 +75,14 @@
 --      duty, not a check.
 --   8. TIMESTAMPS ARE UTC BY CONVENTION. `strftime(…,'now')` in the triggers is UTC.
 --      Whatever a member writes by hand is whatever they wrote.
+--   9. "A `worktree` PROJECT'S TASKS RUN IN ITS WORKTREE." `project.worktree_path` is a
+--      string. Nothing creates the checkout, nothing verifies it exists, and nothing
+--      makes a dispatched agent honour it. The CHECK only stops a SHARED project from
+--      carrying a path — which is the half a column CAN police.
+--  10. "AN APPROVED GATE APPROVES ITS PLAN." `gate.status` and `plan.approval` are two
+--      columns on two tables and approving the plan is TWO WRITES, exactly as moving a
+--      gate's node is. `plan.gate_node_id` ties them together for a reader; it does not
+--      keep them in step. `v_plans_pending_approval` is what tells you they drifted.
 --
 -- ------------------------------------------------------------------------------------
 -- ENGINE CONSTRAINTS — verified on tursodb 0.7.2, and every one of them cost a round
@@ -134,7 +153,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 ) STRICT;
 
 INSERT INTO schema_version (id, version, applied_at)
-SELECT 1, 5, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+SELECT 1, 6, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE id = 1);
 
 
@@ -165,11 +184,17 @@ WHERE NOT EXISTS (SELECT 1 FROM guild_state WHERE key = 'actor');
 
 
 -- =====================================================================================
--- DIRECTION — goal, phase
+-- DIRECTION — goal, project
 -- =====================================================================================
 -- Vocabulary: todo | in-progress | done. Deliberately the SHORT set. A goal has no
 -- `blocked` and no `waived`: those are words about a unit of work, and a goal is a
 -- direction. Priority is 1 (highest) to 5 (lowest) everywhere it appears.
+--
+-- A GOAL is a high-level target. A PROJECT is a named group of work that has to be done
+-- to reach it. `project` was called `phase` through v6.1, and the rename is not cosmetic:
+-- a phase is a STAGE, which implies one runs at a time, and the table's `ordinal NOT NULL`
+-- said exactly that. A project may run BESIDE its siblings — see `concurrent` and
+-- `isolation` below, and `v_projects_runnable`, which is the one place that rule lives.
 
 CREATE TABLE IF NOT EXISTS goal (
   id          TEXT PRIMARY KEY,               -- GOAL-001
@@ -182,15 +207,43 @@ CREATE TABLE IF NOT EXISTS goal (
   updated_at  TEXT NOT NULL
 ) STRICT;
 
-CREATE TABLE IF NOT EXISTS phase (
-  id          TEXT PRIMARY KEY,               -- PHASE-001
-  goal_id     TEXT NOT NULL REFERENCES goal(id),
-  title       TEXT NOT NULL,
-  ordinal     INTEGER NOT NULL,               -- ordering within the goal, 1-based
-  status      TEXT NOT NULL DEFAULT 'todo'
-              CHECK (status IN ('todo', 'in-progress', 'done')),
-  created_at  TEXT NOT NULL,
-  updated_at  TEXT NOT NULL
+-- ---- WHAT THE PARALLELISM COLUMNS MEAN ----------------------------------------------
+--
+--   ordinal       WHERE THIS SITS IN THE GOAL'S SEQUENCE, 1-based, and NULLABLE. NULL is
+--                 'unordered' — the project waits for nobody. It is not 'first'.
+--   concurrent    1 = this project may run beside its siblings and never waits its turn.
+--                 0 = it waits for every lower-ordinal sequential project in the goal.
+--                 The default is 0, because running two projects at once is a decision
+--                 somebody should make on purpose.
+--   isolation     'shared'   its tasks run in the repository's working tree, alongside
+--                            every other shared project. Task-level file disjointness
+--                            (`task.files` in a `parallel_group`) is the only thing
+--                            keeping two members off one file.
+--                 'worktree' its tasks run in their own git worktree, so file collisions
+--                            with other projects are impossible by construction.
+--   worktree_path the checkout. NULL until one exists, so a project can be MARKED for
+--                 isolation before it is cut. A 'shared' project may not carry one --
+--                 the CHECK below says so, because a path on a shared project is a
+--                 statement nobody honours.
+--
+-- Nothing here creates, verifies or cleans up a worktree — see "what this file cannot
+-- enforce", item 9.
+CREATE TABLE IF NOT EXISTS project (
+  id            TEXT PRIMARY KEY,             -- PROJ-001
+  goal_id       TEXT NOT NULL REFERENCES goal(id),
+  title         TEXT NOT NULL,
+  body          TEXT NOT NULL DEFAULT '',
+  ordinal       INTEGER,                      -- ordering within the goal, 1-based. NULL = unordered
+  status        TEXT NOT NULL DEFAULT 'todo'
+                CHECK (status IN ('todo', 'in-progress', 'done')),
+  priority      INTEGER NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
+  concurrent    INTEGER NOT NULL DEFAULT 0 CHECK (concurrent IN (0, 1)),
+  isolation     TEXT NOT NULL DEFAULT 'shared'
+                CHECK (isolation IN ('shared', 'worktree')),
+  worktree_path TEXT,
+  created_at    TEXT NOT NULL,
+  updated_at    TEXT NOT NULL,
+  CHECK (isolation = 'worktree' OR worktree_path IS NULL)
 ) STRICT;
 
 
@@ -200,7 +253,7 @@ CREATE TABLE IF NOT EXISTS phase (
 
 CREATE TABLE IF NOT EXISTS requirement (
   id          TEXT PRIMARY KEY,               -- REQ-001
-  phase_id    TEXT REFERENCES phase(id),      -- nullable: unaffiliated work is legal
+  project_id  TEXT REFERENCES project(id),    -- nullable: unaffiliated work is legal
   title       TEXT NOT NULL,
   body        TEXT NOT NULL DEFAULT '',       -- the full REQ markdown
   status      TEXT NOT NULL DEFAULT 'todo'
@@ -210,6 +263,20 @@ CREATE TABLE IF NOT EXISTS requirement (
   updated_at  TEXT NOT NULL
 ) STRICT;
 
+-- ---- STATUS AND APPROVAL ARE TWO DIFFERENT QUESTIONS --------------------------------
+--
+--   status    IS THE DOCUMENT WRITTEN? todo -> in-progress -> done. It is the architect's
+--             drafting lifecycle and says nothing about whether anybody agreed with it.
+--   approval  DID THE USER SAY YES? pending -> approved | rejected. The architect writes
+--             the plan, a HUMAN rules on it, and nothing is built until they do.
+--
+-- Collapsing them into one column was the old shape and it could not tell 'finished
+-- writing, waiting on a person' from 'agreed and building', which is the single most
+-- important distinction on the board.
+--
+-- `gate_node_id` ties the plan to the `gate-plan` node that carries the decision, so a
+-- reader can go from either end. Setting `gate.status` does NOT set `plan.approval` —
+-- see "what this file cannot enforce", item 10.
 CREATE TABLE IF NOT EXISTS plan (
   id             TEXT PRIMARY KEY,            -- PLAN-001
   requirement_id TEXT NOT NULL REFERENCES requirement(id),
@@ -218,6 +285,11 @@ CREATE TABLE IF NOT EXISTS plan (
   body           TEXT NOT NULL DEFAULT '',
   status         TEXT NOT NULL DEFAULT 'todo'
                  CHECK (status IN ('todo', 'in-progress', 'done')),
+  approval       TEXT NOT NULL DEFAULT 'pending'
+                 CHECK (approval IN ('pending', 'approved', 'rejected')),
+  approved_by    TEXT,                        -- 'user', or the name that ruled
+  approved_at    TEXT,
+  gate_node_id   TEXT REFERENCES graph_node(id),
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL
 ) STRICT;
@@ -534,6 +606,7 @@ CREATE TABLE IF NOT EXISTS doc (
 --
 --   created  moved  deleted  claimed  logged  found  dispositioned  inspected
 --   documented  decided  node-moved  requested  resolved  recruited  retired  deviated
+--   isolated
 --
 -- `payload` is JSON. The shape the triggers use for a status change is
 -- {"from":"todo","to":"in-progress"}, which `v_recent_activity` renders as a phrase.
@@ -561,7 +634,10 @@ CREATE INDEX IF NOT EXISTS event_by_subject ON event(subject_type, subject_id);
 CREATE INDEX IF NOT EXISTS finding_by_task  ON review_finding(task_id, disposition);
 CREATE INDEX IF NOT EXISTS worklog_by_task  ON work_log(task_id, ts);
 CREATE INDEX IF NOT EXISTS bug_by_status    ON bug(status, severity);
-CREATE INDEX IF NOT EXISTS phase_by_goal    ON phase(goal_id, ordinal);
+-- The approval queue is read on every check-in and is almost always tiny — a partial
+-- index would be tidier, so keep this one narrow rather than adding columns to it.
+CREATE INDEX IF NOT EXISTS plan_by_approval ON plan(approval, requirement_id);
+CREATE INDEX IF NOT EXISTS project_by_goal  ON project(goal_id, ordinal);
 -- Both capability tables are keyed (owner, capability), so "what does this agent/task
 -- declare" is already a seek. The matcher asks the OTHER question — "who can cover
 -- `rust`" — which is a scan on the second key column. These cover that direction.
@@ -593,8 +669,9 @@ CREATE INDEX IF NOT EXISTS edge_by_to       ON graph_edge(to_node);
 --   the cursor   v_task_actionable · v_next_task
 --   the matcher  v_agent_eligible · v_agent_match · v_task_top_agent
 --   the bounties v_open_bounties · v_blocked_tasks
---   the graph    v_ready_nodes · v_gates_pending
---   the board    v_board · v_requirement_progress · v_goal_progress
+--   the graph    v_ready_nodes · v_gates_pending · v_plans_pending_approval
+--   direction    v_projects_runnable · v_project_progress · v_goal_progress
+--   the board    v_board · v_requirement_progress
 --   the briefing v_brief · v_in_flight · v_failed_tasks · v_open_findings ·
 --                v_open_bugs · v_recent_activity
 --   quality      v_coverage_due
@@ -1066,6 +1143,31 @@ SELECT g.node_id       AS node_id,
 
 
 -- ------------------------------------------------------------------------------------
+-- v_plans_pending_approval — the plans a HUMAN still has to rule on
+-- ------------------------------------------------------------------------------------
+-- The architect writes a plan. Nothing is built until the user approves it, and this is
+-- the queue that says who is waiting. A plan still at `status = 'todo'` is not listed:
+-- it has not been drafted yet, so there is nothing to agree with.
+--
+-- `gate_node_id` is the `gate-plan` node carrying the same decision, when one exists. It
+-- is COALESCEd to '' rather than dropped: a plan with no gate node is legal (a small
+-- change approved in conversation), and hiding it here would hide the plan.
+DROP VIEW IF EXISTS v_plans_pending_approval;
+CREATE VIEW v_plans_pending_approval AS
+SELECT p.id                           AS id,
+       p.requirement_id               AS requirement_id,
+       COALESCE(p.task_id, '')        AS task_id,
+       p.status                       AS status,
+       COALESCE(p.gate_node_id, '')   AS gate_node_id,
+       p.created_at                   AS created_at,
+       p.title                        AS title
+  FROM plan p
+ WHERE p.approval = 'pending'
+   AND p.status <> 'todo'
+ ORDER BY p.requirement_id, p.id;
+
+
+-- ------------------------------------------------------------------------------------
 -- v_board — THE LIVE BOARD
 -- ------------------------------------------------------------------------------------
 --   SELECT section, id, who, title FROM v_board
@@ -1123,9 +1225,9 @@ SELECT 6, 'Waived',
 -- Sorted todo, then in-progress, then done — unfinished direction first.
 DROP VIEW IF EXISTS v_requirement_progress;
 CREATE VIEW v_requirement_progress AS
-SELECT r.id        AS id,
-       r.phase_id  AS phase_id,
-       r.status    AS status,
+SELECT r.id         AS id,
+       r.project_id AS project_id,
+       r.status     AS status,
        r.priority  AS priority,
        COUNT(t.id) AS tasks_total,
        COALESCE(SUM(CASE WHEN t.status = 'done' THEN 1 ELSE 0 END), 0)    AS tasks_done,
@@ -1136,28 +1238,120 @@ SELECT r.id        AS id,
        r.title     AS title
   FROM requirement r
   LEFT JOIN task t ON t.requirement_id = r.id
- GROUP BY r.id, r.phase_id, r.status, r.priority, r.title
+ GROUP BY r.id, r.project_id, r.status, r.priority, r.title
  ORDER BY CASE r.status WHEN 'todo' THEN 1 WHEN 'in-progress' THEN 2
                         WHEN 'done' THEN 3 ELSE 4 END, r.id;
 
 
 -- ------------------------------------------------------------------------------------
--- v_goal_progress — the open goals, each with the phase it is currently on
+-- v_projects_runnable — WHICH PROJECTS MAY RUN RIGHT NOW
 -- ------------------------------------------------------------------------------------
--- "Current phase" is the lowest-ordinal phase that is not yet done. NULL means every
--- phase is done and nobody closed the goal.
+-- THE PARALLELISM RULE, AND IT LIVES ONLY HERE. Three ways a project earns a place:
+--
+--   concurrent = 1   it never waits its turn. This is the "run beside other projects"
+--                    case, and it is the whole reason `phase` became `project`.
+--   ordinal IS NULL  it was never placed in a sequence, so there is no turn to wait for.
+--   otherwise        it is sequential, and every SEQUENTIAL project with a LOWER ordinal
+--                    in the same goal is done. A concurrent sibling never blocks it —
+--                    a project that opted out of the queue does not get to hold it.
+--
+-- A done goal makes its projects unrunnable, whatever they say. A done project is never
+-- listed.
+--
+-- `isolation` and `worktree_path` ride along because the caller that dispatches a project
+-- is exactly the caller that has to know where its tasks run.
+DROP VIEW IF EXISTS v_projects_runnable;
+CREATE VIEW v_projects_runnable AS
+SELECT p.id                          AS id,
+       p.goal_id                     AS goal_id,
+       p.status                      AS status,
+       p.priority                    AS priority,
+       p.ordinal                     AS ordinal,
+       p.concurrent                  AS concurrent,
+       p.isolation                   AS isolation,
+       COALESCE(p.worktree_path, '') AS worktree_path,
+       CASE WHEN p.concurrent = 1   THEN 'concurrent'
+            WHEN p.ordinal IS NULL  THEN 'unordered'
+            ELSE 'next in sequence' END AS why,
+       p.title                       AS title
+  FROM project p
+  JOIN goal g ON g.id = p.goal_id
+ WHERE p.status <> 'done'
+   AND g.status <> 'done'
+   AND (p.concurrent = 1
+        OR p.ordinal IS NULL
+        OR NOT EXISTS (SELECT 1 FROM project q
+                        WHERE q.goal_id    = p.goal_id
+                          AND q.concurrent = 0
+                          AND q.ordinal IS NOT NULL
+                          AND q.ordinal    < p.ordinal
+                          AND q.status    <> 'done'))
+ ORDER BY p.priority, p.goal_id,
+          CASE WHEN p.ordinal IS NULL THEN 1 ELSE 0 END, p.ordinal, p.id;
+
+
+-- ------------------------------------------------------------------------------------
+-- v_project_progress — every project, with what is under it
+-- ------------------------------------------------------------------------------------
+-- The project-level mirror of `v_requirement_progress`, and the view a roadmap reads.
+-- The task counters come through `requirement`, so a project with no requirements
+-- reports zeroes rather than disappearing.
+--
+-- `runnable` is 1 when this project appears in `v_projects_runnable`. It is repeated here
+-- so a roadmap does not have to join two views, and it is DERIVED from that view rather
+-- than re-stating the rule — there is still only one definition of "may this run".
+DROP VIEW IF EXISTS v_project_progress;
+CREATE VIEW v_project_progress AS
+SELECT p.id                            AS id,
+       p.goal_id                       AS goal_id,
+       p.status                        AS status,
+       p.priority                      AS priority,
+       p.ordinal                       AS ordinal,
+       p.concurrent                    AS concurrent,
+       p.isolation                     AS isolation,
+       COALESCE(p.worktree_path, '')   AS worktree_path,
+       CASE WHEN EXISTS (SELECT 1 FROM v_projects_runnable v WHERE v.id = p.id)
+            THEN 1 ELSE 0 END          AS runnable,
+       (SELECT COUNT(*) FROM requirement r WHERE r.project_id = p.id)
+                                       AS requirements_total,
+       (SELECT COUNT(*) FROM requirement r WHERE r.project_id = p.id AND r.status = 'done')
+                                       AS requirements_done,
+       (SELECT COUNT(*) FROM task t JOIN requirement r ON r.id = t.requirement_id
+         WHERE r.project_id = p.id AND t.status IN ('todo', 'in-progress', 'blocked'))
+                                       AS tasks_open,
+       (SELECT COUNT(*) FROM task t JOIN requirement r ON r.id = t.requirement_id
+         WHERE r.project_id = p.id AND t.status = 'blocked')
+                                       AS tasks_blocked,
+       p.title                         AS title
+  FROM project p
+ ORDER BY p.priority, p.goal_id,
+          CASE WHEN p.ordinal IS NULL THEN 1 ELSE 0 END, p.ordinal, p.id;
+
+
+-- ------------------------------------------------------------------------------------
+-- v_goal_progress — the open goals, and what is runnable under each
+-- ------------------------------------------------------------------------------------
+-- Through v6.1 this reported ONE "current phase" — the lowest-ordinal phase not yet done.
+-- That column was a claim the schema can no longer make: several projects under one goal
+-- may be in flight at once, so the view reports a COUNT and a LIST instead.
+--
+-- `runnable_project_ids` is a comma-joined list, which is a display convenience and NOT
+-- something to parse — join `v_projects_runnable` on `goal_id` when you need the rows.
 DROP VIEW IF EXISTS v_goal_progress;
 CREATE VIEW v_goal_progress AS
 SELECT g.id       AS id,
        g.status   AS status,
        g.priority AS priority,
-       (SELECT p.id    FROM phase p WHERE p.goal_id = g.id AND p.status <> 'done'
-         ORDER BY p.ordinal, p.id LIMIT 1)          AS current_phase_id,
-       (SELECT p.title FROM phase p WHERE p.goal_id = g.id AND p.status <> 'done'
-         ORDER BY p.ordinal, p.id LIMIT 1)          AS current_phase_title,
-       (SELECT COUNT(*) FROM requirement r JOIN phase p ON p.id = r.phase_id
+       (SELECT COUNT(*) FROM project p WHERE p.goal_id = g.id)  AS projects_total,
+       (SELECT COUNT(*) FROM project p WHERE p.goal_id = g.id AND p.status = 'done')
+                                                                AS projects_done,
+       (SELECT COUNT(*) FROM v_projects_runnable v WHERE v.goal_id = g.id)
+                                                                AS projects_runnable,
+       COALESCE((SELECT group_concat(v.id) FROM v_projects_runnable v
+                  WHERE v.goal_id = g.id), '')                  AS runnable_project_ids,
+       (SELECT COUNT(*) FROM requirement r JOIN project p ON p.id = r.project_id
          WHERE p.goal_id = g.id)                    AS requirements_total,
-       (SELECT COUNT(*) FROM requirement r JOIN phase p ON p.id = r.phase_id
+       (SELECT COUNT(*) FROM requirement r JOIN project p ON p.id = r.project_id
          WHERE p.goal_id = g.id AND r.status = 'done') AS requirements_done,
        g.title    AS title
   FROM goal g
@@ -1311,7 +1505,7 @@ SELECT e.id           AS id,
        e.subject_id   AS subject_id,
        COALESCE(
          (SELECT s.title FROM goal        s WHERE e.subject_type = 'goal'        AND s.id   = e.subject_id),
-         (SELECT s.title FROM phase       s WHERE e.subject_type = 'phase'       AND s.id   = e.subject_id),
+         (SELECT s.title FROM project     s WHERE e.subject_type = 'project'     AND s.id   = e.subject_id),
          (SELECT s.title FROM requirement s WHERE e.subject_type = 'requirement' AND s.id   = e.subject_id),
          (SELECT s.title FROM plan        s WHERE e.subject_type = 'plan'        AND s.id   = e.subject_id),
          (SELECT s.title FROM task        s WHERE e.subject_type = 'task'        AND s.id   = e.subject_id),
@@ -1474,14 +1668,18 @@ UNION ALL SELECT 12, 'bounties_open',       CAST((SELECT COUNT(*) FROM v_open_bo
 UNION ALL SELECT 13, 'bounties_stuck',      CAST((SELECT COUNT(*) FROM v_blocked_tasks) AS TEXT)
 UNION ALL SELECT 14, 'requirements_open',   CAST((SELECT COUNT(*) FROM requirement WHERE status <> 'done') AS TEXT)
 UNION ALL SELECT 15, 'requirements_done',   CAST((SELECT COUNT(*) FROM requirement WHERE status = 'done') AS TEXT)
-UNION ALL SELECT 16, 'bugs_open',           CAST((SELECT COUNT(*) FROM v_open_bugs) AS TEXT)
-UNION ALL SELECT 17, 'findings_open',       CAST((SELECT COUNT(*) FROM v_open_findings) AS TEXT)
-UNION ALL SELECT 18, 'coverage_due',        CAST((SELECT COUNT(*) FROM v_coverage_due) AS TEXT)
-UNION ALL SELECT 19, 'roster_gaps',         CAST((SELECT COUNT(*) FROM v_roster_gaps) AS TEXT)
-UNION ALL SELECT 20, 'capability_unknown',  CAST((SELECT COUNT(*) FROM v_capability_unknown) AS TEXT)
-UNION ALL SELECT 21, 'nodes_ready',         CAST((SELECT COUNT(*) FROM v_ready_nodes WHERE kind = 'work') AS TEXT)
-UNION ALL SELECT 22, 'gates_pending',       CAST((SELECT COUNT(*) FROM v_gates_pending) AS TEXT)
-UNION ALL SELECT 23, 'events_since_checkin',
+UNION ALL SELECT 16, 'projects_open',       CAST((SELECT COUNT(*) FROM project WHERE status <> 'done') AS TEXT)
+UNION ALL SELECT 17, 'projects_runnable',   CAST((SELECT COUNT(*) FROM v_projects_runnable) AS TEXT)
+UNION ALL SELECT 18, 'projects_worktree',   CAST((SELECT COUNT(*) FROM v_projects_runnable WHERE isolation = 'worktree') AS TEXT)
+UNION ALL SELECT 19, 'bugs_open',           CAST((SELECT COUNT(*) FROM v_open_bugs) AS TEXT)
+UNION ALL SELECT 20, 'findings_open',       CAST((SELECT COUNT(*) FROM v_open_findings) AS TEXT)
+UNION ALL SELECT 21, 'coverage_due',        CAST((SELECT COUNT(*) FROM v_coverage_due) AS TEXT)
+UNION ALL SELECT 22, 'roster_gaps',         CAST((SELECT COUNT(*) FROM v_roster_gaps) AS TEXT)
+UNION ALL SELECT 23, 'capability_unknown',  CAST((SELECT COUNT(*) FROM v_capability_unknown) AS TEXT)
+UNION ALL SELECT 24, 'nodes_ready',         CAST((SELECT COUNT(*) FROM v_ready_nodes WHERE kind = 'work') AS TEXT)
+UNION ALL SELECT 25, 'gates_pending',       CAST((SELECT COUNT(*) FROM v_gates_pending) AS TEXT)
+UNION ALL SELECT 26, 'plans_pending_approval', CAST((SELECT COUNT(*) FROM v_plans_pending_approval) AS TEXT)
+UNION ALL SELECT 27, 'events_since_checkin',
   CAST((SELECT COUNT(*) FROM event
          WHERE ts >= COALESCE(NULLIF((SELECT value FROM guild_state WHERE key = 'last-checkin'), 'null'), '')) AS TEXT)
  ORDER BY ord;
@@ -1564,42 +1762,60 @@ BEGIN
 END;
 
 
--- ---- phase --------------------------------------------------------------------------
-DROP TRIGGER IF EXISTS trg_phase_created;
-CREATE TRIGGER trg_phase_created AFTER INSERT ON phase
+-- ---- project ------------------------------------------------------------------------
+-- The created event carries `concurrent` and `isolation` because "was this meant to run
+-- beside the others, and where" is the question a post-mortem asks about a project, and
+-- both are decisions somebody made rather than facts that fell out.
+DROP TRIGGER IF EXISTS trg_project_created;
+CREATE TRIGGER trg_project_created AFTER INSERT ON project
 BEGIN
   INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
   VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
           COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
-          'created', 'phase', new.id,
-          json_object('goal_id', new.goal_id, 'ordinal', new.ordinal));
+          'created', 'project', new.id,
+          json_object('goal_id', new.goal_id, 'ordinal', new.ordinal,
+                      'concurrent', new.concurrent, 'isolation', new.isolation));
 END;
 
-DROP TRIGGER IF EXISTS trg_phase_moved;
-CREATE TRIGGER trg_phase_moved AFTER UPDATE OF status ON phase
+DROP TRIGGER IF EXISTS trg_project_moved;
+CREATE TRIGGER trg_project_moved AFTER UPDATE OF status ON project
 WHEN old.status IS NOT new.status
 BEGIN
   INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
   VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
           COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
-          'moved', 'phase', new.id,
-          json_object('from', old.status, 'to', new.status));
+          'moved', 'project', new.id,
+          json_object('from', old.status, 'to', new.status, 'goal_id', new.goal_id));
 END;
 
-DROP TRIGGER IF EXISTS trg_phase_deleted;
-CREATE TRIGGER trg_phase_deleted AFTER DELETE ON phase
+-- Cutting or abandoning a worktree changes WHERE every task under this project runs, so
+-- it is recorded even though nothing else about the row moved.
+DROP TRIGGER IF EXISTS trg_project_isolated;
+CREATE TRIGGER trg_project_isolated AFTER UPDATE OF isolation, worktree_path ON project
+WHEN old.isolation IS NOT new.isolation OR old.worktree_path IS NOT new.worktree_path
 BEGIN
   INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
   VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
           COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
-          'deleted', 'phase', old.id, json_object('title', old.title));
+          'isolated', 'project', new.id,
+          json_object('from', old.isolation, 'to', new.isolation,
+                      'worktree_path', new.worktree_path));
 END;
 
-DROP TRIGGER IF EXISTS trg_phase_touch;
-CREATE TRIGGER trg_phase_touch AFTER UPDATE ON phase
+DROP TRIGGER IF EXISTS trg_project_deleted;
+CREATE TRIGGER trg_project_deleted AFTER DELETE ON project
+BEGIN
+  INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
+  VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+          COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
+          'deleted', 'project', old.id, json_object('title', old.title));
+END;
+
+DROP TRIGGER IF EXISTS trg_project_touch;
+CREATE TRIGGER trg_project_touch AFTER UPDATE ON project
 WHEN new.updated_at IS old.updated_at
 BEGIN
-  UPDATE phase SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = new.id;
+  UPDATE project SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = new.id;
 END;
 
 
@@ -1611,7 +1827,7 @@ BEGIN
   VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
           COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
           'created', 'requirement', new.id,
-          json_object('phase_id', new.phase_id, 'priority', new.priority));
+          json_object('project_id', new.project_id, 'priority', new.priority));
 END;
 
 DROP TRIGGER IF EXISTS trg_requirement_moved;
@@ -1674,6 +1890,23 @@ BEGIN
   VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
           COALESCE((SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
           'deleted', 'plan', old.id, json_object('title', old.title));
+END;
+
+-- Approval is the one plan event a HUMAN is behind, so it is recorded apart from the
+-- drafting status and the ruler's name rides along. `decided` is the same verb a gate
+-- decision uses — it is the same act, recorded on whichever row carries it.
+DROP TRIGGER IF EXISTS trg_plan_approved;
+CREATE TRIGGER trg_plan_approved AFTER UPDATE OF approval ON plan
+WHEN old.approval IS NOT new.approval
+BEGIN
+  INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
+  VALUES (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+          COALESCE(NULLIF(new.approved_by, ''),
+                   (SELECT value FROM guild_state WHERE key = 'actor'), 'orchestrator'),
+          'decided', 'plan', new.id,
+          json_object('from', old.approval, 'to', new.approval,
+                      'requirement_id', new.requirement_id,
+                      'gate_node_id', new.gate_node_id));
 END;
 
 DROP TRIGGER IF EXISTS trg_plan_touch;

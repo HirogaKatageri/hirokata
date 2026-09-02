@@ -103,21 +103,23 @@ This is a seed — the interview in Step 5 gathers the real detail.
 
 ### 2.5. Read the Guild's Direction
 
-Goals and phases are the layer *above* requirements, and a requirement's phase is what makes it
-appear under Direction in the brief and on the dashboard's roadmap. Read what exists now — you
+Goals and projects are the layer *above* requirements, and a requirement's project is what makes
+it appear under Direction in the brief and on the dashboard's roadmap. Read what exists now — you
 need it twice: as context for the product-owner (Step 5) and to build the placement question
 (Step 6.5).
 
 ```sql
-SELECT id, priority, current_phase_id, current_phase_title,
+SELECT id, priority, projects_runnable, runnable_project_ids,
        requirements_done, requirements_total, title FROM v_goal_progress;
-SELECT id, goal_id, ordinal, status, title FROM phase ORDER BY goal_id, ordinal;
+SELECT id, goal_id, ordinal, status, priority, concurrent, isolation, title
+  FROM v_project_progress;
+SELECT id, why, isolation, title FROM v_projects_runnable;
 ```
 
 Nothing back means the guild has no direction yet. That is normal on a young board and is
 **not** a problem to fix before proceeding.
 
-**Do not create a goal or a phase here.** Direction is the guild master's call — Step 6.5 is
+**Do not create a goal or a project here.** Direction is the guild master's call — Step 6.5 is
 where the user makes it.
 
 ### 2.6. Load the Roster
@@ -196,10 +198,10 @@ Agent(
            Interview mode: {MODE}. {if team: 'The architect is running concurrently and you
            can SendMessage it by name (\"architect\") for cross-talk.'} {if relay: 'The
            architect is running concurrently; the orchestrator will relay context between you.'}
-           Current direction (Step 2.5): {one line per goal and phase, or 'none declared yet'}.
-           End your report with a one-line Placement proposal — an existing PHASE id, a new
-           goal/phase you'd suggest, or none at all. It is a recommendation for the user, not
-           a decision: do NOT insert a goal or a phase, and do not set requirement.phase_id.
+           Current direction (Step 2.5): {one line per goal and project, or 'none declared yet'}.
+           End your report with a one-line Placement proposal — an existing PROJ id, a new
+           goal/project you'd suggest, or none at all. It is a recommendation for the user, not
+           a decision: do NOT insert a goal or a project, and do not set requirement.project_id.
            Report done when the requirement is complete, or report the bug-fix short-circuit
            per your own instructions if this turns out to be a simple fix."
 )
@@ -213,8 +215,9 @@ Agent(
            Interview mode: {MODE}. {if team / if relay: as above}.
            Start exploring the codebase now (your workflow Steps 1-2) and raise any technical
            questions that should shape scope via NEEDS INPUT. Do NOT write the plan yet — wait
-           until I tell you the requirement is finalized. I will also tell you which phase (if
-           any) it lands on; goals and phases are the guild master's, so never insert one.
+           until I tell you the requirement is finalized. I will also tell you which project (if
+           any) it lands on, and that project's isolation; goals and projects are the guild
+           master's, so never insert one.
            The roster is loaded ({N} active members) — declare each ticket's capabilities as
            task_capability rows (required = 1 decides eligibility, required = 0 only ranks)
            and leave `agent` NULL unless you mean to pin. Check your words against
@@ -283,10 +286,10 @@ Ask once, with **AskUserQuestion**, offering only the choices that apply:
 
 | Choice | What you write |
 |---|---|
-| An existing phase — one option per plausible phase from Step 2.5, the product-owner's proposal first, labelled `PHASE-002 · Cart & coupon rework` | `UPDATE requirement SET phase_id = 'PHASE-002' WHERE id = '{REQ}' RETURNING id, phase_id;` |
-| A new phase under an existing goal | the `phase` INSERT from queries.md §1 (its `ordinal` is derived from the goal's existing phases), then the UPDATE above |
-| A new goal *and* its first phase | the `goal` INSERT, then the `phase` INSERT, then the UPDATE |
-| **Leave it unaffiliated** | nothing — `phase_id` stays NULL |
+| An existing project — one option per plausible project from Step 2.5, the product-owner's proposal first, labelled `PROJ-002 · Cart & coupon rework` | `UPDATE requirement SET project_id = 'PROJ-002' WHERE id = '{REQ}' RETURNING id, project_id;` |
+| A new project under an existing goal | the `project` INSERT from queries.md §1 (its `ordinal` is derived from the goal's existing projects), then the UPDATE above |
+| A new goal *and* its first project | the `goal` INSERT, then the `project` INSERT, then the UPDATE |
+| **Leave it unaffiliated** | nothing — `project_id` stays NULL |
 
 Phrase it so the last choice reads as neutral as the others:
 
@@ -297,24 +300,33 @@ does not need a goal.
 
 **Rules for this step:**
 
-- **Unaffiliated is a first-class choice, not a failure.** `phase_id` is nullable by design and
-  a later `UPDATE … SET phase_id = NULL` detaches one, so nothing here is permanent. Record it
+- **Unaffiliated is a first-class choice, not a failure.** `project_id` is nullable by design and
+  a later `UPDATE … SET project_id = NULL` detaches one, so nothing here is permanent. Record it
   and move on — no warning, no "are you sure", no second ask.
-- **Offer, never force.** Ask exactly once. If they pick a new goal or phase, collect its title
+- **Offer, never force.** Ask exactly once. If they pick a new goal or project, collect its title
   (and the goal's priority, 1–5, default 3) in that same round.
-- **Never create a goal or a phase the user did not ask for.** Ambiguous answer or skipped
+- **A new project defaults to sequential and shared** — `concurrent = 0`, `isolation = 'shared'`,
+  `ordinal` next in the goal. That is the old `phase` behaviour and the safe default. Ask the
+  follow-up **only** when the user's own words invite it ("this can go in parallel", "keep it off
+  the main tree"), and write it as one extra UPDATE:
+  `UPDATE project SET concurrent = 1 WHERE id = 'PROJ-NNN';` or
+  `UPDATE project SET isolation = 'worktree', worktree_path = '.worktrees/PROJ-NNN' WHERE id = 'PROJ-NNN';`
+  (both columns in one statement — a `shared` project may not carry a path, and the CHECK will
+  reject it). **Nothing cuts the worktree for you**; tell the user they need to create it.
+- **Never create a goal or a project the user did not ask for.** Ambiguous answer or skipped
   question → leave it unaffiliated and say so in Step 8.
 - **No direction on the board yet?** Still offer, but keep it to two choices — "start a goal for
   this" / "leave it unaffiliated" — and one line.
-- In `relay` mode, send the architect a one-line FYI when the requirement lands on a phase, so
-  the plan stays consistent with that phase's other requirements.
+- In `relay` mode, send the architect a one-line FYI when the requirement lands on a project, so
+  the plan stays consistent with that project's other requirements. Include the project's
+  `isolation` — it changes how far the architect's file-disjointness assertion has to reach.
 
 ### 6.6. Recruiting — the Architect Hit a Roster Gap
 
 This step runs **only** when the architect's `NEEDS INPUT:` block opens with `ROSTER GAP`. The
 plan needs a capability no member has, the architect has already filed the `capability_request`
 recording it, and it is now the **guild master's decision** — the roster is their layer, exactly
-like goals and phases.
+like goals and projects.
 
 > **Nothing here creates an agent without the user saying so.** Not you, not the architect, not
 > on a "reasonable inference". An agent file is a permanent addition to the guild.
@@ -495,8 +507,8 @@ in front of the guild master here, with the plan, as part of the same decision.
 
 | Answer | What you write | What happens next |
 |---|---|---|
-| **Approve** | the two-write approval below | The plan is committed. `/guild:check-in` runs the first batch |
-| **Reject** | the same, with `'rejected'` and the node to `'skipped'` | Nothing gets built. The plan and the graph stay on the board as the record of what was proposed and refused |
+| **Approve** | the three-write approval below | The plan is committed. `/guild:check-in` runs the first batch |
+| **Reject** | the same, with `'rejected'` throughout and the node to `'skipped'` | Nothing gets built. The plan and the graph stay on the board as the record of what was proposed and refused |
 | **Not yet / let me think** | nothing | The gate stays `pending`. Check-in will present it again |
 
 ```sql
@@ -514,12 +526,26 @@ UPDATE graph_node SET status = 'done'
  WHERE id = 'REQ-NNN/gate-plan'
    AND (SELECT g.status FROM gate g WHERE g.node_id = graph_node.id) = 'approved'
 RETURNING id, status;
+
+UPDATE plan SET approval = 'approved',
+                approved_by = 'user',
+                approved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
+                gate_node_id = 'REQ-NNN/gate-plan'
+ WHERE requirement_id = 'REQ-NNN' AND task_id IS NULL AND approval = 'pending'
+RETURNING id, approval;
 ```
 
-**Setting `gate.status` does not move the node** — approving is always two writes, and the
-second one is what makes `implement` ready. On reject: `'rejected'`, and the node goes to
-`'skipped'`. A rejected gate may be decided again later — reject, let the architect revise,
-then approve; that loop is the whole point of the plan gate. An **approved** one may not.
+**Setting `gate.status` does not move the node, and it does not approve the plan either** —
+approving is always **three** writes. The second is what makes `implement` ready; the third is
+what takes the plan off `v_plans_pending_approval`, which is the queue the brief and check-in
+read. Skip it and the board will keep asking about a plan the user already approved.
+
+`task_id IS NULL` targets the requirement's own implementation plan and leaves the test plan
+alone — the test-planner's plan is approved at its own point, not here.
+
+On reject: `'rejected'` on the gate, `'skipped'` on the node, `'rejected'` on the plan. A
+rejected gate may be decided again later — reject, let the architect revise, then approve; that
+loop is the whole point of the plan gate. An **approved** one may not.
 
 Pass the user's own words through `decision` when they give any — a bare approval is a decision
 with no reasoning attached, and six weeks later the reasoning is the part anyone wants.
@@ -540,7 +566,7 @@ it** — the whole value of a plan gate is that it belongs to somebody who is no
 Requirement planned!
 
   Requirement: {REQ} — {title}
-  Direction: {PHASE-NNN — phase title (GOAL-NNN — goal title)}
+  Direction: {PROJ-NNN — project title (GOAL-NNN — goal title)}
              (or "unaffiliated — not attached to a goal")
   Plan: {PLAN-NNN} — {N} implement tickets (or "none — simple fix, no plan needed")
   Graph: {standard · N nodes · N deviations} (or "none — simple fix, no graph")
@@ -561,8 +587,9 @@ Requirement planned!
 Never print "run check-in to start building" under a gate that is pending or rejected: that is
 the one sentence that would make an unapproved plan look approved.
 
-Report a new goal, phase or guild member you created on the user's instruction on its own line —
-each one outlives the requirement. And if a roster gap was left unresolved, one more line so it
+Report a new goal, project or guild member you created on the user's instruction on its own line —
+each one outlives the requirement. When you created a project with `isolation = 'worktree'`, say
+so and say that **the checkout is not cut for you** — nothing in the schema creates it. And if a roster gap was left unresolved, one more line so it
 is not a surprise later:
 
 ```
@@ -609,11 +636,14 @@ success — §4.b is the strongest single statement that nothing can be built ye
   can write. It holds because you honor it.
 - **Never let a subagent try `AskUserQuestion`** — team mode or not, only you can ask the real
   user. Both agents always relay via `NEEDS INPUT`.
-- **Direction is the guild master's call** — the goal, phase and `phase_id` writes are yours
-  alone, run only in Step 6.5 on an explicit answer. The product-owner proposes a placement and
-  the architect may flag a mismatch; neither of them writes one.
-- **A requirement with no phase is a finished requirement.** `phase_id` is nullable by design.
+- **Direction is the guild master's call** — the goal, project and `project_id` writes are yours
+  alone, run only in Step 6.5 on an explicit answer, and so are `concurrent`, `isolation` and
+  `worktree_path`. The product-owner proposes a placement and the architect may flag a mismatch;
+  neither of them writes one.
+- **A requirement with no project is a finished requirement.** `project_id` is nullable by design.
   Never block, re-ask, or apologise because the user left one unaffiliated.
+- **Never write `plan.approval` except at `gate-plan`, on the user's explicit answer.** It is the
+  same decision the gate carries and it belongs to the same person.
 - **File sets, capabilities and parallel groups are the architect's to set.** `task.files` is
   the disjointness assertion parallel dispatch depends on, and **nothing verifies it** — if a
   ticket is missing or its file set is wrong, that is a message to the architect, not an edit

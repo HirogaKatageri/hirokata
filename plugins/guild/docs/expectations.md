@@ -2,7 +2,7 @@
 
 **Status:** current
 **Companion to:** [`v6-architecture.md`](./v6-architecture.md) (the pivot), [`v5-design.md`](./v5-design.md) (the data model), [`../schema.sql`](../schema.sql) (the tool)
-**Applies to:** tursodb 0.7.2, `schema_version = 5`
+**Applies to:** tursodb 0.7.2, `schema_version = 6`
 
 ---
 
@@ -74,7 +74,7 @@ run as written:
 ```sql
 BEGIN;
 INSERT INTO goal (...) VALUES ('GOAL-001', ...);
-INSERT INTO phase (...) VALUES ('PHASE-001','GOAL-001', ...);
+INSERT INTO project (...) VALUES ('PROJ-001','GOAL-001', ...);
 INSERT INTO requirement (id, ..., body, ...) VALUES ('REQ-001', ..., 'Acceptance:
 const ok = 1;
 That is all.', ...);
@@ -82,7 +82,7 @@ INSERT INTO task (...) VALUES ('TASK-001','REQ-001', ...);
 COMMIT;
 ```
 
-Observed result: **the goal and the phase committed. The requirement and the task did not.**
+Observed result: **the goal and the project committed. The requirement and the task did not.**
 The `BEGIN`/`COMMIT` did not protect anything, because the splitter tore the script into
 fragments before the engine ever saw a single transaction. The process exited `1`, but the exit
 code tells you only that *something* failed — not what landed, and a member that reports
@@ -175,9 +175,10 @@ Every foreign key, checked as data rather than as a constraint.
 SELECT 'task.requirement_id' AS ref, t.id AS row_id, t.requirement_id AS missing FROM task t WHERE NOT EXISTS (SELECT 1 FROM requirement r WHERE r.id = t.requirement_id)
 UNION ALL SELECT 'task.plan_id', t.id, t.plan_id FROM task t WHERE t.plan_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM plan p WHERE p.id = t.plan_id)
 UNION ALL SELECT 'task.claimed_by', t.id, t.claimed_by FROM task t WHERE COALESCE(t.claimed_by,'') <> '' AND NOT EXISTS (SELECT 1 FROM agent a WHERE a.name = t.claimed_by)
-UNION ALL SELECT 'phase.goal_id', p.id, p.goal_id FROM phase p WHERE NOT EXISTS (SELECT 1 FROM goal g WHERE g.id = p.goal_id)
-UNION ALL SELECT 'requirement.phase_id', r.id, r.phase_id FROM requirement r WHERE r.phase_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM phase p WHERE p.id = r.phase_id)
+UNION ALL SELECT 'project.goal_id', p.id, p.goal_id FROM project p WHERE NOT EXISTS (SELECT 1 FROM goal g WHERE g.id = p.goal_id)
+UNION ALL SELECT 'requirement.project_id', r.id, r.project_id FROM requirement r WHERE r.project_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM project p WHERE p.id = r.project_id)
 UNION ALL SELECT 'plan.requirement_id', p.id, p.requirement_id FROM plan p WHERE NOT EXISTS (SELECT 1 FROM requirement r WHERE r.id = p.requirement_id)
+UNION ALL SELECT 'plan.gate_node_id', p.id, p.gate_node_id FROM plan p WHERE p.gate_node_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM graph_node n WHERE n.id = p.gate_node_id)
 UNION ALL SELECT 'graph_node.requirement_id', n.id, n.requirement_id FROM graph_node n WHERE NOT EXISTS (SELECT 1 FROM requirement r WHERE r.id = n.requirement_id)
 UNION ALL SELECT 'graph_node.task_id', n.id, n.task_id FROM graph_node n WHERE n.task_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM task t WHERE t.id = n.task_id)
 UNION ALL SELECT 'graph_edge.from_node', e.from_node || ' -> ' || e.to_node, e.from_node FROM graph_edge e WHERE NOT EXISTS (SELECT 1 FROM graph_node n WHERE n.id = e.from_node)
@@ -209,9 +210,13 @@ JSON columns.
 
 ```sql
 SELECT 'goal.status' AS col, id AS row_id, status AS value FROM goal WHERE status NOT IN ('todo','in-progress','done')
-UNION ALL SELECT 'phase.status', id, status FROM phase WHERE status NOT IN ('todo','in-progress','done')
+UNION ALL SELECT 'project.status', id, status FROM project WHERE status NOT IN ('todo','in-progress','done')
+UNION ALL SELECT 'project.isolation', id, isolation FROM project WHERE isolation NOT IN ('shared','worktree')
+UNION ALL SELECT 'project.concurrent', id, CAST(concurrent AS TEXT) FROM project WHERE concurrent NOT IN (0,1)
+UNION ALL SELECT 'project.worktree_path', id, COALESCE(worktree_path,'') FROM project WHERE isolation = 'shared' AND worktree_path IS NOT NULL
 UNION ALL SELECT 'requirement.status', id, status FROM requirement WHERE status NOT IN ('todo','in-progress','done')
 UNION ALL SELECT 'plan.status', id, status FROM plan WHERE status NOT IN ('todo','in-progress','done')
+UNION ALL SELECT 'plan.approval', id, approval FROM plan WHERE approval NOT IN ('pending','approved','rejected')
 UNION ALL SELECT 'task.status', id, status FROM task WHERE status NOT IN ('todo','in-progress','done','failed','blocked','waived')
 UNION ALL SELECT 'graph_node.kind', id, kind FROM graph_node WHERE kind NOT IN ('work','gate')
 UNION ALL SELECT 'graph_node.status', id, status FROM graph_node WHERE status NOT IN ('pending','ready','running','done','failed','skipped')
@@ -252,7 +257,7 @@ built from.
 
 ```sql
 SELECT 'goal' AS tbl, id FROM goal WHERE NOT (id GLOB 'GOAL-[0-9][0-9][0-9]' OR id GLOB 'GOAL-[0-9][0-9][0-9][0-9]')
-UNION ALL SELECT 'phase', id FROM phase WHERE NOT (id GLOB 'PHASE-[0-9][0-9][0-9]' OR id GLOB 'PHASE-[0-9][0-9][0-9][0-9]')
+UNION ALL SELECT 'project', id FROM project WHERE NOT (id GLOB 'PROJ-[0-9][0-9][0-9]' OR id GLOB 'PROJ-[0-9][0-9][0-9][0-9]')
 UNION ALL SELECT 'requirement', id FROM requirement WHERE NOT (id GLOB 'REQ-[0-9][0-9][0-9]' OR id GLOB 'REQ-[0-9][0-9][0-9][0-9]')
 UNION ALL SELECT 'plan', id FROM plan WHERE NOT (id GLOB 'PLAN-[0-9][0-9][0-9]' OR id GLOB 'PLAN-[0-9][0-9][0-9][0-9]')
 UNION ALL SELECT 'task', id FROM task WHERE NOT (id GLOB 'TASK-[0-9][0-9][0-9]' OR id GLOB 'TASK-[0-9][0-9][0-9][0-9]')
@@ -404,11 +409,15 @@ UNION ALL
 SELECT 'requirement-done-with-open-finding', f.requirement_id, CAST(f.id AS TEXT)
   FROM v_open_findings f JOIN requirement r ON r.id = f.requirement_id WHERE r.status = 'done'
 UNION ALL
-SELECT 'phase-done-over-open-requirement', r.phase_id, r.id
-  FROM requirement r JOIN phase p ON p.id = r.phase_id WHERE p.status = 'done' AND r.status <> 'done'
+SELECT 'project-done-over-open-requirement', r.project_id, r.id
+  FROM requirement r JOIN project p ON p.id = r.project_id WHERE p.status = 'done' AND r.status <> 'done'
 UNION ALL
-SELECT 'goal-done-over-open-phase', p.goal_id, p.id
-  FROM phase p JOIN goal g ON g.id = p.goal_id WHERE g.status = 'done' AND p.status <> 'done'
+SELECT 'goal-done-over-open-project', p.goal_id, p.id
+  FROM project p JOIN goal g ON g.id = p.goal_id WHERE g.status = 'done' AND p.status <> 'done'
+UNION ALL
+SELECT 'task-built-on-unapproved-plan', t.id, p.id || '=' || p.approval
+  FROM task t JOIN plan p ON p.id = t.plan_id
+ WHERE t.status IN ('in-progress','done') AND p.approval <> 'approved'
 UNION ALL
 SELECT 'finding-fixing-without-task', CAST(f.id AS TEXT), f.disposition FROM review_finding f WHERE f.disposition IN ('fixing','fixed') AND f.fix_task_id IS NULL
 UNION ALL
@@ -456,7 +465,7 @@ surface can ever show.
 
 ```sql
 SELECT 'no-created-event' AS breach, 'goal' AS tbl, id AS row_id FROM goal g WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='goal' AND e.subject_id=g.id AND e.verb='created')
-UNION ALL SELECT 'no-created-event','phase', id FROM phase p WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='phase' AND e.subject_id=p.id AND e.verb='created')
+UNION ALL SELECT 'no-created-event','project', id FROM project p WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='project' AND e.subject_id=p.id AND e.verb='created')
 UNION ALL SELECT 'no-created-event','requirement', id FROM requirement r WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='requirement' AND e.subject_id=r.id AND e.verb='created')
 UNION ALL SELECT 'no-created-event','plan', id FROM plan p WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='plan' AND e.subject_id=p.id AND e.verb='created')
 UNION ALL SELECT 'no-created-event','task', id FROM task t WHERE NOT EXISTS (SELECT 1 FROM event e WHERE e.subject_type='task' AND e.subject_id=t.id AND e.verb='created')
@@ -617,7 +626,7 @@ is what releases the rest of the flow to `guild:check-in` or `guild:shift`.
 The schema is applied and the roster is populated. Before the flow may begin:
 
 ```sql
--- P4.a  the schema is current — expect exactly one row, version 5
+-- P4.a  the schema is current — expect exactly one row, version 6
 SELECT version FROM schema_version WHERE id = 1;
 
 -- P4.b  the roster is not empty and its tags are legal — expect ZERO ROWS
@@ -637,10 +646,11 @@ P4.c must be a **separate round trip.** A failing statement does not stop a turs
    Nothing is written to the board yet.
 2. **Create the requirement**, `status = 'todo'`, body as `CAST(x'…' AS TEXT)`. Id derived inside
    the INSERT with `printf('%03d', COALESCE(MAX(…),0)+1)`, never hand-assigned.
-3. **Place it in the direction** — `phase_id`, on the user's explicit answer. Nullable by design;
+3. **Place it in the direction** — `project_id`, on the user's explicit answer. Nullable by design;
    an unaffiliated requirement is finished, not deficient.
 4. **Create the plan.** One plan per requirement; the decomposition lands on the tickets, not
-   on an intermediate row.
+   on an intermediate row. It lands `approval = 'pending'` and stays there until the user rules
+   at `gate-plan`.
 5. **Create the tickets**, all at `todo`, each with its `task_capability` rows or a pinned
    `agent`, `files` as a JSON array — the disjointness assertion that parallel dispatch depends
    on — and `parallel_group` where the architect declared a wave.
@@ -845,10 +855,12 @@ SELECT 'missing-view' AS breach, v.n AS row_id FROM (
   UNION ALL SELECT 'v_in_flight' UNION ALL SELECT 'v_open_bounties' UNION ALL SELECT 'v_blocked_tasks'
   UNION ALL SELECT 'v_roster_gaps' UNION ALL SELECT 'v_open_bugs' UNION ALL SELECT 'v_failed_tasks'
   UNION ALL SELECT 'v_open_findings' UNION ALL SELECT 'v_coverage_due' UNION ALL SELECT 'v_gates_pending'
+  UNION ALL SELECT 'v_plans_pending_approval' UNION ALL SELECT 'v_projects_runnable'
+  UNION ALL SELECT 'v_project_progress'
   UNION ALL SELECT 'v_recent_activity' UNION ALL SELECT 'v_capability_unknown') v
  WHERE NOT EXISTS (SELECT 1 FROM sqlite_schema s WHERE s.type = 'view' AND s.name = v.n)
 UNION ALL
-SELECT 'schema-not-5', CAST(version AS TEXT) FROM schema_version WHERE version <> 5;
+SELECT 'schema-not-6', CAST(version AS TEXT) FROM schema_version WHERE version <> 6;
 ```
 
 *Verified:* zero rows on `empty` and on `messy`; `DROP VIEW v_failed_tasks` returns
@@ -1117,7 +1129,9 @@ SELECT 'missing-source' AS breach, v.n AS row_id FROM (
   SELECT 'v_brief' AS n UNION ALL SELECT 'v_goal_progress' UNION ALL SELECT 'v_requirement_progress'
   UNION ALL SELECT 'v_board' UNION ALL SELECT 'v_blocked_tasks' UNION ALL SELECT 'v_roster_gaps'
   UNION ALL SELECT 'v_recent_activity'
-  UNION ALL SELECT 'phase' UNION ALL SELECT 'graph_node' UNION ALL SELECT 'graph_edge'
+  UNION ALL SELECT 'v_projects_runnable' UNION ALL SELECT 'v_project_progress'
+  UNION ALL SELECT 'v_plans_pending_approval'
+  UNION ALL SELECT 'project' UNION ALL SELECT 'graph_node' UNION ALL SELECT 'graph_edge'
   UNION ALL SELECT 'gate' UNION ALL SELECT 'bug' UNION ALL SELECT 'review_finding'
   UNION ALL SELECT 'coverage') v
  WHERE NOT EXISTS (SELECT 1 FROM sqlite_schema s WHERE s.type IN ('view','table') AND s.name = v.n);
@@ -1201,8 +1215,8 @@ rather than searching is that it stays a hard number as the page grows.
 against the data file:
 
 ```python
-NEEDED = ['brief','goals','phases','requirements','tasks','blocked','gaps',
-          'nodes','edges','gates','bugs','findings','coverage','activity']
+NEEDED = ['brief','goals','projects','requirements','tasks','blocked','gaps',
+          'approvals','nodes','edges','gates','bugs','findings','coverage','activity']
 d = json.load(open('/tmp/guild-data.json'))
 for k in NEEDED:
     assert k in d,                    'MISSING KEY   ' + k
@@ -1596,7 +1610,7 @@ and reported success.
 ```sql
 SELECT 'not-cleared' AS breach, t.tbl AS row_id, CAST(t.n AS TEXT) AS detail FROM (
   SELECT 'goal' AS tbl, COUNT(*) AS n FROM goal
-  UNION ALL SELECT 'phase', COUNT(*) FROM phase
+  UNION ALL SELECT 'project', COUNT(*) FROM project
   UNION ALL SELECT 'requirement', COUNT(*) FROM requirement
   UNION ALL SELECT 'plan', COUNT(*) FROM plan
   UNION ALL SELECT 'task', COUNT(*) FROM task
@@ -1966,13 +1980,13 @@ authorized by a person or it is not incurred.
 
 The cycle hangs off a **carrier requirement** — `graph_node.requirement_id` is
 `NOT NULL REFERENCES requirement(id)` and an inspection has no id of its own to key a graph by.
-Prefer a fresh unaffiliated carrier (`phase_id` NULL) over a feature requirement, which would
+Prefer a fresh unaffiliated carrier (`project_id` NULL) over a feature requirement, which would
 otherwise carry two graphs and one ambiguous `graph-template:` key.
 
 ### Preconditions
 
 ```sql
--- P11.a  the schema is current — expect exactly one row, version 5
+-- P11.a  the schema is current — expect exactly one row, version 6
 SELECT version FROM schema_version WHERE id = 1;
 
 -- P11.b  the carrier has no graph already — expect ZERO ROWS, in its own round trip
@@ -2559,7 +2573,7 @@ SELECT 'shift-recruited-or-retired-a-member', e.subject_id, e.verb || ' at ' || 
 UNION ALL
 SELECT 'shift-touched-the-direction', e.subject_type || ':' || e.subject_id, e.verb || ' at ' || e.ts
   FROM event e, w
- WHERE e.subject_type IN ('goal','phase') AND e.ts >= w.t0 AND e.ts <= w.t1
+ WHERE e.subject_type IN ('goal','project') AND e.ts >= w.t0 AND e.ts <= w.t1
 UNION ALL
 SELECT 'shift-filed-a-capability-request-and-created-the-member', q.capability, q.proposed_agent
   FROM capability_request q
@@ -2581,7 +2595,7 @@ themselves*, which is the exact thing `v5-design.md` §5.4's last line forbids.
 `qa-check` to `done`, inserting an `inspection` row and creating `developer-embedded` returns
 `shift-started-an-inspection | REQ-900/qa-check`, `shift-opened-an-inspection-row | INSP-009` and
 `shift-recruited-or-retired-a-member | developer-embedded | recruited at …`. Closing `GOAL-001`
-and `PHASE-001` mid-shift returns `shift-touched-the-direction` for both.
+and `PROJ-001` mid-shift returns `shift-touched-the-direction` for both.
 
 **§12.c — the failure policy was followed and the shift did not deadlock.** Expect **zero rows**:
 
@@ -2818,7 +2832,7 @@ Must be false after a shift. These are the specific ways *this* process goes wro
 | A requirement closed past an unresolved gate | G6 `requirement-done-with-pending-gate` |
 | An inspection *started* by the shift | §12.b `shift-started-an-inspection`, `shift-opened-an-inspection-row` |
 | A member created, or a filed gap quietly self-filled | §12.b `shift-recruited-or-retired-a-member`, `shift-filed-a-capability-request-and-created-the-member` |
-| A goal or phase moved | §12.b `shift-touched-the-direction` |
+| A goal or project moved | §12.b `shift-touched-the-direction` |
 | A ticket retried twice inside one shift | §12.c `retried-more-than-once` |
 | A failure recorded on only one of the ticket and the node | §12.c `failed-node-live-ticket`, `failed-ticket-live-node` |
 | A ticket left `in-progress` by a crashed turn | G6 `in-progress-unclaimed`, `claimed-without-timestamp` |

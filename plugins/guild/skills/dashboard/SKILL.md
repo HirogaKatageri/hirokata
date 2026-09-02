@@ -49,13 +49,17 @@ cat > /tmp/guild-dash.sql <<'SQL'
 SELECT replace(replace(replace(json_object(
   'brief', (SELECT json_group_array(json_object('fact',fact,'value',value)) FROM v_brief),
   'goals', (SELECT json_group_array(json_object('id',id,'status',status,'priority',priority,
-              'phase',COALESCE(current_phase_id,''),'phase_title',COALESCE(current_phase_title,''),
+              'projects',projects_total,'projects_done',projects_done,
+              'runnable',projects_runnable,'runnable_ids',runnable_project_ids,
               'done',requirements_done,'total',requirements_total,'title',title))
             FROM (SELECT * FROM v_goal_progress ORDER BY priority, id)),
-  'phases', (SELECT json_group_array(json_object('id',id,'goal',goal_id,'ordinal',ordinal,
-              'status',status,'title',title))
-            FROM (SELECT * FROM phase ORDER BY goal_id, ordinal)),
-  'requirements', (SELECT json_group_array(json_object('id',id,'phase',COALESCE(phase_id,''),
+  'projects', (SELECT json_group_array(json_object('id',id,'goal',goal_id,'ordinal',ordinal,
+              'status',status,'priority',priority,'concurrent',concurrent,
+              'isolation',isolation,'worktree',worktree_path,'runnable',runnable,
+              'reqs',requirements_total,'reqs_done',requirements_done,
+              'open',tasks_open,'blocked',tasks_blocked,'title',title))
+            FROM (SELECT * FROM v_project_progress)),
+  'requirements', (SELECT json_group_array(json_object('id',id,'project',COALESCE(project_id,''),
               'status',status,'priority',priority,'total',tasks_total,'done',tasks_done,
               'open',tasks_open,'blocked',tasks_blocked,'failed',tasks_failed,'title',title))
             FROM (SELECT * FROM v_requirement_progress)),
@@ -64,6 +68,9 @@ SELECT replace(replace(replace(json_object(
             FROM (SELECT * FROM v_board)),
   'blocked', (SELECT json_group_array(json_object('id',id,'reason',reason))
             FROM (SELECT * FROM v_blocked_tasks)),
+  'approvals', (SELECT json_group_array(json_object('id',id,'req',requirement_id,
+              'status',status,'gate',gate_node_id,'title',title))
+            FROM (SELECT * FROM v_plans_pending_approval)),
   'gaps', (SELECT json_group_array(json_object('cap',capability,'req',COALESCE(requirement_id,''),
               'proposed',COALESCE(proposed_agent,''),'covered',covered_by,'why',rationale))
             FROM (SELECT * FROM v_roster_gaps)),
@@ -180,9 +187,9 @@ Nothing printed is the passing result.
 
   | View | Answers | From |
   |------|---------|------|
-  | **Roadmap** | goals → phases → requirements, with live progress | `goals`, `phases`, `requirements` |
+  | **Roadmap** | goals → projects → requirements, with live progress. A project shows whether it is **runnable** and, when `isolation` is `worktree`, the checkout its tasks run in; sibling projects that are runnable at the same time render side by side rather than as a queue | `goals`, `projects`, `requirements` |
   | **Board** | tasks by section, coloured by priority, blocked ones tagged with their reason | `tasks`, `blocked` |
-  | **Graph** | each requirement's execution graph, node status and the gates | `nodes`, `edges`, `gates` |
+  | **Graph** | each requirement's execution graph, node status and the gates — plus the plans still waiting on a human, including any with no gate node behind them | `nodes`, `edges`, `gates`, `approvals` |
   | **Bugs** | open defects by severity, linked to their fix tasks | `bugs` |
   | **Findings** | what reviewers flagged and whether it was ever fixed — grouped by severity, unresolved first, filterable to the resolved | `findings` |
   | **Coverage** | quality areas by risk, and how long since anyone looked | `coverage` |

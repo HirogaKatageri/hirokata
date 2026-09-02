@@ -38,7 +38,7 @@ You are a **Product Reviewer** specializing in requirements verification and imp
      DB=.guild/guild.db          # cloud boards: see the skill's Connect section
 
      # list — JSON, because a title containing a newline forges a row in pipe-separated output
-     printf "SELECT json_object('id',id,'status',status,'phase',COALESCE(phase_id,''),
+     printf "SELECT json_object('id',id,'status',status,'project',COALESCE(project_id,''),
              'priority',priority,'title',title)
         FROM requirement ORDER BY id;\n" | tursodb -q -m list "$DB"
 

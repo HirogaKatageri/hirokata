@@ -43,8 +43,11 @@ SQL:
 export PATH="$HOME/.turso:$PATH"
 cat > /tmp/brief.sql <<'SQL'
 SELECT '## brief';        SELECT fact, value FROM v_brief;
-SELECT '## direction';    SELECT id, priority, current_phase_id, current_phase_title,
+SELECT '## direction';    SELECT id, priority, projects_runnable, runnable_project_ids,
                                  requirements_done, requirements_total, title FROM v_goal_progress;
+SELECT '## projects';     SELECT json_object('id',id,'goal',goal_id,'why',why,
+                                 'isolation',isolation,'worktree',worktree_path,
+                                 'title',title) FROM v_projects_runnable;
 SELECT '## requirements'; SELECT id, status, tasks_done, tasks_total, tasks_open,
                                  tasks_blocked, tasks_failed, title FROM v_requirement_progress
                            WHERE status <> 'done';
@@ -69,6 +72,9 @@ SELECT '## coverage';     SELECT json_object('id',id,'risk',risk,'due',interval_
                                  'since',COALESCE(days_since,-1),'area',area) FROM v_coverage_due;
 SELECT '## gates';        SELECT json_object('node',node_id,'req',requirement_id,
                                  'kind',kind,'prompt',prompt) FROM v_gates_pending;
+SELECT '## approvals';    SELECT json_object('id',id,'req',requirement_id,'status',status,
+                                 'gate',gate_node_id,'title',title)
+                            FROM v_plans_pending_approval;
 SELECT '## moved';        SELECT json_object('ts',ts,'actor',actor,'verb',verb,
                                  'type',subject_type,'id',subject_id,'title',subject_title,
                                  'phrase',phrase) FROM v_recent_activity
@@ -177,9 +183,12 @@ v_capability_unknown` names it.
 Present a short briefing in **this order**, in prose, with the rows available if the user wants
 them. Skip any part the data does not support.
 
-1. **Direction** — which goal the guild is serving, its priority, which phase it is on, and
+1. **Direction** — which goal the guild is serving, its priority, which projects are runnable, and
    progress. If `## direction` is empty, say so plainly and note that requirements are being
-   tracked without one — that is legal, not an error.
+   tracked without one — that is legal, not an error. When `## projects` has more than one row,
+   **name each of them and why it is runnable** (`concurrent`, `unordered`, `next in sequence`);
+   more than one project in flight is the normal shape now, not an anomaly to flag. Mention a
+   project's worktree only when its `isolation` is `worktree` — that is where its tasks run.
 2. **In flight** — what is being worked on and for how long, calling out anything implausibly
    old.
 2a. **Blocked — immediately after in-flight, by name, never as a count.** Give the ticket, the
@@ -199,7 +208,9 @@ them. Skip any part the data does not support.
    and, for a move, both ends of the transition. Never invent one that is not printed.
 5. **What is waiting on you** — every `## gates` row is a decision only the guild master can
    make, and nothing behind it moves until they do. Name the requirement and quote the gate's
-   prompt.
+   prompt. **`## approvals` belongs in this beat too**: a drafted plan nobody has ruled on
+   blocks every ticket under it, and a row here with an empty `gate` is one that has no gate
+   node to surface it — it would otherwise be invisible. Name the plan and its requirement.
 6. **What to do next** — a concrete recommendation, with the reason. Default to `next`. Deviate
    only for something the numbers justify — a critical bug with no fix task, an unadjudicated
    failure, an open roster gap holding a requirement, a pending gate — and say which fact

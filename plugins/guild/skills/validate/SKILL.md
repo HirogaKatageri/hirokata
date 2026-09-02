@@ -53,7 +53,7 @@ rather than prose to be interpreted. This skill runs them and reports what holds
 a boolean `FAIL` tells you to go looking. **Any output at all is a failure.**
 
 A handful state a count or a value instead — §4.b expects exactly the plan gate row, §4.c
-expects `N+9 | 2N+10 | 2`, P4.a expects version `5`. The sentence above each block says
+expects `N+9 | 2N+10 | 2`, P4.a expects version `6`. The sentence above each block says
 which. Read it; do not assume the zero-rows shape.
 
 **The exit code is not evidence.** tursodb has no `-bail`, a failing statement does not stop

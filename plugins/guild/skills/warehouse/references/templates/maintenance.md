@@ -244,7 +244,7 @@ carry it — either:
 
 - **the requirement that motivated the inspection**, if one did ("we just shipped REQ-039, look
   at checkout"), or
-- **a carrier requirement created for this inspection**, unaffiliated (`phase_id` NULL, which is
+- **a carrier requirement created for this inspection**, unaffiliated (`project_id` NULL, which is
   legal), titled so it is obviously not feature work.
 
 Prefer the carrier. Hanging a maintenance graph off a feature requirement gives that requirement
@@ -284,7 +284,7 @@ BEGIN;
 
 -- 0. the carrier requirement. Skip this statement if you are hanging the inspection
 --    off an existing requirement. Title travels as hex like any free text.
-INSERT INTO requirement (id, phase_id, title, body, status, priority, created_at, updated_at)
+INSERT INTO requirement (id, project_id, title, body, status, priority, created_at, updated_at)
 SELECT 'REQ-041', NULL,
        CAST(x'4d61696e74656e616e636520696e7370656374696f6e' AS TEXT),  -- 'Maintenance inspection'
        '', 'todo', 3, datetime('now'), datetime('now')

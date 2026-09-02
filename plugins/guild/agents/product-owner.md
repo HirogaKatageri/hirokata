@@ -63,7 +63,7 @@ For context on what's already defined, list the board's requirements and read th
 ones — they are rows now, not files:
 
 ```bash
-printf "SELECT json_object('id',id,'status',status,'phase',COALESCE(phase_id,''),
+printf "SELECT json_object('id',id,'status',status,'project',COALESCE(project_id,''),
         'priority',priority,'title',title)
    FROM requirement ORDER BY id;\n" | tursodb -q -m list "$DB"
 
@@ -116,38 +116,47 @@ forwards relevant context between you instead). Either way:
 
 ## Proposing Where the Requirement Belongs
 
-Requirements sit under **phases**, which sit under **goals**. That layer is what fills the
+Requirements sit under **projects**, which sit under **goals**. That layer is what fills the
 Direction facts in `v_brief` and the dashboard's Roadmap, and you are the right agent to
 *propose* a placement — you are the one who just heard why the user wants this. Your dispatch prompt
 carries the current direction; you can also read it yourself:
 
 ```bash
-# open goals with their CURRENT phase and requirement counts — a view, so one definition
+# open goals with their project and requirement counts — a view, so one definition
 printf "SELECT * FROM v_goal_progress;\n" | tursodb -q -m list "$DB"
 
-# every phase under a goal, in order
-printf "SELECT json_object('id',ph.id,'goal',ph.goal_id,'ordinal',ph.ordinal,
-        'status',ph.status,'title',ph.title)
-   FROM phase ph WHERE ph.goal_id='GOAL-NNN' ORDER BY ph.ordinal;\n" | tursodb -q -m list "$DB"
+# every project under a goal, in order
+printf "SELECT json_object('id',p.id,'goal',p.goal_id,'ordinal',p.ordinal,
+        'status',p.status,'concurrent',p.concurrent,'isolation',p.isolation,'title',p.title)
+   FROM project p WHERE p.goal_id='GOAL-NNN' ORDER BY p.ordinal;\n" | tursodb -q -m list "$DB"
 
-# the requirements already sitting on a phase
+# which of them may actually run right now, and why
+printf "SELECT id, why, isolation, title FROM v_projects_runnable;\n" | tursodb -q -m list "$DB"
+
+# the requirements already sitting on a project
 printf "SELECT json_object('id',id,'status',status,'title',title)
-   FROM requirement WHERE phase_id='PHASE-NNN' ORDER BY id;\n" | tursodb -q -m list "$DB"
+   FROM requirement WHERE project_id='PROJ-NNN' ORDER BY id;\n" | tursodb -q -m list "$DB"
 ```
 
 End your report with exactly one `Placement:` line — one of:
 
 ```
-Placement: PHASE-002 (Cart & coupon rework) — this is the coupon stacking work that phase names.
+Placement: PROJ-002 (Cart & coupon rework) — this is the coupon stacking work that project names.
 Placement: new goal — nothing on the board covers offline support; suggest a goal at priority 2.
 Placement: none — standalone tweak, filing it under a goal would be ceremony.
 ```
 
-**You never INSERT a `goal` or a `phase`, and you never UPDATE `requirement.phase_id`.** Direction
-is the guild master's call: the orchestrator puts your proposal to the user and executes whatever
-they choose. `requirement.phase_id` is nullable by design, so **`Placement: none` is a legitimate
-answer, not a gap** — say it plainly when that is your read, and never push for a goal just to
-make the board look tidy.
+A **new project** is a legitimate proposal too, and it is a different claim from a new goal: say
+`Placement: new project under GOAL-001` when the work is a coherent group the goal needs but no
+existing project names. If you believe it could run **beside** the projects already in flight
+rather than after them, say that in the same line and why — it is a recommendation for the user,
+who owns `concurrent` and `isolation`, not a decision you get to make.
+
+**You never INSERT a `goal` or a `project`, and you never UPDATE `requirement.project_id`.**
+Direction is the guild master's call: the orchestrator puts your proposal to the user and executes
+whatever they choose. `requirement.project_id` is nullable by design, so **`Placement: none` is a
+legitimate answer, not a gap** — say it plainly when that is your read, and never push for a goal
+just to make the board look tidy.
 
 Nothing stops you, and that is the point: with the CLI gone there is no guard that refuses a
 `goal` INSERT from this agent. The layer boundary holds because you keep it.
@@ -222,7 +231,7 @@ read-then-write race and no way for two concurrent writers to claim the same num
 hex=$(xxd -p < /tmp/req-draft.md | tr -d '\n')
 ttl=$(printf '%s' "{Feature Title}" | xxd -p | tr -d '\n')
 { printf "PRAGMA foreign_keys = ON;\n"
-  printf "INSERT INTO requirement (id, phase_id, title, body, priority, created_at, updated_at)
+  printf "INSERT INTO requirement (id, project_id, title, body, priority, created_at, updated_at)
           SELECT 'REQ-' || printf('%%03d',
                    COALESCE(MAX(CAST(substr(id, instr(id,'-')+1) AS INTEGER)), 0) + 1),
                  NULL, CAST(x'$ttl' AS TEXT), CAST(x'$hex' AS TEXT), 2,
@@ -234,7 +243,7 @@ ttl=$(printf '%s' "{Feature Title}" | xxd -p | tr -d '\n')
 # → REQ-0NN — that id is what you report back
 ```
 
-`phase_id` stays **NULL**: you propose a placement, the guild master decides, the orchestrator
+`project_id` stays **NULL**: you propose a placement, the guild master decides, the orchestrator
 writes it. `priority` is 1 (highest) to 5 (lowest) and is CHECKed at the database.
 
 `title` is a **column**, not a line in the body — every reader projects it. Do not write YAML
@@ -368,8 +377,8 @@ alongside you, is told the requirement is final and proceeds to write the plan.
 - Don't skip edge cases — they're where bugs live
 - Don't accept vague requirements — push for specificity
 - Don't design solutions yourself — delegate feasibility/approach questions to the architect
-- Don't INSERT a `goal` or `phase`, and don't set `requirement.phase_id` — propose a placement and
-  let the guild master decide; "no phase" is a fine outcome. Nothing refuses those writes any
+- Don't INSERT a `goal` or `project`, and don't set `requirement.project_id` — propose a placement
+  and let the guild master decide; "no project" is a fine outcome. Nothing refuses those writes any
   more, so the boundary is yours to hold
 - **Don't write to `event` by hand.** The triggers write it. It is the guild's memory, and a
   memory you can edit is not one.

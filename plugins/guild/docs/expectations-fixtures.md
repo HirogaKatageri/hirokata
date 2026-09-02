@@ -178,10 +178,10 @@ SELECT (SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table')   AS tables,
 **Expected result — exactly one row:**
 
 ```
-25|26|43|5|17|0
+24|29|45|6|17|0
 ```
 
-24 tables, 26 views, 43 triggers, schema version 5, the 17 seed capability words, zero events.
+24 tables, 29 views, 45 triggers, schema version 6, the 17 seed capability words, zero events.
 A vocabulary of 17 on an empty board is the point: the words exist before any member does.
 
 **The traps this fixture sets.**
@@ -190,8 +190,9 @@ A vocabulary of 17 on an empty board is the point: the words exist before any me
   which is **not** "the project is finished" and not an error. A member that reports either is
   wrong.
 - Every list view is empty — `v_board`, `v_open_bounties`, `v_blocked_tasks`, `v_ready_nodes`,
-  `v_gates_pending`, `v_goal_progress`, `v_recent_activity` — but `v_brief` still returns its
-  full **23 rows**, all counts `0`. A brief that returns nothing here has skipped the view.
+  `v_gates_pending`, `v_plans_pending_approval`, `v_projects_runnable`, `v_project_progress`,
+  `v_goal_progress`, `v_recent_activity` — but `v_brief` still returns its full **27 rows**, all
+  counts `0`. A brief that returns nothing here has skipped the view.
 - `guild_state.actor` is `'orchestrator'` and `last-checkin` is the literal string `'null'`,
   not SQL NULL. Code that tests `IS NULL` on it is wrong; `NULLIF(value,'null')` is the idiom
   the schema itself uses.
@@ -202,7 +203,7 @@ A vocabulary of 17 on an empty board is the point: the words exist before any me
 
 **Load:** `schema.sql` → `00-roster.sql` → `02-planned.sql`
 
-**What it represents.** One goal, one phase, one requirement, a plan cut into three implement tickets, six
+**What it represents.** One goal, one project, one requirement, a plan cut into three implement tickets, six
 tickets, and a `standard` graph instantiated over it with **`gate-plan` still `pending`**. Not
 one line of code has been written and nothing has been approved. This is the state a board is in
 for the minutes between the architect finishing and the guild master answering.
@@ -230,18 +231,20 @@ INSERT INTO goal (id, title, body, status, priority, created_at, updated_at)
 VALUES ('GOAL-001', CAST(x'53686970207468652073746f726566726f6e74' AS TEXT), '', 'in-progress', 2,
         '2026-08-01T09:00:00Z', '2026-08-01T09:00:00Z');
 
-INSERT INTO phase (id, goal_id, title, ordinal, status, created_at, updated_at)
-VALUES ('PHASE-001', 'GOAL-001', CAST(x'436865636b6f757420616e64207061796d656e7473' AS TEXT), 1, 'in-progress',
+INSERT INTO project (id, goal_id, title, ordinal, status, priority, concurrent, isolation, created_at, updated_at)
+VALUES ('PROJ-001', 'GOAL-001', CAST(x'436865636b6f757420616e64207061796d656e7473' AS TEXT), 1, 'in-progress', 2, 0, 'shared',
         '2026-08-01T09:05:00Z', '2026-08-01T09:05:00Z');
 
-INSERT INTO requirement (id, phase_id, title, body, status, priority, created_at, updated_at)
-VALUES ('REQ-001', 'PHASE-001', CAST(x'48617264656e207468652073657373696f6e20636f6f6b69653a2073657420736563757265203d20747275653b0a616e6420726f7461746520746865207369676e696e67206b6579206f6e206465706c6f79' AS TEXT), CAST(x'232320416363657074616e63650a0a2d205365742d436f6f6b69652063617272696573205365637572652c20487474704f6e6c7920616e642053616d65536974653d4c61780a2d20546865207369676e696e67206b657920726f7461746573206f6e206576657279206465706c6f790a0a60606074730a636f6f6b69652e736563757265203d20747275653b0a636f6f6b69652e73616d6553697465203d20226c6178223b0a6060600a' AS TEXT),
+INSERT INTO requirement (id, project_id, title, body, status, priority, created_at, updated_at)
+VALUES ('REQ-001', 'PROJ-001', CAST(x'48617264656e207468652073657373696f6e20636f6f6b69653a2073657420736563757265203d20747275653b0a616e6420726f7461746520746865207369676e696e67206b6579206f6e206465706c6f79' AS TEXT), CAST(x'232320416363657074616e63650a0a2d205365742d436f6f6b69652063617272696573205365637572652c20487474704f6e6c7920616e642053616d65536974653d4c61780a2d20546865207369676e696e67206b657920726f7461746573206f6e206576657279206465706c6f790a0a60606074730a636f6f6b69652e736563757265203d20747275653b0a636f6f6b69652e73616d6553697465203d20226c6178223b0a6060600a' AS TEXT),
         'todo', 2, '2026-08-01T09:10:00Z', '2026-08-01T09:10:00Z');
 
 UPDATE guild_state SET value = 'architect' WHERE key = 'actor';
 
-INSERT INTO plan (id, requirement_id, task_id, title, body, status, created_at, updated_at)
-VALUES ('PLAN-001', 'REQ-001', NULL, CAST(x'496d706c656d656e746174696f6e20706c616e20666f72205245512d303031' AS TEXT), '', 'todo',
+-- `status='done'` (the document is written) with `approval='pending'` (nobody has ruled) is
+-- exactly the state this fixture is named for, and it is only expressible since v6.2.
+INSERT INTO plan (id, requirement_id, task_id, title, body, status, approval, gate_node_id, created_at, updated_at)
+VALUES ('PLAN-001', 'REQ-001', NULL, CAST(x'496d706c656d656e746174696f6e20706c616e20666f72205245512d303031' AS TEXT), '', 'done', 'pending', NULL,
         '2026-08-01T09:20:00Z', '2026-08-01T09:20:00Z');
 
 INSERT INTO task (id, requirement_id, plan_id, files, parallel_group,
@@ -426,10 +429,10 @@ Two smaller ones:
 
 **Load:** `schema.sql` → `00-roster.sql` → `02-planned.sql` → `03-in-flight.sql`
 
-**What it represents.** The guild master approved `gate-plan` (both writes: the `gate` row *and*
-the `graph_node`, because setting `gate.status` moves nothing on its own). Two implement nodes
-are `done` with work-log entries behind them, the third is `running`, and its ticket is claimed
-and 45 minutes old.
+**What it represents.** The guild master approved `gate-plan` (**all three writes**: the `gate`
+row, the `graph_node`, *and* `plan.approval` — setting `gate.status` moves nothing on its own and
+approves no plan). Two implement nodes are `done` with work-log entries behind them, the third is
+`running`, and its ticket is claimed and 45 minutes old.
 
 **One deviation from the brief, stated plainly.** This fixture was asked for `test-plan` *ready*
 alongside an unfinished implement node. **That state is unreachable, and the schema is right to
@@ -456,12 +459,20 @@ UPDATE graph_node SET status = 'done'
  WHERE id = 'REQ-001/gate-plan'
    AND (SELECT g.status FROM gate g WHERE g.node_id = graph_node.id) = 'approved';
 
+-- the third write. Without it `v_plans_pending_approval` keeps asking about a plan the guild
+-- master has already approved, and every brief repeats the question.
+UPDATE plan SET approval = 'approved', approved_by = 'user',
+                approved_at = '2026-08-01T10:00:00Z',
+                gate_node_id = 'REQ-001/gate-plan',
+                updated_at = '2026-08-01T10:00:00Z'
+ WHERE id = 'PLAN-001';
+
 UPDATE guild_state SET value = 'orchestrator' WHERE key = 'actor';
 
 UPDATE requirement SET status = 'in-progress', updated_at = '2026-08-01T10:01:00Z'
  WHERE id = 'REQ-001';
-UPDATE plan SET status = 'in-progress', updated_at = '2026-08-01T10:01:00Z'
- WHERE id = 'PLAN-001';
+-- `plan.status` stays 'done': the DOCUMENT was finished at planning time. Approval is the other
+-- column, and it is the one that just moved.
 
 UPDATE task SET status = 'done', claimed_by = 'developer',
                 claimed_at = '2026-08-01T10:02:00Z', updated_at = '2026-08-01T11:20:00Z'
@@ -684,8 +695,8 @@ PRAGMA foreign_keys = ON;
 UPDATE guild_state SET value = 'orchestrator' WHERE key = 'actor';
 
 -- a second requirement, queued, with no tasks and no graph
-INSERT INTO requirement (id, phase_id, title, body, status, priority, created_at, updated_at)
-VALUES ('REQ-002', 'PHASE-001', CAST(x'53756e73657420746865206c65676163792070726f6d6f2073657276696365' AS TEXT), '', 'todo', 4,
+INSERT INTO requirement (id, project_id, title, body, status, priority, created_at, updated_at)
+VALUES ('REQ-002', 'PROJ-001', CAST(x'53756e73657420746865206c65676163792070726f6d6f2073657276696365' AS TEXT), '', 'todo', 4,
         '2026-08-02T08:00:00Z', '2026-08-02T08:00:00Z');
 
 INSERT INTO task (id, requirement_id, plan_id, files, parallel_group,
@@ -918,7 +929,7 @@ This one does **not** build on `planned`. An inspection is a separate template o
 carrier requirement, and mixing it into a feature board is precisely the mistake
 `maintenance.md` §7.1 warns about.
 
-**What it represents.** A `maintenance` graph on carrier `REQ-900` — unaffiliated, `phase_id`
+**What it represents.** A `maintenance` graph on carrier `REQ-900` — unaffiliated, `project_id`
 NULL, titled so it is obviously not feature work. `qa-check` and `qa-plan` are `done`,
 `qa-execute` is `running` with one mission ticket claimed by `qa-tester`, and a second mission
 ticket is waiting. `INSP-001` is `in-progress` with one verdict recorded, one area still NULL
@@ -933,7 +944,7 @@ PRAGMA foreign_keys = ON;
 UPDATE guild_state SET value = 'architect' WHERE key = 'actor';
 
 -- the carrier requirement: unaffiliated, obviously not feature work
-INSERT INTO requirement (id, phase_id, title, body, status, priority, created_at, updated_at)
+INSERT INTO requirement (id, project_id, title, body, status, priority, created_at, updated_at)
 SELECT 'REQ-900', NULL, CAST(x'4d61696e74656e616e636520696e7370656374696f6e20e2809420636865636b6f757420616e642061757468' AS TEXT), '', 'todo', 3,
        '2026-08-03T08:00:00Z', '2026-08-03T08:00:00Z'
 WHERE NOT EXISTS (SELECT 1 FROM requirement WHERE id = 'REQ-900');

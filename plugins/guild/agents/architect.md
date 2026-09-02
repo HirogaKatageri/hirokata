@@ -152,27 +152,39 @@ Read the requirement itself as one column, so what you get is the stored bytes e
 printf "SELECT body FROM requirement WHERE id='REQ-NNN';\n" | tursodb -q -m list "$DB"
 ```
 
-**If the orchestrator tells you the requirement sits on a phase**, read that phase's context before
-designing, so you can see which sibling requirements the plan should stay consistent with (shared
-modules, work an earlier phase already delivered, ordering the goal implies):
+**If the orchestrator tells you the requirement sits on a project**, read that project's context
+before designing, so you can see which sibling requirements the plan should stay consistent with
+(shared modules, work an earlier project already delivered, ordering the goal implies):
 
 ```bash
 printf "SELECT * FROM v_goal_progress;\n" | tursodb -q -m list "$DB"
-printf "SELECT json_object('phase',ph.id,'ordinal',ph.ordinal,'status',ph.status,
-        'req',COALESCE(r.id,''),'req_status',COALESCE(r.status,''),'title',ph.title)
-   FROM phase ph LEFT JOIN requirement r ON r.phase_id = ph.id
-  WHERE ph.goal_id='GOAL-NNN' ORDER BY ph.ordinal, r.id;\n" | tursodb -q -m list "$DB"
+printf "SELECT json_object('project',p.id,'ordinal',p.ordinal,'status',p.status,
+        'concurrent',p.concurrent,'isolation',p.isolation,
+        'req',COALESCE(r.id,''),'req_status',COALESCE(r.status,''),'title',p.title)
+   FROM project p LEFT JOIN requirement r ON r.project_id = p.id
+  WHERE p.goal_id='GOAL-NNN' ORDER BY p.ordinal, r.id;\n" | tursodb -q -m list "$DB"
 ```
 
-Many requirements have no phase at all; `phase_id` is nullable by design, and that changes nothing
-about how you plan.
+Many requirements have no project at all; `project_id` is nullable by design, and that changes
+nothing about how you plan.
 
-**Direction is not yours to set.** Goals and phases are the guild master's layer — never INSERT a
-`goal` or a `phase`, and never UPDATE `requirement.phase_id`. **Nothing refuses those writes any
-more**, so the boundary holds because you keep it. If planning reveals the work is really two
-phases' worth, or belongs under a different goal than it was filed under, say so in your report
-(or relay it as a `NEEDS INPUT` question when it changes scope) and let the orchestrator take it to
-the user.
+**Two columns on the project change what you may assume, so read them.**
+
+- `isolation = 'worktree'` means this project's tasks run in their own checkout
+  (`worktree_path`). Cross-*project* file collisions are impossible there, so your
+  `parallel_group` disjointness assertion only has to hold **within this project**.
+- `isolation = 'shared'` means the opposite: sibling projects may be running in the same tree at
+  the same time. Check `v_projects_runnable` — if another shared project is runnable right now,
+  treat files it plausibly owns as contended and say so in your report. You cannot see its
+  tickets' `files` before they exist, so this is a judgment you state, not a query you run.
+
+**Direction is not yours to set.** Goals and projects are the guild master's layer — never INSERT a
+`goal` or a `project`, never UPDATE `requirement.project_id`, and never set `concurrent`,
+`isolation` or `worktree_path`. **Nothing refuses those writes any more**, so the boundary holds
+because you keep it. If planning reveals the work is really two projects' worth, belongs under a
+different goal than it was filed under, or ought to be cut into its own worktree, say so in your
+report (or relay it as a `NEEDS INPUT` question when it changes scope) and let the orchestrator
+take it to the user.
 
 ### 2. Explore the Codebase
 
@@ -493,6 +505,19 @@ ttl=$(printf '%s' "{Feature} Implementation Plan" | xxd -p | tr -d '\n')
 
 `FROM requirement r WHERE r.id='REQ-NNN'` **is** the referential check: a bad REQ id yields zero
 rows and no partial write. Read it back any time with `SELECT body FROM plan WHERE id='PLAN-NNN';`.
+
+The row lands at `status = 'todo'`, `approval = 'pending'`. Those are two different questions and
+only the first is yours:
+
+```bash
+# you finished writing the document. This approves NOTHING.
+printf "UPDATE plan SET status='done' WHERE id='PLAN-NNN' RETURNING id, status, approval;\n" \
+  | tursodb -q -m list "$DB"
+```
+
+`approval` is the user's ruling, written at `gate-plan` by the orchestrator. Leave it alone — see
+the anti-patterns at the end. If you know the gate node, link it so a reader can go from either
+end: `UPDATE plan SET gate_node_id='REQ-NNN/gate-plan' WHERE id='PLAN-NNN';`
 
 **The decomposition lands on the tickets themselves** — there is no intermediate row. The `implement`
 node is `fanout: per-task`, so **three implement tickets produce three implementation nodes and no
@@ -875,16 +900,20 @@ user at the gate, and it stays in `v_roster_gaps` until somebody actually recrui
 - Don't skip the codebase analysis — it's what makes your plan actionable
 - Don't queue a separate researcher ticket — call `guild:researcher` inline and keep planning in
   the same session
-- **Don't INSERT a `goal` or `phase`, and don't set `requirement.phase_id`** — flag the mismatch in
+- **Don't INSERT a `goal` or `project`, don't set `requirement.project_id`, and don't touch
+  `project.concurrent`, `project.isolation` or `project.worktree_path`** — flag the mismatch in
   your report and let the guild master decide. Nothing refuses those writes any more
+- **Don't approve your own plan.** `plan.status = 'done'` says you finished writing it;
+  `plan.approval` is the user's ruling and is not yours to write. Leave it `pending` and let the
+  gate reach them
 - **Don't invent a capability.** The vocabulary is `v_capability_vocabulary`. A ticket declaring a
   word nobody has inserts fine, matches nobody, goes `blocked`, and `blocked` holds its
   requirement's review gate closed. `v_capability_unknown` is the audit — run it
 - **Don't drop `agent = 'reviewer'` from the review ticket.** It is the literal string
   `v_task_actionable` keys the review gate on; a NULL agent there opens the gate immediately
 - **Don't create an agent file, and don't tell the orchestrator to create one on your say-so.** The
-  roster is the guild master's layer, exactly like goals and phases. You file the gap and propose the
-  spec; the user decides
+  roster is the guild master's layer, exactly like goals and projects. You file the gap and propose
+  the spec; the user decides
 - **Don't create a ticket whose capability gap is unresolved** — the honest fix
   afterwards is to drop it and recreate it, and its id may already be referenced by the graph
 - **Don't fold two units of work into one ticket.** The implement tickets are how the `implement`

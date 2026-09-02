@@ -78,7 +78,7 @@ read-then-write race:
 ```
 
 `instr(id,'-')+1` finds the number without you counting prefix characters, so the same
-expression works for `REQ-`, `TASK-`, `PLAN-`, `GOAL-`, `PHASE-`, `BUG-` and `INSP-`.
+expression works for `REQ-`, `TASK-`, `PLAN-`, `GOAL-`, `PROJ-`, `BUG-` and `INSP-`.
 Zero-padding to three digits is what makes text order equal numeric order up to 999 — which
 is what `ORDER BY id` in the cursor relies on.
 
@@ -91,7 +91,7 @@ Two shapes, and the difference matters:
   zero rows and no partial mutation, which matters because a failing statement does not stop
   the script.
 
-### Goal, phase
+### Goal, project
 
 ```sql
 INSERT INTO goal (id, title, body, priority, created_at, updated_at)
@@ -101,27 +101,53 @@ SELECT 'GOAL-' || printf('%03d', COALESCE(MAX(CAST(substr(id, instr(id,'-')+1) A
   FROM goal
 RETURNING id;
 
-INSERT INTO phase (id, goal_id, title, ordinal, created_at, updated_at)
-SELECT 'PHASE-' || printf('%03d', (SELECT COALESCE(MAX(CAST(substr(id, instr(id,'-')+1) AS INTEGER)),0)+1 FROM phase)),
+INSERT INTO project (id, goal_id, title, ordinal, priority, concurrent, isolation, created_at, updated_at)
+SELECT 'PROJ-' || printf('%03d', (SELECT COALESCE(MAX(CAST(substr(id, instr(id,'-')+1) AS INTEGER)),0)+1 FROM project)),
        g.id, CAST(x'<hex>' AS TEXT),
-       (SELECT COUNT(*)+1 FROM phase WHERE goal_id = g.id),
+       (SELECT COUNT(*)+1 FROM project WHERE goal_id = g.id),
+       3, 0, 'shared',
        strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')
   FROM goal g WHERE g.id = 'GOAL-001'
 RETURNING id;
 ```
 
+The defaults above are the sequential, shared-tree project — the one that behaves exactly
+like the old `phase`. Change three columns to change that:
+
+```sql
+-- runs BESIDE its siblings instead of waiting its turn
+UPDATE project SET concurrent = 1 WHERE id = 'PROJ-003' RETURNING id, concurrent;
+
+-- waits for nobody and is in no sequence at all
+UPDATE project SET ordinal = NULL WHERE id = 'PROJ-004' RETURNING id, ordinal;
+
+-- runs in its own git worktree. Set BOTH columns in one statement: a 'shared' project
+-- may not carry a path, so setting the path alone fails the CHECK.
+UPDATE project
+   SET isolation = 'worktree', worktree_path = '.worktrees/PROJ-003'
+ WHERE id = 'PROJ-003'
+RETURNING id, isolation, worktree_path;
+```
+
+Never re-derive "may this project run" — `v_projects_runnable` is the one definition:
+
+```sql
+SELECT id, why, isolation, worktree_path, title FROM v_projects_runnable;
+SELECT id, why, isolation, worktree_path, title FROM v_projects_runnable WHERE goal_id = 'GOAL-001';
+```
+
 ### Requirement
 
 ```sql
-INSERT INTO requirement (id, phase_id, title, body, priority, created_at, updated_at)
+INSERT INTO requirement (id, project_id, title, body, priority, created_at, updated_at)
 SELECT 'REQ-' || printf('%03d', COALESCE(MAX(CAST(substr(id, instr(id,'-')+1) AS INTEGER)), 0) + 1),
-       'PHASE-001', CAST(x'<hex-title>' AS TEXT), CAST(x'<hex-body>' AS TEXT), 1,
+       'PROJ-001', CAST(x'<hex-title>' AS TEXT), CAST(x'<hex-body>' AS TEXT), 1,
        strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now')
   FROM requirement
 RETURNING id;
 ```
 
-`phase_id` is nullable — pass `NULL` for unaffiliated work.
+`project_id` is nullable — pass `NULL` for unaffiliated work.
 
 ### Plan
 
@@ -136,6 +162,38 @@ RETURNING id;
 
 `task_id` is optional and means "a plan written FOR one ticket" — the test-planner uses it for
 the test plan. Leave it NULL for the requirement's own implementation plan.
+
+A new plan starts `approval = 'pending'`, and **nothing is built until a human rules on it**.
+`status` and `approval` answer different questions — *is it written* versus *did the user say
+yes* — so move them separately:
+
+```sql
+-- the architect has finished drafting. This does NOT approve anything.
+UPDATE plan SET status = 'done' WHERE id = 'PLAN-001' RETURNING id, status, approval;
+
+-- the user said yes. Record WHO ruled — the trigger uses it as the event's actor.
+UPDATE plan
+   SET approval = 'approved', approved_by = 'user',
+       approved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+ WHERE id = 'PLAN-001'
+RETURNING id, approval, approved_by;
+
+-- rejected sends it back to the architect. The plan row stays; it is the same plan.
+UPDATE plan
+   SET approval = 'rejected', approved_by = 'user',
+       approved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), status = 'in-progress'
+ WHERE id = 'PLAN-001'
+RETURNING id, approval, status;
+
+-- tie the plan to the gate node carrying the same decision, so a reader can go either way
+UPDATE plan SET gate_node_id = 'REQ-001/gate-plan' WHERE id = 'PLAN-001' RETURNING id, gate_node_id;
+
+-- who is still waiting on a person
+SELECT id, requirement_id, gate_node_id, title FROM v_plans_pending_approval;
+```
+
+Approving the **gate** does not write `plan.approval`. They are two writes, exactly like
+moving a gate's node — do both, or `v_plans_pending_approval` will keep asking.
 
 ### Task, with its capabilities and dependencies
 
