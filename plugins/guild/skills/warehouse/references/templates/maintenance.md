@@ -348,15 +348,9 @@ INSERT INTO guild_state (key, value) VALUES ('graph-template:REQ-041', 'maintena
 COMMIT;
 ```
 
-If the warehouse schema does not write an `event` row by trigger on `graph_node`
-(`SELECT name, tbl_name FROM sqlite_schema WHERE type = 'trigger';`), add one before `COMMIT`:
-
-```sql
-INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
-SELECT datetime('now'), 'architect', 'instantiated', 'graph', 'REQ-041',
-       json_object('template', 'maintenance', 'trigger', 'manual',
-                   'nodes', (SELECT COUNT(*) FROM graph_node WHERE requirement_id = 'REQ-041'));
-```
+**Do not hand-write an `event` row for the instantiation.** Nothing reads one, no invariant
+asserts it, and `subject_type` must name a table (G7 checks it against `sqlite_schema`) — which a
+graph is not. `standard.md` §6 says the same for the same reason.
 
 ### 7.5 Ending the cycle early at `qa-check`
 
