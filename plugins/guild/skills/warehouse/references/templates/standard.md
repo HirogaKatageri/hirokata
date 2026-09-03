@@ -417,7 +417,10 @@ ORDER BY batch, n.id;
 ```
 
 `done` **and** `skipped` both count as finished. A node the architect deliberately skipped must
-not hold its successors forever; that is the graph's spelling of `task.waived`.
+not hold its successors forever; that is the graph's spelling of a waived task. Note what a waiver
+actually is on the ticket side: `v_failed_tasks.waived` is **derived from a `Skipped by user…`
+prefix on a work-log line**, not stored in a column, so a stray log line can look like one. The
+graph's `skipped` is the sturdier of the two — it is a status a CHECK constrains.
 
 The warehouse schema ships `v_ready_nodes` — **select from it instead of re-typing this
 predicate.** Two spellings of readiness is two answers to "what runs next".

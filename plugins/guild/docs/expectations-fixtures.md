@@ -765,8 +765,8 @@ SELECT (SELECT COUNT(*) FROM v_open_bounties)               AS bounties,
 1|6|1|2|2
 ```
 
-**The `gaps` column is gone.** `v_roster_gaps` counted open `capability_request` rows. The gap is
-now the blocked ticket itself, so it is already counted in `stuck` — and `who` names the word.
+**There is no `gaps` column.** A roster gap *is* the blocked ticket, so it is already counted in
+`stuck` — and `who` names the missing capability.
 
 ### 5.1 The pipe-and-newline trap, firing
 
