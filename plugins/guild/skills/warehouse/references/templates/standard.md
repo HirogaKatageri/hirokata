@@ -380,17 +380,11 @@ INSERT INTO guild_state (key, value) VALUES ('graph-template:REQ-007', 'standard
 COMMIT;
 ```
 
-If the warehouse schema does not write an `event` row by trigger on `graph_node`, add one before
-`COMMIT`:
-
-```sql
-INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
-SELECT datetime('now'), 'architect', 'instantiated', 'graph', 'REQ-007',
-       json_object('template', 'standard',
-                   'nodes', (SELECT COUNT(*) FROM graph_node WHERE requirement_id = 'REQ-007'));
-```
-
-Check first: `SELECT name, tbl_name FROM sqlite_schema WHERE type = 'trigger';`
+**Do not hand-write an `event` row for the instantiation.** Nothing reads one: the guard against
+building a second graph is `SELECT COUNT(*) FROM graph_node WHERE requirement_id = …`, which reads
+the rows themselves, and no invariant asserts such an event exists. `subject_type` must name a
+table (G7 checks it against `sqlite_schema`), and a graph is not a table — it is `graph_node`,
+`graph_edge` and `gate` together — so there is no legal value to write it under.
 
 ---
 

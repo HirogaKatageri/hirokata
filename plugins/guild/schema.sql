@@ -765,13 +765,20 @@ CREATE TABLE IF NOT EXISTS doc_revision (
 -- DELETE: this is the guild's memory, and a memory you can edit is not one.
 --
 -- `subject_type` IS THE SUBJECT'S TABLE NAME — 'task', 'requirement', 'coverage'. That is
--- what lets `v_recent_activity` resolve a title for it. `verb` is intentionally NOT
--- CHECKed: new machinery invents new verbs, and an event that cannot be written is worse
--- than one whose verb you have not seen before. The verbs the triggers below emit are:
+-- what lets `v_recent_activity` resolve a title for it, and G7 asserts it. THE ONE
+-- EXCEPTION IS 'shift', which names a span of time rather than a row: a shift is its
+-- `started` and `ended` events and nothing else, so there is no table to name. G7 carries
+-- that exception explicitly. Do not add a second one — write the table instead.
+--
+-- `verb` is intentionally NOT CHECKed: new machinery invents new verbs, and an event that
+-- cannot be written is worse than one whose verb you have not seen before. The verbs the
+-- triggers below emit are:
 --
 --   created  moved  deleted  claimed  logged  found  dispositioned  inspected
---   documented  decided  node-moved  requested  resolved  recruited  retired  deviated
---   isolated
+--   documented  decided  node-moved  deviated  isolated
+--
+-- `started` and `ended` are NOT in that list: they are the shift's two hand-written
+-- events, and no trigger emits them.
 --
 -- `payload` is JSON. The shape the triggers use for a status change is
 -- {"from":"todo","to":"in-progress"}, which `v_recent_activity` renders as a phrase.
