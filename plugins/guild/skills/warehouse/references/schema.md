@@ -32,7 +32,7 @@ alone and evergreen (`coverage`, `doc`).
 **The library is the one thing that crosses the spine rather than hanging off it.** A
 `knowledge_edge` may point at *any* row above — a requirement, a plan, a task, a bug — which
 is what makes the documentation a graph *over the work* instead of a second database beside
-it. Most of its nodes already exist; what v8 added was the edges.
+it. Most of its nodes are rows that already exist; the edges are what make it a graph.
 
 **THE ROSTER IS NOT IN HERE.** Who the guild's members are and what each can do lives in the
 `capabilities:` frontmatter of the agent files, and the orchestrator reads it at dispatch
@@ -63,9 +63,8 @@ of work, and a direction is not a unit of work.
 `priority` is 1 (highest) to 5 (lowest) everywhere it appears in this schema, `project`
 included.
 
-**This table was called `phase` through v6.1.** The rename is not cosmetic. A phase is a
-*stage*, which implies one runs at a time, and `ordinal NOT NULL` said exactly that. A
-project may run **beside** its siblings:
+**A project is not a *stage*.** A stage implies one runs at a time; a project may run
+**beside** its siblings:
 
 | column | what it decides |
 |---|---|
@@ -84,9 +83,9 @@ by being unordered, or by having every lower-ordinal sequential sibling done.
 flag derived from that view rather than restated.
 
 `v_goal_progress` gives each open goal its project counts, how many are runnable, and a
-comma-joined `runnable_project_ids` for display. Through v6.1 it reported a single
-*current phase*; that column is gone, because several projects under one goal may now be
-in flight at once. Join `v_projects_runnable` on `goal_id` when you need the rows.
+comma-joined `runnable_project_ids` for display. It reports no single *current* project,
+because several projects under one goal may be in flight at once. Join
+`v_projects_runnable` on `goal_id` when you need the rows.
 
 ---
 
@@ -153,14 +152,12 @@ needed. Self-dependency is rejected by a CHECK.
 
 ---
 
-## Where the roster went — and `task_capability`, which stayed
+## Where the roster is — and `task_capability`, which is in here
 
-Through v6 this database held four roster tables: `agent`, `agent_capability`,
-`task_capability` and `capability_request`. **v7 kept exactly one of them.**
-
-`agent` and `agent_capability` were a **mirror**. Every fact in them — the member's name,
-model, capabilities, whether it runs serially — is already declared in the frontmatter of
-the member's own markdown file:
+**The database holds exactly one capability table: `task_capability`.** There is no `agent`
+table and no `agent_capability` table, because they would be a **mirror**. Every fact they
+would hold — the member's name, model, capabilities, whether it runs serially — is already
+declared in the frontmatter of the member's own markdown file:
 
 ```yaml
 ---
@@ -323,10 +320,9 @@ body, so the newest revision row is the text that came *before* the live one —
 mistake this table invites. It has **no foreign key to `doc` on purpose**: a revision must
 survive its document being deleted, or it is not history.
 
-**Where a decision used to go, and why that was the problem.** Before v8 an architectural
-choice lived in `plan.body` prose and in `gate.decision` JSON — both attached to a ticket, both
-archived when the ticket closed. "Why is it like this" was the most expensive question the
-guild could be asked. It is now `SELECT * FROM v_decision_log`.
+**A decision does not live in `plan.body` prose or in `gate.decision` JSON.** Both are
+attached to a ticket and both go quiet when the ticket closes, which is what makes "why is it
+like this" an expensive question. It is `SELECT * FROM v_decision_log` instead.
 
 ## Memory — `event`
 
@@ -389,7 +385,7 @@ convention:
    it.
 5. **A ticket's capabilities name something a real agent declares.** The vocabulary is the
    agent files, so SQL cannot check a `task_capability` row against it at all — a misspelled
-   tag inserts fine and matches nobody. **There is no audit view any more**: the dispatcher
+   tag inserts fine and matches nobody. **There is no audit view**: the dispatcher
    is what makes it speak, by writing the ticket to `blocked` when the scan finds nobody.
    Skip that write and the gap is silent. `roster.py --covers` before writing the ticket is
    the check that catches it early.

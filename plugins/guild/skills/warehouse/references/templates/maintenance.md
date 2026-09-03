@@ -107,8 +107,8 @@ and moves the anchor `done` once when the last mission returns.
 > Two mechanisms, because one missed check here produces a mystery rather than a message.
 >
 > **Be honest about the enforcement:** a NULL `parallel_group` and a line of frontmatter are
-> read by whoever dispatches — and since v7 the `serial` half is not even in the database, so
-> a dispatcher that skipped the roster scan cannot see it at all. Nothing in the schema
+> read by whoever dispatches — and the `serial` half is not in the database at all, so
+> a dispatcher that skipped the roster scan cannot see it. Nothing in the schema
 > physically prevents an orchestrator from starting two testers. **Run the guard in §5 before every dispatch.** It is a convention with a check,
 > not an invariant the database holds for you.
 
@@ -228,9 +228,9 @@ strategist's mission list would be one line; adding a `perf-probe` node between 
 | node id uniqueness, one gate row per gate node, one verdict per (inspection, area) | **the database**, via PRIMARY KEY |
 | readiness, the review gate, the board | **the database**, via views |
 | "exactly one gate", "no dropped required node", "non-empty reason" | **you**, by running §8. A trigger can hold the gate rule if the warehouse schema ships one — check `SELECT name FROM sqlite_schema WHERE type='trigger'` rather than assuming. |
-| **"one tester at a time"** | **you**, via §5 plus `serial: true` in the agent's frontmatter. The database does not know what a port is — and since v7 it does not know what `serial` is either. |
+| **"one tester at a time"** | **you**, via §5 plus `serial: true` in the agent's frontmatter. The database does not know what a port is, and it does not know what `serial` is either. |
 | "manual trigger only" | **you.** `inspection."trigger"` records what started it; nothing rejects an automated caller. |
-| "the orchestrator owns every status transition" | **nobody.** A v4 bash guard, now a convention — the schema has no identity concept and cannot tell whose UPDATE it is. |
+| "the orchestrator owns every status transition" | **nobody.** A convention — the schema has no identity concept and cannot tell whose UPDATE it is. |
 
 ---
 
@@ -348,15 +348,9 @@ INSERT INTO guild_state (key, value) VALUES ('graph-template:REQ-041', 'maintena
 COMMIT;
 ```
 
-If the warehouse schema does not write an `event` row by trigger on `graph_node`
-(`SELECT name, tbl_name FROM sqlite_schema WHERE type = 'trigger';`), add one before `COMMIT`:
-
-```sql
-INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
-SELECT datetime('now'), 'architect', 'instantiated', 'graph', 'REQ-041',
-       json_object('template', 'maintenance', 'trigger', 'manual',
-                   'nodes', (SELECT COUNT(*) FROM graph_node WHERE requirement_id = 'REQ-041'));
-```
+**Do not hand-write an `event` row for the instantiation.** Nothing reads one, no invariant
+asserts it, and `subject_type` must name a table (G7 checks it against `sqlite_schema`) — which a
+graph is not. `standard.md` §6 says the same for the same reason.
 
 ### 7.5 Ending the cycle early at `qa-check`
 

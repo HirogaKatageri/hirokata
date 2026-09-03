@@ -16,6 +16,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [8.1.1] - 2026-09-03
+
+### Removed
+- **`guild:guild-status` is gone.** It was a deprecated alias kept alive only so the typed
+  `/guild:guild-status` slash command still resolved to `guild:brief`. Its description had to
+  spend a paragraph disclaiming the trigger phrases it deliberately did not claim, and that
+  paragraph was loaded into the skill listing of every session to serve a command nobody types.
+  Status requests already route to `guild:brief` by description; deleting the alias changes
+  nothing about that and removes a skill's worth of description from every context window.
+  **`docs/expectations.md` §10 went with it** — the section asserted the alias delegated
+  correctly and measured the description collision it existed to avoid.
+- **Version archaeology, from every file a member loads.** The agents, the skills, their
+  references, the two working docs and the `schema.sql` comments carried a running commentary on
+  what the plugin used to be: *"In v4 a bash guard refused you"*, *"this used to be
+  `standard.yaml`"*, *"there is no spool file any more"*, *"the matcher was dropped in v7"*,
+  *"before v8 a decision lived in plan prose"*. Every one of them stated a live rule and then
+  explained a version the reader never ran. The rule survives in each case; the comparison does
+  not. Four reviewer agents also carried a markdown findings template introduced as *"this is no
+  longer written as markdown"* — a dead format shown for reference beside the SQL that replaced
+  it. **The history is not lost: it is in this file and in the README**, which is where a reader
+  looking for it goes.
+
+### Changed
+- **`docs/v6-architecture.md` → `docs/architecture.md`, rewritten as a description of the design
+  rather than a comparison against v5.** §1 was "The pivot" — a section whose subject was the CLI
+  it deleted. It now states what the schema is. §4's ten conventions are unchanged in substance
+  and no longer framed as "these were bash guards in v5". §8 "What did not change" is gone: it
+  only meant anything against a version nobody is running. `docs/v5-design.md` is **untouched**
+  and still linked, from the header, as the record of how the data model was reasoned out.
+- **`docs/expectations.md` renumbered: §11 → §10 (the maintenance cycle), §12 → §11 (the
+  unattended shift)**, following §10's removal. Every cross-reference in `guild:qa`,
+  `guild:shift`, `guild:validate` and the README moved with it. §8 is retitled from *"There is no
+  board clear"* to *"The guild deletes nothing"* — the same assertions, stated as a rule rather
+  than as the absence of a removed skill.
+- **`guild:new-requirement` §1.5 "Do Not Offer to Clear the Board" is gone.** A section that
+  existed to countermand a step no version of the skill still performs.
+- **The plugin description no longer ends with the v6/v7 rewrite caveat**, which was 126
+  characters of provenance in a field that loads on every session.
+
+### Fixed
+- **A graph is not a table, and the event saying so was dead.** `templates/standard.md` §6 and
+  `maintenance.md` §7 told the architect to write an `instantiated` event with
+  `subject_type = 'graph'`. That was correct in v5, where `subject_type` was a free-form label and
+  `lib/graph.sh` read the same word back as its "already built?" guard. The v6 pivot deleted the
+  CLI — taking that reader — and in the same commit taught `v_recent_activity` to resolve a title
+  by matching `subject_type` against `sqlite_schema`. The write was ported into the templates
+  verbatim and never re-derived, leaving a write with no read that also **fired G7's
+  `unknown-subject-type`** and rendered a NULL-titled row in the activity feed. Nothing greps
+  `instantiated`, no expectation asserts it, no fixture writes one, and the guard it once served
+  now counts `graph_node` rows directly. **Both blocks are deleted**, each replaced by one line
+  saying why no instantiation event is written.
+- **`queries.md` §4 omitted the required `document` node.** Its `json_array` carried seven keys
+  and no `document`, and its edge list no `repair → document` — but G8 asserts
+  `dropped-required-node` over a set that includes it. A graph built by copying §4 shipped a
+  requirement undocumented with nothing failing until a later check-in. The key and the edge are
+  added, and the snippet is now labelled an illustration pointing at `templates/standard.md` §6 as
+  the authority: a second copy of the key list is the drift this file warns about everywhere else.
+- **`guild:validate shift` reported a false G7 failure after every unattended run.** The shift's
+  own mandated first write uses `subject_type = 'shift'`, and there is no `shift` table — the same
+  v5-label-vs-v6-table-name root cause as `'graph'`. Unlike `'graph'` this one is **live**: the
+  shift section's window mechanism reads those events to find `t0` and `t1`. So G7 gains
+  `AND e.subject_type <> 'shift'` and a third subtlety explaining that a shift is a *span of time*,
+  not a row — it IS its `started` and `ended` events, and there is nothing else to point at. The
+  exception is narrow and it is the only one: `'shiftt'` and `'graph'` both still fire. A `shift`
+  table was considered and **deliberately deferred** — `inspection` is the same shape and has one,
+  but that change wants evidence this plugin does not have, since no shift has ever run and the
+  stop-reason vocabulary has never been produced by real work.
+- **Four dead verbs in `schema.sql`'s `event` comment.** `requested`, `resolved`, `recruited` and
+  `retired` were emitted by the `capability_request` and `agent` triggers, which went with the
+  roster tables. No trigger has written them since. The comment now also records that
+  `started`/`ended` are the shift's hand-written pair, emitted by no trigger.
+- **Two prose references to things that are not there.** `expectations-fixtures.md` explained an
+  absent `gaps` column in terms of `v_roster_gaps` and `capability_request`, neither of which
+  exists. `templates/standard.md` called a skipped node "the graph's spelling of `task.waived`" —
+  there is no such column; the real mechanism is `v_failed_tasks.waived`, computed from a
+  `Skipped by user…` prefix on a work-log line, which the line now says along with which of the
+  two spellings is sturdier.
+
 ## [8.1.0] - 2026-09-02
 
 ### Removed
@@ -387,7 +465,7 @@ with real history.**
 
 ### What is convention, not guarantee
 Several v5 guarantees were bash guards and are conventions again — documented in the `schema.sql`
-header, the README and `docs/v6-architecture.md` §4, and nowhere enforced. The largest:
+header, the README and `docs/architecture.md` §4, and nowhere enforced. The largest:
 **"the orchestrator owns every status transition"** cannot be expressed in SQL, which has no
 identity; `guild_state.actor` is a courtesy label a member sets on itself, copied into
 `event.actor` verbatim, so a lying actor produces a lying feed. Also conventional now: a requirement
@@ -404,7 +482,7 @@ Relatedly, applying `schema.sql` over a database created by an earlier v5 stage 
 and triggers but **not** the CHECKs — `CREATE TABLE IF NOT EXISTS` sees the table and moves on.
 
 ### Documentation
-README rewritten for v6. New `docs/v6-architecture.md` — the pivot, the warehouse metaphor, what
+README rewritten for v6. New `docs/architecture.md` — the pivot, the warehouse metaphor, what
 CHECK/VIEW/TRIGGER enforce, what is convention, the engine constraints and the file layout.
 `docs/v5-design.md` **kept deliberately**, with a header saying which parts are historical (the
 driver layer §2.2, the journal §2.3, the CLI surface §4) and which remain authoritative (the data
@@ -765,5 +843,5 @@ all requirements are done, replacing the per-plan trigger after test-writer comp
 ## See Also
 
 - [Marketplace CHANGELOG](../../CHANGELOG.md) — the long-form rationale for the v5–v7 entries
-- [`docs/v6-architecture.md`](docs/v6-architecture.md) — the current design
+- [`docs/architecture.md`](docs/architecture.md) — the current design
 - [`docs/v5-design.md`](docs/v5-design.md) — historical; the data model and rules are still in force

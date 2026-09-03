@@ -1,7 +1,6 @@
 # The `standard` template — build a requirement
 
-**You are the architect. There is no parser.** This file used to be `standard.yaml`, read by
-`_graph_parse_template` in a bash CLI. That CLI is gone. You read this page and you write the
+**You are the architect. There is no parser.** You read this page and you write the
 `graph_node` / `graph_edge` / `gate` rows yourself, with the SQL at the bottom.
 
 **Shape:** approve the plan, then run to completion.
@@ -227,7 +226,7 @@ splitting `implement` into three sequential waves because the file sets are not 
 | node id uniqueness, edge uniqueness, one gate row per gate node | **the database**, via PRIMARY KEY |
 | the readiness rule, the review gate, the board | **the database**, via views — one definition, not one per reader |
 | "no third gate", "no dropped required node", "reason is non-empty" | **you**, by running §8's checks. A trigger can enforce the gate rule if the warehouse schema carries one — check `SELECT name FROM sqlite_schema WHERE type='trigger'`. Do not assume it does. |
-| "the orchestrator owns every status transition" | **nobody.** This was a bash guard in v4 and is now a convention. The schema has no identity concept, so it cannot tell an orchestrator's UPDATE from an agent's. Follow it because the board is incoherent otherwise, not because something will stop you. |
+| "the orchestrator owns every status transition" | **nobody.** It is a convention. The schema has no identity concept, so it cannot tell an orchestrator's UPDATE from an agent's. Follow it because the board is incoherent otherwise, not because something will stop you. |
 
 ---
 
@@ -381,17 +380,11 @@ INSERT INTO guild_state (key, value) VALUES ('graph-template:REQ-007', 'standard
 COMMIT;
 ```
 
-If the warehouse schema does not write an `event` row by trigger on `graph_node`, add one before
-`COMMIT`:
-
-```sql
-INSERT INTO event (ts, actor, verb, subject_type, subject_id, payload)
-SELECT datetime('now'), 'architect', 'instantiated', 'graph', 'REQ-007',
-       json_object('template', 'standard',
-                   'nodes', (SELECT COUNT(*) FROM graph_node WHERE requirement_id = 'REQ-007'));
-```
-
-Check first: `SELECT name, tbl_name FROM sqlite_schema WHERE type = 'trigger';`
+**Do not hand-write an `event` row for the instantiation.** Nothing reads one: the guard against
+building a second graph is `SELECT COUNT(*) FROM graph_node WHERE requirement_id = …`, which reads
+the rows themselves, and no invariant asserts such an event exists. `subject_type` must name a
+table (G7 checks it against `sqlite_schema`), and a graph is not a table — it is `graph_node`,
+`graph_edge` and `gate` together — so there is no legal value to write it under.
 
 ---
 
@@ -418,7 +411,10 @@ ORDER BY batch, n.id;
 ```
 
 `done` **and** `skipped` both count as finished. A node the architect deliberately skipped must
-not hold its successors forever; that is the graph's spelling of `task.waived`.
+not hold its successors forever; that is the graph's spelling of a waived task. Note what a waiver
+actually is on the ticket side: `v_failed_tasks.waived` is **derived from a `Skipped by user…`
+prefix on a work-log line**, not stored in a column, so a stray log line can look like one. The
+graph's `skipped` is the sturdier of the two — it is a status a CHECK constrains.
 
 The warehouse schema ships `v_ready_nodes` — **select from it instead of re-typing this
 predicate.** Two spellings of readiness is two answers to "what runs next".

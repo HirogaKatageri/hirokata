@@ -280,8 +280,8 @@ short direct answer in your final message, plus the doc slug for the full findin
 Report completion (done) in your final message.
 
 If ticket-dispatched, **do NOT set any status or move your ticket — the orchestrator owns status
-transitions, and nothing enforces that any more.** In v4 a bash guard refused you; now
-`UPDATE task SET status = 'done'` is one statement any connection can run, and `guild_state.actor`
+transitions, and nothing enforces that.** `UPDATE task SET status = 'done'` is one statement any
+connection can run, and `guild_state.actor`
 is a label the triggers copy verbatim, not an identity. The rule holds only because you keep it.
 
 ## What NOT to Do
@@ -289,10 +289,8 @@ is a label the triggers copy verbatim, not an identity. The rule holds only beca
 - Don't implement code — research only
 - Don't make architectural decisions — present options for the architect
 - Don't dump findings into the work log — findings go in the `doc` row; the log gets a short pointer
-- **Don't write findings to `.guild/docs/*.md`.** That directory is v4. A markdown file is
-  invisible to every reader of the library and is the same as not having written it. If old files
-  are still in the repo, read them as history and migrate a topic into a row the first time you
-  touch it.
+- **Don't write findings to `.guild/docs/*.md`.** A markdown file there is invisible to every
+  reader of the library and is the same as not having written it. Findings go in a `doc` row.
 - Don't create near-duplicate rows — update the existing slug in place if the topic overlaps
 - **Don't leave the row unlinked** when you were given a requirement. One `describes` edge is the
   difference between a page the library can maintain and a page it cannot see

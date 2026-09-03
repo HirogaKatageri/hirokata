@@ -610,6 +610,14 @@ RETURNING key, value;
 Nodes and edges are data, so a template lands as two `json_each` inserts. Node ids are
 `REQ-001/<node-key>`; a gate node's key is conventionally prefixed `gate-`.
 
+**This is an ILLUSTRATION of the shape, not the authoritative node list.** The template is —
+`references/templates/standard.md` §6 for `standard`, `maintenance.md` for `maintenance` — and it
+is what you copy from when instantiating a real graph. Keeping a second copy of the key list here
+is exactly the drift this file warns about everywhere else, and a partial copy that *looks*
+complete is worse than a pointer: `document` is in the required set, so a graph built from a
+stale list silently drops a node that `G8` requires and ships the requirement undocumented, with
+nothing failing until a later check-in.
+
 ```sql
 INSERT INTO graph_node (id, requirement_id, node_key, kind, task_id, parallel_group, status)
 SELECT r.id || '/' || j.value, r.id, j.value,
@@ -617,7 +625,7 @@ SELECT r.id || '/' || j.value, r.id, j.value,
        NULL, NULL, 'pending'
   FROM requirement r
   JOIN json_each(json_array('gate-plan','implement','test-plan','test-write',
-                            'review','gate-repairs','repair')) j
+                            'review','gate-repairs','repair','document')) j
  WHERE r.id = 'REQ-001'
 RETURNING id;
 
@@ -630,7 +638,8 @@ SELECT 'REQ-001/' || json_extract(j.value,'$[0]'),
         json_array('test-plan','test-write'),
         json_array('test-write','review'),
         json_array('review','gate-repairs'),
-        json_array('gate-repairs','repair'))) j
+        json_array('gate-repairs','repair'),
+        json_array('repair','document'))) j
 RETURNING from_node || ' -> ' || to_node;
 
 INSERT INTO gate (node_id, prompt, kind, status)
@@ -726,9 +735,8 @@ from it.
 
 ## 5. The roster — not in this database
 
-**There is nothing to sync and no roster tables to write.** `agent`, `agent_capability` and
-`capability_request` were dropped in v7. Who the guild's members are, what each declares and
-whether one runs serially are facts about the agent FILES:
+**There is nothing to sync and no roster tables to write.** Who the guild's members are, what
+each declares and whether one runs serially are facts about the agent FILES:
 
 ```bash
 # every subagent available to the user: name | model | serial | scope | capabilities
@@ -772,8 +780,7 @@ thing that makes the gap visible.
 
 ### There is no capability request
 
-A capability nobody declares used to be filed as a `capability_request` row so the word could
-be admitted to a vocabulary this database owned. Both are gone. **The fix for a missing
+There is no row to file and no vocabulary to admit a word to. **The fix for a missing
 capability is writing the agent file, and nothing precedes it.**
 
 Record the gap where the guild master will actually see it: the plan's Technical Decisions
@@ -844,8 +851,8 @@ ran out of road before it did. It is not NULL and it is not a pass.
   guild's memory, and a memory you can edit is not one.
 - **Do not set `updated_at` yourself** unless you mean to override the trigger.
 - **Do not DELETE anything.** Not a task, not a requirement, not a doc, not the `event` feed —
-  the guild has no board clear and no supported procedure that removes a record (**G11**, and
-  §8 of `docs/expectations.md`). Work is retired by *status*: `done`, `cancelled`, `superseded`.
+  the guild has no supported procedure that removes a record (**G11**, and §8 of
+  `docs/expectations.md`). Work is retired by *status*: `done`, `cancelled`, `superseded`.
   A board that genuinely has to start over starts over as a **new database file**, with the old
   one moved aside and still readable. The one narrow exception is a `doc → doc` `knowledge_edge`
   rewritten while retiring a decision, and G11 is scoped to allow exactly that.

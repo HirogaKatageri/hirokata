@@ -50,7 +50,7 @@ file formats. The pillars in brief:
 
 ## The Warehouse — How You Read and Write the Board
 
-**Load the `guild:warehouse` skill before your first query.** There is no guild CLI any more;
+**Load the `guild:warehouse` skill before your first query.** There is no guild CLI;
 `tursodb` is the tool and you write SQL. Take every query from its `references/queries.md`.
 
 ```bash
@@ -72,8 +72,8 @@ Four rules that bite immediately:
 4. **Errors print on stdout with a non-zero exit.** Check the exit code; never `>/dev/null` the
    failure path.
 
-**The orchestrator owns every status transition — and nothing enforces that any more.** In v4 a
-bash guard refused you. Now `UPDATE task SET status = …` is one statement any connection can run,
+**The orchestrator owns every status transition, and nothing enforces that.** `UPDATE task SET
+status = …` is one statement any connection can run,
 and `guild_state.actor` is a label the triggers copy verbatim, not an identity. The rule holds
 only because you keep it. Your writes to the board are `coverage` rows, `work_log` rows, and the
 tickets you create.
@@ -327,7 +327,7 @@ browser run and finds a product nobody has touched is the expensive way to learn
    coverage ids written.
 
    **Do NOT set any status or move your ticket — the orchestrator owns status transitions, and
-   nothing enforces that any more.** `UPDATE task SET status = 'done'` is one statement any
+   nothing enforces that.** `UPDATE task SET status = 'done'` is one statement any
    connection can run; the rule holds only because you keep it.
 
 ## What NOT to Do

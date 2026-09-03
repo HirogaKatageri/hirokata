@@ -304,7 +304,6 @@ the price of moving the vocabulary into the engine, and it is a real one.
 | `guild:check-in` | **The orchestrator.** Opens with the brief, gathers input, runs each requirement's execution graph, presents the two gates, and drives the continuous work cycle. Say "check in". |
 | `guild:shift` | `check-in` with the human taken out of the middle. Runs unattended to the next gate, then stops and says why. Never decides a gate — not even "the obvious ones". |
 | `guild:brief` | Where the project stands: direction, in flight, bugs, coverage due, what moved. Read-only. |
-| `guild:guild-status` | **Deprecated alias for `guild:brief`** — the v4 name. It claims **no** natural-language trigger phrases; every status phrasing routes to `guild:brief`, because two skills advertising "guild status" would make every status request a coin flip. Reachable only by typing `/guild:guild-status`. |
 | `guild:dashboard` | Renders the board as one self-contained offline HTML page. Read-only. |
 | `guild:new-requirement` | A live 3-way interview between the product-owner, the architect and you. Writes the requirement, the plan, the tickets **and the execution graph**, then ends at `gate-plan` — nothing is built until you approve. |
 | `guild:qa` | Seeds a QA pass onto the board: a qa-strategist plans risk-based coverage, then qa-testers run the app, author Playwright specs, and file bugs back to the board. |
@@ -393,7 +392,7 @@ plugins/guild/
 │   ├── validate/           # runs the expectations against the live board
 │   └── …                   # check-in, shift, brief, dashboard, new-requirement, qa, …
 ├── docs/
-│   ├── v6-architecture.md        # the current design — start here
+│   ├── architecture.md        # the current design — start here
 │   ├── expectations.md           # THE SPEC a member's work is checked against
 │   ├── expectations-fixtures.md  # the six known board states it is checked on
 │   └── v5-design.md              # historical; the data model and rules are still in force
@@ -436,7 +435,7 @@ expected result**:
 | | |
 |---|---|
 | **§3 — eleven global invariants** | Hold at all times, whatever just ran: referential health, vocabulary, id shape, gate integrity, ticket routing, closure, event coverage, graph structure, concurrency, library integrity, and **nothing deleted**. |
-| **§4–§12 — one section per process** | Trigger, preconditions, expected sequence, postconditions, anti-expectations, and *cannot be asserted* — for `new-requirement`, `brief`, `dashboard`, `check-in`, `release`, `guild-status`, `qa` and `shift`. §8 names no process: it is the anti-expectations for the board clear that no longer exists, and the fresh-file procedure that replaced it. |
+| **§4–§11 — one section per process** | Trigger, preconditions, expected sequence, postconditions, anti-expectations, and *cannot be asserted* — for `new-requirement`, `brief`, `dashboard`, `check-in`, `release`, `qa` and `shift`. §8 names no process: it is the anti-expectations for emptying a board, and the fresh-file procedure that stands in for one. |
 | **`expectations-fixtures.md`** | Six known board states — `empty`, `planned`, `in-flight`, `review-ready`, `messy`, `maintenance` — because an assertion run against an unknown state answers differently every time. |
 
 Assertions return **zero rows when healthy and the offending rows when not**, so a failure names its

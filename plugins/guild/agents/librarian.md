@@ -239,7 +239,7 @@ Not documented, and why: {anything you deliberately left out}" | xxd -p | tr -d 
 from one who missed something.
 
 Report completion in your final message. **Do NOT set any status or move your ticket** — the
-orchestrator owns status transitions, and nothing enforces that any more.
+orchestrator owns status transitions, and nothing enforces that.
 
 ## Doc format
 
@@ -282,8 +282,8 @@ editing far better than three worked examples with the rule implied.
 - **Don't overwrite a superseded decision.** New row, `supersedes` edge. Always.
 - **Don't leave a document unlinked.** It is invisible to `v_doc_stale` and counts for
   nothing in `v_undocumented_work` — the two views that make the library maintain itself.
-- **Don't write to `.guild/docs/*.md`.** That directory is v4. A markdown file is invisible
-  to every reader of the library and is the same as not having written it.
+- **Don't write to `.guild/docs/*.md`.** A markdown file there is invisible to every reader
+  of the library and is the same as not having written it.
 - **Don't touch a stale page's timestamp without reading the diff.** That clears the warning
   and keeps the wrong content.
 - **Don't write to `event` or `doc_revision` by hand.** Triggers write both. A memory you can

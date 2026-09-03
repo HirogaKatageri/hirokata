@@ -49,7 +49,7 @@ Four rules sit underneath everything below:
    the agent definitions honor it.
 2. **A ticket names a CAPABILITY, not a member — and YOU do the matching.** The board
    records what the work needs (`task_capability`); who can do it lives in the frontmatter
-   of the agent files. There is no matcher view any more. You build the roster by reading
+   of the agent files. There is no matcher view. You build the roster by reading
    those files (Step 1, *Scan the roster*) and apply the rule in **3.3**. A ticket with a
    pinned `agent` skips the match entirely.
 3. **Subagents cannot ask the user.** `AskUserQuestion` works only in this session. Agents
@@ -108,7 +108,7 @@ interesting column.
 mkdir -p .guild/docs .guild/qa .guild/reviews
 tursodb .guild/guild.db < "${CLAUDE_PLUGIN_ROOT}/schema.sql"     # idempotent
 cat > .guild/config.yaml <<'YAML'
-# guild v5 configuration. Committed to git.
+# guild configuration. Committed to git.
 version: 5
 db:
   mode: local
@@ -120,9 +120,6 @@ Then greet them, say the board is empty, and ask what they want to work on. On a
 invoke `guild:new-requirement` — it runs the product-owner + architect interview, writes the
 plan, the tickets **and the execution graph**, and ends by presenting
 `gate-plan`. Then go to **Step 3**.
-
-A **v4 board** (`.guild/state.yaml`, `.guild/requirements/`) is not migrated. Say so, offer
-to move it to `.guild/v4-archive/` yourself, and get a yes before moving anything.
 
 ### Returning check-in
 
@@ -148,7 +145,7 @@ to move it to `.guild/v4-archive/` yourself, and get a yes before moving anythin
    PINNED by name; it simply never wins a capability match. Report those rather than routing
    around them — the fix is a line of frontmatter in the agent file.
 
-   **There is no vocabulary table and no sync step any more.** A capability is legal exactly
+   **There is no vocabulary table and no sync step.** A capability is legal exactly
    when some agent file declares it, so adding a member is writing its file — nothing to
    INSERT, nothing to keep in step, and a new agent file works on the very next check-in.
 3. **Recover anything the last session left running.** The node is the authoritative half:

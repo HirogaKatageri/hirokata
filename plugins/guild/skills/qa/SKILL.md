@@ -278,13 +278,13 @@ suite from `.guild/qa/regression.md`, and (b) does a focused exploratory pass on
 areas, filing anything new it finds. **If nothing is due, the pass ends there** — that is the
 cadence working, not failing.
 
-## Verify against §11
+## Verify against §10
 
-Run `guild:validate qa` after seeding, and again after each cycle node closes. §11 of
-`docs/expectations.md` covers the `maintenance` template: §11.a that a person triggered the
-inspection, §11.c the **one tester board-wide** invariant, §11.d that only areas actually
-exercised were stamped, §11.f that the graph is still six nodes, five edges and one gate.
-**Run §11.c before every `qa-execute` dispatch** — nothing in the database will stop a second
+Run `guild:validate qa` after seeding, and again after each cycle node closes. §10 of
+`docs/expectations.md` covers the `maintenance` template: §10.a that a person triggered the
+inspection, §10.c the **one tester board-wide** invariant, §10.d that only areas actually
+exercised were stamped, §10.f that the graph is still six nodes, five edges and one gate.
+**Run §10.c before every `qa-execute` dispatch** — nothing in the database will stop a second
 Playwright run, and this is the only guard there is. Report every failure with its rows.
 
 ## Rules

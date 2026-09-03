@@ -139,7 +139,7 @@ Then transform it:
 
 ## Step 6 — render the snapshot
 
-There is no export command any more. Render each requirement out of the database with SQL,
+There is no export command. Render each requirement out of the database with SQL,
 one file per requirement, plans and tasks and records inlined.
 
 **The one rule that keeps this safe:** structure is written by the shell from ids and enum

@@ -33,8 +33,7 @@ repro step ending in `;` at end of line tears the statement in half.
 | A session log (what was run, what happened) | `.guild/qa/sessions/SESSION-{slug}-{date}.md` | qa-tester |
 | The committed-spec index | `.guild/qa/regression.md` | qa-tester |
 
-**There is no `.guild/qa/ledger.md` any more.** It was the bug ledger; bugs are rows. If a
-project still has one from v4, treat it as history — read it, do not append to it.
+**There is no `.guild/qa/ledger.md`.** Bugs are rows.
 
 `.guild/qa/` remains **evergreen** — like the `doc` and `coverage` tables, these files outlive any
 one board. Nothing in the guild deletes them, and nothing deletes the rows either (G11); a fresh
@@ -137,7 +136,7 @@ SELECT id, severity, status, found_by, requirement_id, fix_task_id, title FROM v
 ## Quality areas are rows — the `coverage` table
 
 The `coverage` table is the **risk map and the coverage matrix**, which is why neither is a
-markdown table in the charter any more. One row per quality area, upserted:
+markdown table in the charter. One row per quality area, upserted:
 
 ```sql
 INSERT INTO coverage (id, area, risk, spec_path, notes)

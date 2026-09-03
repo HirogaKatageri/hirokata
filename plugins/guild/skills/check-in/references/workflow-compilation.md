@@ -21,7 +21,7 @@ its rank-1 member and that member's `serial` flag:
 
 Three properties the compiler depends on:
 
-- **It is the state right now, not a plan.** There is no multi-batch look-ahead any more and
+- **It is the state right now, not a plan.** There is no multi-batch look-ahead and
   none is needed: readiness is a one-hop join, so it propagates as the batch finishes. Run
   one batch, record it, ask again. A compiler that queued the whole graph would be compiling
   a future it cannot see.
