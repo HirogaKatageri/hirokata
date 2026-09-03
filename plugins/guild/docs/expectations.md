@@ -480,10 +480,11 @@ UNION ALL
 SELECT 'empty-actor','event', CAST(e.id AS TEXT) FROM event e WHERE trim(e.actor) = ''
 UNION ALL SELECT 'unknown-subject-type','event', CAST(e.id AS TEXT) || ':' || e.subject_type FROM event e
  WHERE e.subject_type NOT IN (SELECT name FROM sqlite_schema WHERE type='table')
+   AND e.subject_type <> 'shift'          -- the one deliberate exception, below
 ORDER BY breach, tbl, row_id;
 ```
 
-Two subtleties, both of which cost a round to get right and are easy to get wrong when writing a
+Three subtleties, each of which costs a round to get right and is easy to get wrong when writing a
 new assertion:
 
 - **A finding's event is filed against the TASK, not the finding.** `trg_finding_created` writes
@@ -495,7 +496,24 @@ new assertion:
   history of it happening, and this is the assertion that says so. When this section fires on a
   board you believe is correct, the usual cause is a fixture or a script that took that shortcut.
 
-*Verified to fire:* deleting one `moved` event returns `no-moved-event | task | TASK-001`.
+- **`'shift'` is the one `subject_type` that is not a table, and it is deliberate.** A shift is a
+  *span of time*, not a row: it exists as a `started` event and an `ended` event, and everything
+  else about it is derived from what happened between them. There is nothing else to point at, so
+  the shift section's window, its budget and its stop reason all live in those two events' payloads
+  rather than in columns. `unknown-subject-type` therefore carries `AND e.subject_type <> 'shift'`
+  — **it is an exception, not an oversight, and it is the only one.** Any *other* `subject_type`
+  outside `sqlite_schema` is a breach: it means an event whose subject `v_recent_activity` cannot
+  resolve a title for, so the row shows up in the feed nameless.
+
+  If a shift ever earns a table of its own — `inspection` is the same shape and has one, with
+  `trg_inspection_created` writing its event — this exception goes away and the clause returns to
+  its unconditional form. Until a shift has actually run, that is a change with no evidence behind
+  it: the stop-reason vocabulary in the shift section has never been produced by a real night's
+  work, and freezing a guess into a CHECK costs a table rebuild to widen.
+
+*Verified to fire:* deleting one `moved` event returns `no-moved-event | task | TASK-001`. The
+exception is verified too: a shift's `started` event returns **no** rows, while the same row
+written as `subject_type='shiftt'` returns `unknown-subject-type | event | 1:shiftt`.
 
 ### G8 — Graph structure
 
