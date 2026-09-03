@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [8.2.0] - 2026-09-02
+## [8.1.1] - 2026-09-03
 
 ### Removed
 - **`guild:guild-status` is gone.** It was a deprecated alias kept alive only so the typed
@@ -54,6 +54,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existed to countermand a step no version of the skill still performs.
 - **The plugin description no longer ends with the v6/v7 rewrite caveat**, which was 126
   characters of provenance in a field that loads on every session.
+
+### Fixed
+- **A graph is not a table, and the event saying so was dead.** `templates/standard.md` §6 and
+  `maintenance.md` §7 told the architect to write an `instantiated` event with
+  `subject_type = 'graph'`. That was correct in v5, where `subject_type` was a free-form label and
+  `lib/graph.sh` read the same word back as its "already built?" guard. The v6 pivot deleted the
+  CLI — taking that reader — and in the same commit taught `v_recent_activity` to resolve a title
+  by matching `subject_type` against `sqlite_schema`. The write was ported into the templates
+  verbatim and never re-derived, leaving a write with no read that also **fired G7's
+  `unknown-subject-type`** and rendered a NULL-titled row in the activity feed. Nothing greps
+  `instantiated`, no expectation asserts it, no fixture writes one, and the guard it once served
+  now counts `graph_node` rows directly. **Both blocks are deleted**, each replaced by one line
+  saying why no instantiation event is written.
+- **`queries.md` §4 omitted the required `document` node.** Its `json_array` carried seven keys
+  and no `document`, and its edge list no `repair → document` — but G8 asserts
+  `dropped-required-node` over a set that includes it. A graph built by copying §4 shipped a
+  requirement undocumented with nothing failing until a later check-in. The key and the edge are
+  added, and the snippet is now labelled an illustration pointing at `templates/standard.md` §6 as
+  the authority: a second copy of the key list is the drift this file warns about everywhere else.
+- **`guild:validate shift` reported a false G7 failure after every unattended run.** The shift's
+  own mandated first write uses `subject_type = 'shift'`, and there is no `shift` table — the same
+  v5-label-vs-v6-table-name root cause as `'graph'`. Unlike `'graph'` this one is **live**: the
+  shift section's window mechanism reads those events to find `t0` and `t1`. So G7 gains
+  `AND e.subject_type <> 'shift'` and a third subtlety explaining that a shift is a *span of time*,
+  not a row — it IS its `started` and `ended` events, and there is nothing else to point at. The
+  exception is narrow and it is the only one: `'shiftt'` and `'graph'` both still fire. A `shift`
+  table was considered and **deliberately deferred** — `inspection` is the same shape and has one,
+  but that change wants evidence this plugin does not have, since no shift has ever run and the
+  stop-reason vocabulary has never been produced by real work.
+- **Four dead verbs in `schema.sql`'s `event` comment.** `requested`, `resolved`, `recruited` and
+  `retired` were emitted by the `capability_request` and `agent` triggers, which went with the
+  roster tables. No trigger has written them since. The comment now also records that
+  `started`/`ended` are the shift's hand-written pair, emitted by no trigger.
+- **Two prose references to things that are not there.** `expectations-fixtures.md` explained an
+  absent `gaps` column in terms of `v_roster_gaps` and `capability_request`, neither of which
+  exists. `templates/standard.md` called a skipped node "the graph's spelling of `task.waived`" —
+  there is no such column; the real mechanism is `v_failed_tasks.waived`, computed from a
+  `Skipped by user…` prefix on a work-log line, which the line now says along with which of the
+  two spellings is sturdier.
 
 ## [8.1.0] - 2026-09-02
 
