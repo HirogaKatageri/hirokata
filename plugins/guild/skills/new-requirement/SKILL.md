@@ -526,7 +526,12 @@ what takes the plan off `v_plans_pending_approval`, which is the queue the brief
 read. Skip it and the board will keep asking about a plan the user already approved.
 
 `task_id IS NULL` targets the requirement's own implementation plan and leaves the test plan
-alone — the test-planner's plan is approved at its own point, not here.
+alone — a test plan is never approved at all, and does not need to be. It is written by an
+agent AFTER this gate, implementing a direction the guild master already ruled on, so there
+is no second decision to make. G6's `task-built-on-unapproved-plan` is scoped to
+`p.task_id IS NULL` for exactly that reason. (It used to say the test plan was "approved at
+its own point" — there was no such point, and every test-writer ticket carrying a `plan_id`
+breached G6 with no documented write that could clear it.)
 
 On reject: `'rejected'` on the gate, `'skipped'` on the node, `'rejected'` on the plan. A
 rejected gate may be decided again later — reject, let the architect revise, then approve; that

@@ -521,6 +521,15 @@ What *is* verified:
   `migrations/007-roster-leaves-the-database.sql` followed by `schema.sql` lands **21 tables, 23
   views, 40 triggers, `schema_version = 7`**, with data and history intact and
   `PRAGMA integrity_check` clean.
+- **The v9 fix-reference column** was verified on real boards rather than fixtures:
+  `migrations/009-a-fix-need-not-be-a-ticket.sql` followed by `schema.sql` takes a seeded v8 board
+  to `schema_version = 9` with `fix_ref` present on both `bug` and `review_finding`, data intact
+  and `PRAGMA integrity_check` clean; a fresh board from `schema.sql` lands the documented sanity
+  row **`23|30|44|9|0`** and is idempotent on re-apply. G6 was shown to clear on a board carrying
+  two defects fixed by a bare commit — a breach before the column existed, clean after recording
+  the sha in `fix_ref` — and to still fire when a defect claims `fixed` and points at nothing.
+  The `v_doc_stale` carve-out was measured against a real product board: **10 stale rows became
+  5**, and the 5 that went were exactly the pages written minutes before the requirement closed.
 - **The v8 library graph** was verified the same way: `schema.sql` applies clean to a fresh board
   and is idempotent on re-apply; `migrations/008-the-library-becomes-a-graph.sql` followed by
   `schema.sql` takes a seeded v7 board to **23 tables, 30 views, 44 triggers,
