@@ -128,10 +128,10 @@ SELECT (SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table')   AS tables,
 **Expected result — exactly one row:**
 
 ```
-23|30|44|8|0
+23|30|44|9|0
 ```
 
-23 tables, 30 views, 44 triggers, schema version 8, zero events. **There is no `vocab` column**:
+23 tables, 30 views, 44 triggers, schema version 9, zero events. **There is no `vocab` column**:
 a capability word exists *because* a member declares it, so an empty board has nothing to count
 and the equivalent check is `roster.py`, which reads files rather than this database.
 

@@ -1,0 +1,4 @@
+# guild v5 configuration. Committed to git.
+version: 5
+db:
+  mode: local

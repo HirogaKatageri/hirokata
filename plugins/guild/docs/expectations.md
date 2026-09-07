@@ -411,10 +411,11 @@ UNION ALL
 SELECT 'task-built-on-unapproved-plan', t.id, p.id || '=' || p.approval
   FROM task t JOIN plan p ON p.id = t.plan_id
  WHERE t.status IN ('in-progress','done') AND p.approval <> 'approved'
+   AND p.task_id IS NULL
 UNION ALL
-SELECT 'finding-fixing-without-task', CAST(f.id AS TEXT), f.disposition FROM review_finding f WHERE f.disposition IN ('fixing','fixed') AND f.fix_task_id IS NULL
+SELECT 'finding-fixing-without-task', CAST(f.id AS TEXT), f.disposition FROM review_finding f WHERE f.disposition IN ('fixing','fixed') AND f.fix_task_id IS NULL AND trim(COALESCE(f.fix_ref,'')) = ''
 UNION ALL
-SELECT 'bug-fixing-without-task', b.id, b.status FROM bug b WHERE b.status IN ('fixing','fixed') AND b.fix_task_id IS NULL
+SELECT 'bug-fixing-without-task', b.id, b.status FROM bug b WHERE b.status IN ('fixing','fixed') AND b.fix_task_id IS NULL AND trim(COALESCE(b.fix_ref,'')) = ''
 UNION ALL
 -- a finding still `open` after its repair gate was decided was DROPPED, not dispositioned
 SELECT 'finding-open-past-gate-repairs', CAST(f.id AS TEXT), f.requirement_id
@@ -442,6 +443,16 @@ ORDER BY breach, row_id;
 `todo + in-progress + blocked` and deliberately excludes `failed`, because a human has already
 ruled on a failure. This is convention item 2 in the schema header — nothing prevents the close,
 so this assertion is the only thing that reports it.
+
+**`task-built-on-unapproved-plan` asks only about the IMPLEMENTATION plan** (`p.task_id IS
+NULL`), and that scoping is load-bearing. A requirement has two plans: the architect's, which
+`gate-plan` puts in front of the guild master, and the test-planner's, which an agent writes
+*after* that gate. Nothing in the process approves a test plan — no node, no gate, no step in any
+skill — because there is nothing left to decide: the direction was approved at `gate-plan` and the
+test plan implements it. Before this clause was scoped, every test-writer ticket carrying a
+`plan_id` breached G6 the moment it moved, and **no documented write could make it pass** — the
+only escape was an approval nobody had been asked for. Observed twice on one board in a single
+day.
 
 *Verified to fire:* closing `REQ-001` over one open ticket returns
 `requirement-done-over-open-task | REQ-001 | tasks_open=1`. Setting a finding to `fixing` with no
@@ -474,7 +485,9 @@ UNION ALL
 SELECT 'empty-actor','event', CAST(e.id AS TEXT) FROM event e WHERE trim(e.actor) = ''
 UNION ALL SELECT 'unknown-subject-type','event', CAST(e.id AS TEXT) || ':' || e.subject_type FROM event e
  WHERE e.subject_type NOT IN (SELECT name FROM sqlite_schema WHERE type='table')
-   AND e.subject_type <> 'shift'          -- the one deliberate exception, below
+   AND e.subject_type NOT IN ('shift',                 -- a span, not a row; see below
+                              'agent',                 -- migration 007 keeps these on
+                              'capability_request')    -- purpose; see below
 ORDER BY breach, tbl, row_id;
 ```
 
@@ -494,10 +507,25 @@ new assertion:
   *span of time*, not a row: it exists as a `started` event and an `ended` event, and everything
   else about it is derived from what happened between them. There is nothing else to point at, so
   the shift section's window, its budget and its stop reason all live in those two events' payloads
-  rather than in columns. `unknown-subject-type` therefore carries `AND e.subject_type <> 'shift'`
-  — **it is an exception, not an oversight, and it is the only one.** Any *other* `subject_type`
-  outside `sqlite_schema` is a breach: it means an event whose subject `v_recent_activity` cannot
-  resolve a title for, so the row shows up in the feed nameless.
+  rather than in columns. `unknown-subject-type` therefore excludes `'shift'`
+  — **it is an exception, not an oversight.** Any `subject_type` outside `sqlite_schema` and
+  outside the exception list is a breach: it means an event whose subject `v_recent_activity`
+  cannot resolve a title for, so the row shows up in the feed nameless.
+
+- **`'agent'` and `'capability_request'` are the other two, and they are HISTORY rather than
+  design.** Both were real tables until `migrations/007-roster-leaves-the-database.sql` dropped
+  them, and 007 deliberately left their `event` rows in place: *"they are the record of what was
+  written at the time, and deleting them would be a lie about a board that really did recruit
+  those members."* That reasoning is right, and it means any board migrated from v6 carries
+  events whose `subject_type` will never be a table again. Without this carve-out those boards
+  report `unknown-subject-type | event | N:agent` forever, and 007 says that is correct —
+  **two of the plugin's own documents sanctioning opposite things.** `v_recent_activity` already
+  resolves an unknown `subject_type` to a blank title rather than failing, which is why the feed
+  stays readable and why keeping the rows costs nothing.
+
+  Unlike `'shift'`, these two can never come back: the tables are gone by design, so this is a
+  permanent exception for a bounded, historical set. A NEW event written under either name is
+  still wrong — but nothing writes one, because nothing has since v7.
 
   If a shift ever earns a table of its own — `inspection` is the same shape and has one, with
   `trg_inspection_created` writing its event — this exception goes away and the clause returns to
@@ -764,7 +792,7 @@ is what releases the rest of the flow to `guild:check-in` or `guild:shift`.
 The schema is applied and the roster has been read. Before the flow may begin:
 
 ```sql
--- P4.a  the schema is current — expect exactly one row, version 8
+-- P4.a  the schema is current — expect exactly one row, version 9
 SELECT version FROM schema_version WHERE id = 1;
 
 -- P4.c  this requirement has no graph already — expect ZERO ROWS
@@ -1014,7 +1042,7 @@ SELECT 'missing-view' AS breach, v.n AS row_id FROM (
   UNION ALL SELECT 'v_recent_activity') v
  WHERE NOT EXISTS (SELECT 1 FROM sqlite_schema s WHERE s.type = 'view' AND s.name = v.n)
 UNION ALL
-SELECT 'schema-not-7', CAST(version AS TEXT) FROM schema_version WHERE version <> 7;
+SELECT 'schema-not-9', CAST(version AS TEXT) FROM schema_version WHERE version <> 9;
 ```
 
 *Verified:* zero rows on `empty` and on `messy`; `DROP VIEW v_failed_tasks` returns
@@ -2023,7 +2051,7 @@ otherwise carry two graphs and one ambiguous `graph-template:` key.
 ### Preconditions
 
 ```sql
--- P11.a  the schema is current — expect exactly one row, version 8
+-- P11.a  the schema is current — expect exactly one row, version 9
 SELECT version FROM schema_version WHERE id = 1;
 
 -- P11.b  the carrier has no graph already — expect ZERO ROWS, in its own round trip

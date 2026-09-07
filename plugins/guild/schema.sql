@@ -192,7 +192,7 @@ CREATE TABLE IF NOT EXISTS schema_version (
 ) STRICT;
 
 INSERT INTO schema_version (id, version, applied_at)
-SELECT 1, 8, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+SELECT 1, 9, strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 WHERE NOT EXISTS (SELECT 1 FROM schema_version WHERE id = 1);
 
 
@@ -534,6 +534,12 @@ CREATE TABLE IF NOT EXISTS review_finding (
   disposition TEXT NOT NULL DEFAULT 'open'
               CHECK (disposition IN ('open', 'fixing', 'fixed', 'waived')),
   fix_task_id TEXT REFERENCES task(id),
+  -- Where the fix lives when it was NOT a guild ticket: a commit sha, a PR url, an
+  -- upstream release. Most defects in a small repo are fixed by somebody committing, with
+  -- no board ticket in between, and before this column the only truthful status for such
+  -- a defect breached G6. G6 now accepts EITHER a `fix_task_id` or a non-empty `fix_ref`.
+  -- Free text on purpose: a sha, a url and "shipped in 8.1.1" are all legitimate answers.
+  fix_ref     TEXT NOT NULL DEFAULT '',
   created_at  TEXT NOT NULL
 ) STRICT;
 
@@ -549,6 +555,12 @@ CREATE TABLE IF NOT EXISTS bug (
   found_by       TEXT,                        -- agent name or 'user'
   requirement_id TEXT REFERENCES requirement(id),
   fix_task_id    TEXT REFERENCES task(id),
+  -- Where the fix lives when it was NOT a guild ticket: a commit sha, a PR url, an
+  -- upstream release. Most defects in a small repo are fixed by somebody committing, with
+  -- no board ticket in between, and before this column the only truthful status for such
+  -- a defect breached G6. G6 now accepts EITHER a `fix_task_id` or a non-empty `fix_ref`.
+  -- Free text on purpose: a sha, a url and "shipped in 8.1.1" are all legitimate answers.
+  fix_ref        TEXT NOT NULL DEFAULT '',
   created_at     TEXT NOT NULL,
   updated_at     TEXT NOT NULL
 ) STRICT;
@@ -1756,7 +1768,17 @@ SELECT ke.to_id, 'in', ke.rel, ke.from_type, ke.from_id,
 -- v_doc_stale — THE WORK MOVED AND THE PAGE DID NOT
 -- ------------------------------------------------------------------------------------
 -- Documentation drift, derived rather than declared. A document is stale when something it
--- `describes` or `decides` has an `event` NEWER than the document's own `updated_at`.
+-- `describes` or `decides` has an `event` NEWER than the document's own `updated_at` —
+-- EXCEPT the transition that CLOSES the subject (`verb = 'moved'` with `payload.to = 'done'`).
+--
+-- That exception is not a nicety. In the standard template the `document` node runs LAST but
+-- still BEFORE the orchestrator closes the requirement, so closing always writes an event
+-- newer than the pages that just described it. Without the carve-out, EVERY requirement ended
+-- with its freshest documentation flagged stale, `docs_stale` grew by the size of each
+-- requirement's doc set on close, and the number trained its reader to ignore it. A drift
+-- detector that always fires is not a drift detector. Note what is deliberately still counted:
+-- a requirement REOPENED (`payload.to = 'in-progress'`) is the work genuinely moving, and its
+-- pages should go stale.
 --
 -- This is why the edges are worth writing. `event` is already a complete record of every
 -- mutation on the board, so the moment a doc names its subject, the database can tell you
@@ -1789,14 +1811,18 @@ SELECT d.slug                AS slug,
        ke.to_id              AS subject_id,
        substr(d.updated_at, 1, 19) AS doc_updated_at,
        (SELECT MAX(substr(e.ts, 1, 19)) FROM event e
-         WHERE e.subject_type = ke.to_type AND e.subject_id = ke.to_id) AS subject_moved_at
+         WHERE e.subject_type = ke.to_type AND e.subject_id = ke.to_id
+           AND NOT (e.verb = 'moved'
+                    AND json_extract(e.payload, '$.to') = 'done')) AS subject_moved_at
   FROM doc d
   JOIN knowledge_edge ke
     ON ke.from_type = 'doc' AND ke.from_id = d.slug
    AND ke.rel IN ('describes', 'decides')
  WHERE d.status = 'current'
    AND (SELECT MAX(substr(e.ts, 1, 19)) FROM event e
-         WHERE e.subject_type = ke.to_type AND e.subject_id = ke.to_id)
+         WHERE e.subject_type = ke.to_type AND e.subject_id = ke.to_id
+           AND NOT (e.verb = 'moved'
+                    AND json_extract(e.payload, '$.to') = 'done'))
        > substr(d.updated_at, 1, 19)
  ORDER BY subject_moved_at DESC, d.slug;
 

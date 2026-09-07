@@ -16,6 +16,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [8.1.2] - 2026-09-07
+
+Seven defects found by running the guild against a real product for three days, then filed on
+the plugin's own new board rather than on the product's. Six are fixed here; the seventh
+(`migrations/007` sanctioning a `subject_type` that is no longer a table) is fixed as a G7
+carve-out because rewriting those historical `event` rows would destroy the record 007
+deliberately preserved.
+
+### Added
+- **`bug.fix_ref` and `review_finding.fix_ref`, and G6 now accepts either a fix task or a fix
+  ref.** G6 flagged any defect marked `fixing`/`fixed` with no `fix_task_id`, which is right for
+  work the guild did — and had no expression at all for a defect fixed by somebody committing
+  directly, which is how most defects in a small repo actually get fixed. All three available
+  encodings were wrong in a different way: `fixed` was true and breached G6, `wontfix` passed and
+  was a lie, `open` passed and was also a lie. Two real boards paid for it — this plugin's own
+  board carried a deliberate G6 breach on the two defects shipped in 8.1.1, and a product board
+  still carries `wontfix` on a bug that was genuinely resolved by re-planning. Free text on
+  purpose: a sha, a PR url and "shipped in 8.1.1" are all legitimate answers.
+  **`migrations/009-a-fix-need-not-be-a-ticket.sql`, schema version 9.**
+- **A seventh warehouse rule, and gotcha 9a: the SQL itself must not pass through a
+  `%`-interpreting layer.** Rule 1 protects the DATA; nothing protected the QUERY. Guild SQL is
+  full of `printf('%03d', …)` and `strftime(…)`, and a shell `printf` used to BUILD a statement
+  eats those sequences before SQLite sees them. The write then succeeds, exit code 0, `RETURNING`
+  prints a row, and the stored value is literally `TASK-%03d`. Only reading it back reveals it,
+  and because ids are primary keys the *second* such write fails on a constraint pointing nowhere
+  near the cause. A real board carries a `task:TASK-%03d` deletion event as permanent evidence.
+
+### Fixed
+- **`guild:brief` and `guild:check-in` opened every session on a FALSE precondition failure.**
+  8.1.1 bumped the schema to version 8 and left the precondition asserting `version <> 7`, so
+  both skills reported `schema-not-7|8` on any board actually running the current schema. Two
+  other places in the same file already said 8; only the executable one was missed. The token is
+  now named for the version it tests, so it cannot read as correct while testing the wrong number.
+- **A test plan is never approved, and G6 demanded that it be.** `gate-plan` approves the
+  architect's plan; the test-planner's is written by an agent afterwards, implementing a direction
+  already ruled on. No node, no gate and no step in any skill ever approved one — so every
+  test-writer ticket carrying a `plan_id` breached `task-built-on-unapproved-plan` the moment it
+  moved, and **no documented write could clear it.** Observed twice on one board in a day. The
+  clause is now scoped to `p.task_id IS NULL`, and the comment that claimed test plans were
+  "approved at its own point" is corrected — there was no such point.
+- **Closing a requirement flagged its just-written documentation as stale.** `document` runs last
+  but still before the close, so the closing status event was always newer than the pages
+  describing it: `docs_stale` grew by each requirement's whole doc set on close, and the freshest
+  pages on the board were the ones reported. `v_doc_stale` now ignores the transition *into*
+  `done`. A reopened requirement still goes stale, which is the case that means anything.
+  Measured on a real board: 10 stale rows became 5, and the 5 that went were exactly the pages
+  written minutes earlier.
+- **`agents/architect.md` said four node keys were required; G8 asserts five.** `document` was
+  missing from the enumeration — the sentence an architect reads when deciding whether a node may
+  be dropped — while the same file's shape table already called it required.
+- **`new-requirement`'s graph checklist could not catch a dropped required node.** Its catch-all
+  only fired when NO `drop-node` deviation existed, but a deviation does not make dropping a
+  required key legal — G8 fires regardless. Recording the reason correctly was what hid it. The
+  row now names the whole required set and says so outright.
+- **`migrations/007`'s deliberately-kept `event` rows no longer breach G7.** 007 dropped the
+  `agent` and `capability_request` tables and kept their events on purpose — *"deleting them would
+  be a lie about a board that really did recruit those members"* — but G7's exception list held
+  only `'shift'` and called itself "the only one", so any board migrated from v6 reported
+  `unknown-subject-type` forever while 007 said that was correct. Two of the plugin's own
+  documents sanctioned opposite things. Both names are now carve-outs with 007's reasoning
+  attached.
+- **`standard.md`'s edge-INSERT count said six; there are seven.** Residue of the fix that added
+  the `repair -> document` statement.
+
 ## [8.1.1] - 2026-09-03
 
 ### Removed

@@ -45,7 +45,7 @@ skills/warehouse/
 
 ## 3. What the database enforces
 
-`schema.sql` is 23 tables, 30 views and 44 triggers, at `schema_version = 8`.
+`schema.sql` is 23 tables, 30 views and 44 triggers, at `schema_version = 9`.
 
 **CHECK constraints are the vocabularies.** Every status and enum column carries its word list. A
 value outside it is rejected by the engine, on every connection, from every member, forever. An

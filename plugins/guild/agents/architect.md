@@ -889,8 +889,12 @@ The rules, and **who enforces each one — read this before you trust it:**
   into a session that stops every twenty minutes waiting for a human who is asleep. If work needs a
   decision, it belongs at `gate-repairs`. An `add-gate` deviation row is a failure however good the
   reason — the template's check (c) looks for exactly that.
-- **A `required: true` node may be reshaped, never dropped.** `gate-plan`, `implement`, `review`
-  and `gate-repairs` are required. Review always happens; how wide it fans out is negotiable.
+- **A `required: true` node may be reshaped, never dropped.** `gate-plan`, `implement`, `review`,
+  `gate-repairs` and `document` are required — that is the exact set G8 asserts, and `document`
+  is the one people forget, so a `standard` graph missing it returns
+  `dropped-required-node | REQ-nnn | document`. (`maintenance` carries no `document`; an
+  inspection produces bugs and specs, not new subsystem knowledge.) Review always happens; how
+  wide it fans out is negotiable.
   Dropping it is a judgement about the guild's standards, which is not yours to make.
 - **`add-node` must name a capability some available subagent declares.** A node nobody is
   eligible for is a node the run stalls at forever, discovered mid-shift. Check before you insert:

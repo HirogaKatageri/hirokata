@@ -443,9 +443,9 @@ nobody justified:
 |---|---|
 | no `graph_node` rows | the architect never built the graph — send it back |
 | more or fewer than the template's two gates | **never negotiable.** Dropping a gate removes the guild master's control surface; adding one turns unattended operation into a session that stops every twenty minutes |
-| `implement` or `review` missing | required keys may be reshaped, never dropped |
+| a REQUIRED key missing — `gate-plan`, `implement`, `review`, `gate-repairs` or `document` (`document` on `standard` only) | **a `drop-node` deviation does NOT make this legal.** G8 asserts `dropped-required-node` over that exact set and fires whatever reason was recorded. A required node may be RESHAPED — fanned out, re-pointed, given a different capability — never dropped. Doing the paperwork correctly is what hides this one |
 | a node key not in the template, with no `graph_deviation` row | the shape changed and nothing recorded why |
-| a template key absent, with no `drop-node` deviation | same, in the other direction |
+| an OPTIONAL template key absent, with no `drop-node` deviation | same, in the other direction — the shape changed and nothing recorded why. For a required key see the row above: the deviation is not the point, the key is |
 | `v_ready_nodes` empty for the requirement | the graph cannot start: no root, or a cycle. With no `WITH RECURSIVE` there is no traversal to find one, so the rule is written at build time — every edge points backwards in declaration order |
 | an unpinned ticket whose `--covers` scan returns nothing | a roster gap or a typo'd tag — Step 6.6, not something to paper over |
 
@@ -526,7 +526,12 @@ what takes the plan off `v_plans_pending_approval`, which is the queue the brief
 read. Skip it and the board will keep asking about a plan the user already approved.
 
 `task_id IS NULL` targets the requirement's own implementation plan and leaves the test plan
-alone — the test-planner's plan is approved at its own point, not here.
+alone — a test plan is never approved at all, and does not need to be. It is written by an
+agent AFTER this gate, implementing a direction the guild master already ruled on, so there
+is no second decision to make. G6's `task-built-on-unapproved-plan` is scoped to
+`p.task_id IS NULL` for exactly that reason. (It used to say the test plan was "approved at
+its own point" — there was no such point, and every test-writer ticket carrying a `plan_id`
+breached G6 with no documented write that could clear it.)
 
 On reject: `'rejected'` on the gate, `'skipped'` on the node, `'rejected'` on the plan. A
 rejected gate may be decided again later — reject, let the architect revise, then approve; that
