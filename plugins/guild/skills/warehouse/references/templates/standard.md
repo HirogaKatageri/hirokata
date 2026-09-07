@@ -330,7 +330,7 @@ FROM requirement r WHERE r.id = 'REQ-007';
 -- EDGES: one statement per (predecessor key, successor key) pair.
 -- A CROSS JOIN over the INSTANCES of the two keys, so a fanned predecessor becomes a
 -- real barrier: test-plan waits for every implement.<TASK-ID>. Template-sized, never
--- board-sized: six statements whatever N is.
+-- board-sized: seven statements whatever N is.
 INSERT INTO graph_edge (from_node, to_node)
 SELECT f.id, t.id FROM graph_node f, graph_node t
 WHERE f.requirement_id = 'REQ-007' AND t.requirement_id = 'REQ-007'

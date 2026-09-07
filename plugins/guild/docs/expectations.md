@@ -1014,7 +1014,7 @@ SELECT 'missing-view' AS breach, v.n AS row_id FROM (
   UNION ALL SELECT 'v_recent_activity') v
  WHERE NOT EXISTS (SELECT 1 FROM sqlite_schema s WHERE s.type = 'view' AND s.name = v.n)
 UNION ALL
-SELECT 'schema-not-7', CAST(version AS TEXT) FROM schema_version WHERE version <> 7;
+SELECT 'schema-not-8', CAST(version AS TEXT) FROM schema_version WHERE version <> 8;
 ```
 
 *Verified:* zero rows on `empty` and on `messy`; `DROP VIEW v_failed_tasks` returns
