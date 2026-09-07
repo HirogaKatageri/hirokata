@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [8.2.0] - 2026-09-07
+## [8.1.2] - 2026-09-07
 
 Seven defects found by running the guild against a real product for three days, then filed on
 the plugin's own new board rather than on the product's. Six are fixed here; the seventh
