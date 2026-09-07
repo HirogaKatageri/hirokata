@@ -42,7 +42,7 @@ printf "SELECT fact, value FROM v_brief;\n" | turso db shell "$(printenv TURSO_D
 The schema lives at `${CLAUDE_PLUGIN_ROOT}/schema.sql`. Applying it is idempotent —
 `tursodb .guild/guild.db < schema.sql` — and is how a rule change reaches a live board.
 
-## Six rules that are always true
+## Seven rules that are always true
 
 1. **Free text crosses as hex.** A `;` that ends a line ends the statement, even inside a
    string literal — and requirement bodies quote code. Every title, body, rationale, log
@@ -51,24 +51,31 @@ The schema lives at `${CLAUDE_PLUGIN_ROOT}/schema.sql`. Applying it is idempoten
    value through `$( )` — that eats trailing newlines. Empty string is `''`.
    Ids, enum values, agent names, capabilities and timestamps you generated are closed
    alphabets and may be quoted literals.
-2. **`PRAGMA foreign_keys = ON;` at the top of every writing script.** It is
+2. **The SQL itself must not pass through a `%`-interpreting layer.** Rule 1 protects the
+   DATA; this protects the QUERY. Guild SQL is full of `printf('%03d', …)` and
+   `strftime('%Y-%m-%dT%H:%M:%SZ','now')`, and a shell `printf` used to BUILD a statement
+   eats those `%` sequences before SQLite sees them. The write then succeeds, exit code 0,
+   `RETURNING` prints a row, and the stored value is literally `TASK-%03d`. Put SQL in a
+   **quoted** heredoc (`<<'SQL'`) and use `printf` only for hex, where the format is a
+   constant and the payload is the argument. See `references/tursodb-gotchas.md` §9a.
+3. **`PRAGMA foreign_keys = ON;` at the top of every writing script.** It is
    per-connection and defaults to OFF, and every invocation is a fresh connection.
-3. **Never parse `-m list` output positionally.** It is pipe-separated with no quoting,
+4. **Never parse `-m list` output positionally.** It is pipe-separated with no quoting,
    and free text contains pipes *and newlines* — a newline forges a whole row. Either
    `json_object(...)`, or select exactly one column when you need a value byte-exact, or
    flatten in SQL before it leaves the engine.
-4. **Read the view, do not re-derive the rule.** `v_next_task`, `v_open_bounties`,
+5. **Read the view, do not re-derive the rule.** `v_next_task`, `v_open_bounties`,
    `v_task_actionable`, `v_ready_nodes`, `v_board`, `v_brief`, `v_doc_current`,
    `v_doc_stale` and the rest each hold ONE
    definition of a rule. Two members writing their own version of "which task is next"
    gives the guild two answers to one question, and both look right. **The one rule with
    no view is the agent match** — the roster is not in this database — and its single
    definition is `guild:check-in` §3.3.
-5. **A failing statement does not stop the script, and `COMMIT` still commits.** There is
+6. **A failing statement does not stop the script, and `COMMIT` still commits.** There is
    no `-bail`. Keep scripts to one logical change, put `RETURNING` on every mutation so
    "did it land" is answered by output, and do the referential check *inside* the write
    (`INSERT … SELECT … FROM parent WHERE parent.id = 'REQ-001'` — the `FROM` is the check).
-6. **Errors print on stdout, not stderr.** `out=$(… | tursodb …)` captures the error as if
+7. **Errors print on stdout, not stderr.** `out=$(… | tursodb …)` captures the error as if
    it were a row. Always check the exit code, and never `>/dev/null` the failure path.
 
 Set your name once per script so the triggers attribute the events to you:

@@ -170,7 +170,7 @@ Four things are mandatory:
   correct it inline here and do not carry a private copy.
 - **Any output is a failure.** Check the return code *and* stdout, always.
 - **Never `cut -d'|'` the result.** Board text carries pipes and newlines, and a newline
-  forges a whole row (`guild:warehouse`, rule 3).
+  forges a whole row (`guild:warehouse`, rule 4).
 - **Never write the board to make an assertion pass.** Report the breach; repairing it is a
   separate, named decision by the guild master.
 - **A green run is not a good run.** It says the member did not break the board's rules. It

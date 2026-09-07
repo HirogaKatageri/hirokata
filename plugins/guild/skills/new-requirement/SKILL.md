@@ -443,9 +443,9 @@ nobody justified:
 |---|---|
 | no `graph_node` rows | the architect never built the graph — send it back |
 | more or fewer than the template's two gates | **never negotiable.** Dropping a gate removes the guild master's control surface; adding one turns unattended operation into a session that stops every twenty minutes |
-| `implement` or `review` missing | required keys may be reshaped, never dropped |
+| a REQUIRED key missing — `gate-plan`, `implement`, `review`, `gate-repairs` or `document` (`document` on `standard` only) | **a `drop-node` deviation does NOT make this legal.** G8 asserts `dropped-required-node` over that exact set and fires whatever reason was recorded. A required node may be RESHAPED — fanned out, re-pointed, given a different capability — never dropped. Doing the paperwork correctly is what hides this one |
 | a node key not in the template, with no `graph_deviation` row | the shape changed and nothing recorded why |
-| a template key absent, with no `drop-node` deviation | same, in the other direction |
+| an OPTIONAL template key absent, with no `drop-node` deviation | same, in the other direction — the shape changed and nothing recorded why. For a required key see the row above: the deviation is not the point, the key is |
 | `v_ready_nodes` empty for the requirement | the graph cannot start: no root, or a cycle. With no `WITH RECURSIVE` there is no traversal to find one, so the rule is written at build time — every edge points backwards in declaration order |
 | an unpinned ticket whose `--covers` scan returns nothing | a roster gap or a typo'd tag — Step 6.6, not something to paper over |
 

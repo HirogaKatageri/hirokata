@@ -481,6 +481,46 @@ would corrupt your first result line.)
 
 ---
 
+## 9a. The SQL itself must not pass through a `%`-interpreting layer
+
+Rule 1 in `guild:warehouse` protects the DATA — free text crosses as hex so a `;` or a
+newline cannot tear the statement. **This is the mirror-image failure: the data is fine and
+the QUERY TEMPLATE is corrupted.**
+
+Canonical guild SQL is full of SQLite format strings — `printf('%03d', …)` for derived ids,
+`strftime('%Y-%m-%dT%H:%M:%SZ','now')` for timestamps. Every one contains `%`. Build that
+SQL with a shell `printf`, or through any templating that treats `%` as special, and the
+percent sequences are consumed or doubled *before SQLite ever sees them*:
+
+```bash
+# WRONG — the shell eats the format string
+printf "INSERT INTO task (id) SELECT 'TASK-' || printf('%03d', MAX(x)+1) FROM task;" > q.sql
+#   SQLite receives: printf('3d', …)   or  printf('%%03d', …)
+```
+
+**Nothing tells you.** The INSERT succeeds, the exit code is 0, and `RETURNING` prints a
+row. The only way to notice is to read the value back and look at it — a task whose id is
+literally `TASK-%03d`, or a timestamp column holding the string
+`%Y-%m-%dT%H:%M:%SZ`. And because ids are primary keys, the second such write fails on a
+constraint whose message points nowhere near the cause.
+
+*Verified on a real board:* `task:TASK-%03d` exists in an `event` row's deletion record,
+because the row was written, discovered, and deleted — and G11 now reports that deletion
+forever.
+
+**Safe: put the SQL in a quoted heredoc and let no shell touch it.**
+
+```bash
+cat > q.sql <<'SQL'          # the quotes on 'SQL' are what make this safe
+INSERT INTO task (id) SELECT 'TASK-' || printf('%03d', MAX(x)+1) FROM task;
+SQL
+```
+
+Use `printf` only for the HEX of free text (`printf '%s' "$v" | xxd -p | tr -d '\n'`),
+where the format string is a constant you control and the payload is the argument.
+
+---
+
 ## 9. Two engines — write to the intersection
 
 `turso db create` gives the **libSQL** engine (a SQLite fork); `--tursodb`, and every
