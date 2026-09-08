@@ -16,6 +16,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [9.1.0] - 2026-09-08
+
+### Changed
+- **`architecture` splits into `planning` and `software-architecture`.** One word was doing two
+  unrelated jobs. `strategist` now declares **`planning, software-architecture`** and
+  `reviewer-architecture` declares **`review, software-architecture`**. The reviewer really does
+  read software architecture, so the longer word is simply honest. The strategist needed the
+  neutral one: 9.0.0 made it domain-driven — it loads a profile and its method knows nothing about
+  code — and an agent declaring only a software capability cannot be matched from another domain.
+  It keeps `software-architecture` alongside, because covering software architecture is true of it
+  today.
+- **`planning` completes a naming scheme the roster already had.** `test-planner` declares
+  `test-planning` and `qa-strategist` declares `qa-planning`; the strategist was the one planner
+  not following the pattern. A second domain adds its planner beside these rather than competing
+  with `architecture`.
+
+### Why this is a minor and not a major
+
+**No ticket this plugin generates has ever required `architecture`.** The strategist and the
+project-manager are spawned directly by `guild:new-requirement`, never dispatched through a
+capability match, so their declared words are labels rather than routing keys — a real six-day,
+94-ticket board demanded only `implement`, `backend`, `frontend`, `test-authoring`, `document`,
+`review`, `test-planning` and `e2e`. Nothing on a board the guild built can be stranded by this.
+
+The one board that could be is one where somebody hand-wrote a ticket requiring the old word:
+
+```bash
+printf "SELECT task_id, capability FROM task_capability WHERE capability = 'architecture';\n" \
+  | tursodb -q -m list .guild/guild.db      # expect no rows
+```
+
+A row there means that ticket now matches nobody and goes `blocked` at dispatch, loudly, naming
+the word. Relabel it `software-architecture` or `planning` as appropriate.
+
+### Note
+- **`requirements` is unchanged and still shared** by `project-manager` and `product-reviewer`.
+  It is not a software word, so the argument above does not reach it.
+- The 9.0.0 entry below says the capability words were unchanged and calls this an open question.
+  That was true when it was written, and it stays as written.
+
+---
+
 ## [9.0.0] - 2026-09-08
 
 ### Changed (BREAKING)

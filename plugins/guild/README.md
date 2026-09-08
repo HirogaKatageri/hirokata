@@ -344,7 +344,7 @@ to first.
 
 | Agent | Model | Capabilities | Role |
 |-------|-------|--------------|------|
-| `strategist` | Opus | `architecture` | Explores the codebase, writes the implementation plan and its tickets, composes the execution graph. Recommends direction; never sets it. |
+| `strategist` | Opus | `planning`, `software-architecture` | Explores the codebase, writes the implementation plan and its tickets, composes the execution graph. Recommends direction; never sets it. |
 | `project-manager` | Sonnet | `requirements` | Interviews you live alongside the strategist, writes the requirement record. |
 | `developer` | Sonnet | `implement`, `backend`, `frontend` | Implements code per plan and requirement. |
 | `developer-svelte` | Sonnet | `implement`, `frontend`, `svelte`, `sveltekit` | Svelte 5 / SvelteKit specialist, pre-loaded with four reference skills. |
@@ -352,7 +352,7 @@ to first.
 | `test-writer` | Sonnet | `test-authoring` | Writes and runs unit and integration tests. |
 | `product-reviewer` | Haiku | `review`, `requirements` | Verifies the implementation satisfies the plan. |
 | `reviewer-security` | Haiku | `review`, `security` | Vulnerabilities, OWASP Top 10. |
-| `reviewer-architecture` | Haiku | `review`, `architecture` | Plan alignment, patterns, separation of concerns. |
+| `reviewer-architecture` | Haiku | `review`, `software-architecture` | Plan alignment, patterns, separation of concerns. |
 | `reviewer-business-logic` | Haiku | `review`, `business-logic` | Acceptance criteria, business rules, testability. |
 | `reviewer-edge-case` | Haiku | `review`, `edge-case` | Boundary conditions, null handling, error scenarios. |
 | `researcher` | Haiku | `research` | Technology research, API investigation, documentation lookup. |

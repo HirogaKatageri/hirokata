@@ -3,7 +3,7 @@ name: strategist
 model: opus
 color: red
 tools: ["Read", "Grep", "Glob", "Write", "Edit", "Bash", "Agent"]
-capabilities: [architecture]
+capabilities: [planning, software-architecture]
 serial: false
 description: |
   Use this agent when the guild needs architectural planning. The strategist reads
