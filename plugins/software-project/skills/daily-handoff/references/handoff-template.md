@@ -3,6 +3,9 @@
 Fill this in. Keep the headings even when a section is empty — write one honest line
 instead of deleting it.
 
+The **waiting-on block** appears in three of the four sections below, not just one. Detail is
+decided by whether another person has to act, never by which section the item landed in.
+
 ---
 
 ```markdown
@@ -17,23 +20,27 @@ should pick up first. A reader who stops here should still know where things sta
 
 ---
 
-## Done
+## Done (Merged)
 
 <Work that is merged and live. One entry per piece of work, not one per pull request —
-if three PRs delivered one thing, that is one entry.>
+if three PRs delivered one thing, that is one entry.
+
+Nobody has to act on anything in this section, so nothing here carries a waiting-on block
+and nothing here runs long. Summary voice only.>
 
 ### <What it does, in plain words>
 
-<One to three sentences on what changed and who notices the difference. No file paths.>
+<One to three sentences on what changed and who notices the difference. No file paths, no
+asides the reader cannot act on.>
 
 *<owner/repo> · [#<number>](<url>) · merged <time> · <N> files*
 
 ---
 
-## Ready for merging
+## Ready for Merging
 
 <Finished, but not in the main branch yet. Each entry says what is finished and what is
-holding it. Anything waiting on a person gets the detailed treatment below.>
+holding it.>
 
 ### <What it does, in plain words>
 
@@ -43,20 +50,22 @@ holding it. Anything waiting on a person gets the detailed treatment below.>
 **What they need to do:** <the exact action — open the link, approve, answer the question,
 run the command. Include the link and the branch name.>
 **Why it matters:** <what stays blocked until it happens.>
-**Urgency:** <how soon, and the deadline if there is one.>
+**Urgency:** <how soon, and the deadline if there is one. Say "no deadline" rather than
+inventing one.>
 
 *<owner/repo> · [#<number>](<url>) · <branch> → <base> · <N> files*
 
 ---
 
-## In progress
+## In Progress (Uncommitted)
 
 <Started but not finished: uncommitted changes, stashes, draft pull requests, and
 sessions that ended without producing anything.>
 
 ### <What is being built, in plain words>
 
-<One to three sentences: what it is meant to do, and how far it got.>
+<One to three sentences: what it is meant to do, and how far it got. Resist re-explaining
+the whole feature — the next person needs to restart it, not review it.>
 
 **Where it lives:** <full path, plus the branch. Say explicitly if it is inside an agent
 worktree under `.claude/worktrees/` — that is easy to lose.>
@@ -64,14 +73,30 @@ worktree under `.claude/worktrees/` — that is easy to lose.>
 not build right now.>
 **To resume:** <the first thing the next person should do.>
 
+<If this item is also blocked on someone else, add the waiting-on block here — the four
+bold lines from Ready for Merging, unchanged.>
+
 ---
 
-## What's next
+## What's Next
 
-<Everything the day implies but nobody has started. Ordered so the most important is
-first. Anything needing another person carries the full waiting-on block.>
+<Everything the day implies but nobody has started.
 
-- **<Thing to do>** — <why, in one sentence.> <Link if there is one.>
+Two shapes, and the choice is not stylistic. Anything that needs another person — a
+review, a decision, a credential, a manual step outside the code, a warning someone must
+receive — gets its own `###` heading and the full waiting-on block. These come first.
+Everything the next person can simply go and do stays a one-line bullet, below them.>
+
+### <The thing that needs someone, named as an outcome>
+
+<One to three sentences on what the situation is.>
+
+**Waiting on:** <person or role>
+**What they need to do:** <the exact action.>
+**Why it matters:** <what breaks or stalls otherwise.>
+**Urgency:** <how soon, and the deadline if there is one.>
+
+- **<Thing the next person can just do>** — <why, in one sentence.> <Link if there is one.>
 
 ---
 
@@ -101,5 +126,11 @@ entry under the bucket the work has actually reached. Do not report the same thi
 
 **Empty sections.** "Nothing merged in this window." is a complete and useful sentence.
 
-**Length.** Done and Ready-for-merging entries run one to three sentences each. Waiting-on
+**Length.** Done (Merged) entries are capped at three sentences and carry no aside nobody
+acts on. In Progress entries run one to three sentences before their bold lines. Waiting-on
 blocks run as long as they need to — the person reading them has to act without asking.
+
+**The test, applied per item.** Before writing an entry, ask: does someone other than the
+author have to do something? If yes, it gets the block, whichever section it is in. If no,
+it gets a summary and nothing more. A document where the merged work is the longest section
+and the blockers are bullets has the rule backwards.

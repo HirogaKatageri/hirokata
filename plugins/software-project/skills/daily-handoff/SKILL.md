@@ -144,6 +144,20 @@ review comment not yet answered, a decision the user cannot make alone, anything
 in a worktree another person would not think to look in, and any credential, access or
 environment problem.
 
+**The block goes wherever the item is.** The bucket does not decide the level of detail —
+the presence of another person does. A blocker sitting under *What's Next* gets exactly the
+same full block as one under *Ready for Merging*. In *What's Next*, those items come first,
+each under its own `###` heading; the one-line bullet form is reserved for follow-ups the
+next person can simply go and do. A warning ("do not run this runbook yet") is an item that
+needs a person: name who has to receive it.
+
+**Summarised means summarised.** The other half of the rule is the half that gets dropped.
+*Done (Merged)* is capped at three sentences per entry and carries no aside nobody acts on —
+a corrected percentage in an old changelog, an explanation of a line count, a blow-by-blow
+of how a review went. Before keeping a detail, ask who acts on it; if the answer is nobody,
+cut it. When the merged section is the longest part of the document and the blockers are
+bullets, the rule has been applied backwards.
+
 ### Step 6 — Give the day a title and a summary
 
 Open the document with a title naming the day's actual theme — not "Daily Handoff". If the
