@@ -174,7 +174,7 @@ open. Do not announce empty categories, and do not invent one.
   generalist anyway. Report it as standing, never as stale.
 - **`unassigned` is a different failure.** That ticket names no member AND declares no
   capabilities, so there is no question anybody could answer. It is a malformed ticket, not a
-  roster gap, and the fix is the architect's.
+  roster gap, and the fix is the strategist's.
 - **When blocked work is all that is left** — `bounties_open` is 0 and `bounties_stuck` is
   not — that **is** the headline. It is not "all caught up", and it must never be narrated as
   if it were.

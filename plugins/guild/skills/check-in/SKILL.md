@@ -17,7 +17,7 @@ user-invocable: true
 
 You are the **Guild Orchestrator**. You report status, run the graph, and put decisions in
 front of the guild master. **You do not know the chain** — the chain is data: `graph_node`,
-`graph_edge` and `gate` rows the architect instantiated from a template.
+`graph_edge` and `gate` rows the strategist instantiated from a template.
 
 **What you do, in one sentence:** report (`v_brief`), route, then for each requirement read
 the ready nodes → dispatch one batch → record every result → handle the gate it stops at →
@@ -110,6 +110,9 @@ tursodb .guild/guild.db < "${CLAUDE_PLUGIN_ROOT}/schema.sql"     # idempotent
 cat > .guild/config.yaml <<'YAML'
 # guild configuration. Committed to git.
 version: 5
+# Which domain profile the strategist plans with. `software` is the default and may be
+# omitted; any other value names a `guild:domain-<name>` skill that must exist.
+domain: software
 db:
   mode: local
 YAML
@@ -117,7 +120,7 @@ printf 'guild.db\nguild.db-*\nguild.db.*\ndashboard.html\n' > .guild/.gitignore
 ```
 
 Then greet them, say the board is empty, and ask what they want to work on. On an answer,
-invoke `guild:new-requirement` — it runs the product-owner + architect interview, writes the
+invoke `guild:new-requirement` — it runs the project-manager + strategist interview, writes the
 plan, the tickets **and the execution graph**, and ends by presenting
 `gate-plan`. Then go to **Step 3**.
 
@@ -285,7 +288,7 @@ SELECT id, node_key, status FROM graph_node
  WHERE requirement_id = 'REQ-NNN' AND status NOT IN ('done', 'skipped') ORDER BY id;
 ```
 
-**No `graph_node` rows at all** → this requirement predates the graph, or the architect never
+**No `graph_node` rows at all** → this requirement predates the graph, or the strategist never
 built one. Do not improvise a chain. Go to **3.7**.
 
 **A pending `gate-plan` is not yours.** `guild:new-requirement` presents it. Say so, offer to
@@ -315,7 +318,7 @@ whole graph blind.**
    `.guild/templates/*.yaml` when present — and find the entry whose `key:` matches the
    node's `node_key`.
 2. `parallel: by-group` or `parallel: all` → nodes sharing a **non-empty** `parallel_group`
-   run **concurrently**. The architect asserted their file sets are disjoint
+   run **concurrently**. The strategist asserted their file sets are disjoint
    (`task.files`). Nodes with no group are not concurrent with anything.
 3. `parallel: never`, no `parallel:` line, or a key in **neither** template → **one node, one
    batch.** This is an invariant, not a tuning knob: `qa-execute` drives a real app and a real
@@ -336,7 +339,7 @@ For each node in the batch:
 **1. Find its ticket.** The segment query's `task` field is the binding.
 
 - **Bound** → use it.
-- **Unbound** (`task` is empty) → the node is one the architect could not bind unambiguously
+- **Unbound** (`task` is empty) → the node is one the strategist could not bind unambiguously
   (`test-plan`, `qa-plan`, `document`, every `review.*`). Find the requirement's open ticket for
   that work:
 
@@ -362,7 +365,7 @@ order, and stop at the first that answers:
 
 | | condition | what you do |
 |---|---|---|
-| **pin** | `pin` is non-empty | Dispatch that member. **Do not run the capability match** — a pin is a decision the architect already made, and it wins even when the member covers none of the ticket's capabilities. |
+| **pin** | `pin` is non-empty | Dispatch that member. **Do not run the capability match** — a pin is a decision the strategist already made, and it wins even when the member covers none of the ticket's capabilities. |
 | **capability** | `pin` empty, `needs` non-empty | ELIGIBLE = every roster member whose `capabilities` are a **superset** of `needs`. Rank the eligible and take the first. |
 | **nobody** | no pin, and nothing eligible | → **3.8**. Never improvise a substitute. |
 
@@ -510,7 +513,7 @@ the failure is **collected** and judged at `gate-repairs` alongside every findin
 runnable — then say so and ask.)
 
 **Parallel-batch collision check** (only when the batch had more than one node): scan the
-work logs for a file written by more than one ticket. If you find one, the architect's
+work logs for a file written by more than one ticket. If you find one, the strategist's
 disjoint-file assertion was wrong — that is a finding for the gate, not an interruption:
 
 ```sql
@@ -669,7 +672,7 @@ so check `v_open_bounties` before dispatching. Resolve the member with the pin/c
 rule in 3.3, and skip 3.5 — there is no gate on a graph-less requirement, so a review report goes to
 the user directly.
 
-**Offer the fix once**: only the architect should decide a graph's shape, so hand the
+**Offer the fix once**: only the strategist should decide a graph's shape, so hand the
 requirement back to `guild:new-requirement` rather than instantiating one yourself.
 
 ### 3.8 No eligible agent — block it, loudly

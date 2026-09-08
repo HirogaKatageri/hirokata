@@ -83,7 +83,7 @@ places, in this order:
 R=REQ-NNN
 # the requirement — what was asked for, in the user's terms
 printf "SELECT body FROM requirement WHERE id='$R';\n"            | tursodb -q -m list "$DB"
-# the plan — where the architect's reasoning lives, and where decisions hide
+# the plan — where the strategist's reasoning lives, and where decisions hide
 printf "SELECT body FROM plan WHERE requirement_id='$R' ORDER BY id;\n" | tursodb -q -m list "$DB"
 # the gate decisions — the one place a HUMAN's judgment is recorded
 printf "SELECT n.node_key, g.kind, g.status, g.decision

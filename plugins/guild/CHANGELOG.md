@@ -16,6 +16,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [9.0.0] - 2026-09-08
+
+### Changed (BREAKING)
+- **`product-owner` is now `project-manager`; `architect` is now `strategist`.** The roles are
+  unchanged — the names were. "Product owner" and "architect" are software job titles, and the
+  guild is meant to be a tool for assembling a team for any purpose, not a coding tool with a
+  coding team in it. `project-manager` and `strategist` name what the roles actually do —
+  gather what is wanted, and decide how the work is shaped — in words a marketing or strategy
+  team would also recognise.
+- **`subagent_type` changed with them**: `guild:product-owner` → `guild:project-manager`,
+  `guild:architect` → `guild:strategist`. Any project pinning a ticket to `agent = 'architect'`
+  or `'product-owner'` must repin it; nothing migrates a pin, and an unknown pin dispatches
+  nobody. `SELECT id, agent FROM task WHERE agent IN ('architect','product-owner')` is the check.
+- **Capability words are UNCHANGED** — `strategist` still declares `architecture` and
+  `project-manager` still declares `requirements`. Renaming those would strand every
+  `task_capability` row on every live board, and the capability vocabulary is a separate
+  question from the roster's names. It is still an open one: `architecture` is a software word
+  for what is really "how the work is shaped".
+
+### Added
+- **`skills/domain-software/` — the strategist's domain is now a profile it loads.** The
+  strategist carried its method and its domain in one file, and the domain half was what made it
+  a *software* planner rather than a planner. That half now lives in a skill answering five
+  slots: what surveying the current state means, what two concurrent tickets contend for, which
+  capabilities the work routes to, and what sections a plan and a ticket carry. `software`
+  answers them with the codebase, file paths, `implement,backend` and friends, `## Codebase
+  Analysis` and `## Files to Touch` — the same text as before, moved rather than rewritten.
+- **`domain:` in `.guild/config.yaml`**, naming the profile. Absent means `software`, so every
+  existing project is unaffected and no migration is needed. Another domain is a second
+  `skills/domain-<name>/SKILL.md` and one line of config; the profile page carries a worked
+  marketing example.
+
+### Changed
+- **`agents/strategist.md` is 30% software-flavoured no longer — it is 13%.** Step 2 keeps the
+  guild's own library and decision log (domain-free) and defers the rest to Slot 1. Step 3's
+  disjointness rule now says "resources", with the profile saying what a resource is. Step 3.5
+  keeps the capability *mechanism* and defers the routing table. The plan and ticket templates
+  keep the sections every domain shares and mark where the profile's go.
+- **`task.files` is documented as an opaque JSON array**, which it always was — it carries
+  `CHECK (json_valid(files))` and no view in the schema parses it. A non-software domain puts its
+  own resource handles in the same column and gets correct batching, a correct `implement`
+  fan-out and a correct G9 audit with no schema change. The column keeps its misleading name for
+  now; renaming it is a migration that buys nothing until a second domain exists.
+
+### Fixed
+- **Disambiguated `strategist` from `qa-strategist`.** The QA discipline already had a
+  `qa-strategist`, and its documents referred to it in prose as "the strategist". With a
+  top-level `strategist` now existing, those readings were ambiguous, so every bare mention in
+  `skills/qa/`, `skills/qa-artifacts/`, `agents/qa-tester.md`, `agents/qa-strategist.md` and
+  `templates/maintenance.md` is now written `qa-strategist` in full.
+
+### Upgrading from 8.1.2
+
+Nothing in the database changes — schema version stays 9 and there is no migration. Two things
+in a project might:
+
+```bash
+# 1. Any ticket pinned to a renamed member. Repin it; an unknown pin dispatches nobody.
+printf "SELECT id, agent FROM task WHERE agent IN ('architect','product-owner');\n" \
+  | tursodb -q -m list .guild/guild.db
+
+# 2. Any project-local or user-level agent file, skill or note that spawns them by name.
+grep -rn 'guild:architect\|guild:product-owner' .claude/ ~/.claude/ 2>/dev/null
+```
+
+`event` rows recording work the old names did are left exactly as they are. They are the record
+of what happened, and the guild does not rewrite history to match the present.
+
+### Note
+- **`CHANGELOG.md` and `docs/v5-design.md` were deliberately not rewritten.** Both are records of
+  what was true when they were written, and the guild does not edit history to make the present
+  tidy — the same rule that governs a superseded decision page. Entries below still say
+  `architect` and `product-owner`, correctly.
+
+---
+
 ## [8.1.2] - 2026-09-07
 
 Seven defects found by running the guild against a real product for three days, then filed on

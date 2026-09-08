@@ -1,6 +1,6 @@
 # The `maintenance` template — inspect what was built
 
-**You are the architect. There is no parser.** This page replaces `maintenance.yaml`. You read
+**You are the strategist. There is no parser.** This page replaces `maintenance.yaml`. You read
 it and write the `graph_node` / `graph_edge` / `gate` rows yourself, with the SQL in §7.
 
 **Shape:** decide whether an inspection is due, plan it, run it one tester at a time, report,
@@ -217,7 +217,7 @@ VALUES ('REQ-041', 'reshape', 'qa-execute',
 | **Every template key gets at least one node** | What makes "dropped" unambiguous — a key with zero rows was dropped, with no caveat to hide behind. This is why `qa-execute` and `repair` instantiate as anchors rather than as nothing. |
 
 **Legitimate deviations look like:** dropping `qa-plan` for a single-area spot check where the
-strategist's mission list would be one line; adding a `perf-probe` node between `qa-execute` and
+qa-strategist's mission list would be one line; adding a `perf-probe` node between `qa-execute` and
 `qa-report` for a latency complaint, when some available subagent declares that capability; reshaping `qa-execute` to cover one area instead of six.
 
 ### What is enforced and what is convention

@@ -96,7 +96,7 @@ Build the **Changed Files Inventory** — the definitive list of what developmen
      WHERE t.requirement_id='REQ-NNN' AND t.status='done'
      ORDER BY w.task_id, w.id;\n" | tursodb -q -m list "$DB"
    ```
-2. Read the implement tickets for the same requirement — `files` is the architect's declared file
+2. Read the implement tickets for the same requirement — `files` is the strategist's declared file
    set per ticket, which is the other half of the inventory:
    ```bash
    printf "SELECT json_object('task',t.id,'title',t.title,'files',json(t.files))
@@ -280,7 +280,7 @@ created — the orchestrator owns status transitions.
 - Don't fix implementation bugs you notice — declare a `Follow-up: Fix: … | agent: developer`
   work-log entry instead
 - Don't re-read the entire codebase — scope to the Changed Files Inventory
-- **Don't create the reviewer ticket.** The architect already created it, and the review gate
+- **Don't create the reviewer ticket.** The strategist already created it, and the review gate
   (`v_task_actionable`) holds it closed while anything else on the requirement is still open
 - **Don't invent a capability word.** An unknown capability inserts fine, matches nobody, and the
   ticket goes `blocked` — which *does* hold the review gate. **No view will catch it**; check

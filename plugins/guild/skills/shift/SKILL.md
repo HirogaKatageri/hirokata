@@ -257,7 +257,7 @@ Two things change because nobody is watching:
   the questions to `work_log` so they are in the record. They surface at `gate-repairs`.
   **Never answer on the user's behalf.**
 - **A parallel file collision stops the shift.** `guild:check-in` files a bug and keeps going; a
-  shift may not. Two tickets writing the same file means the architect's disjoint-file assertion
+  shift may not. Two tickets writing the same file means the strategist's disjoint-file assertion
   in `task.files` was wrong, and reconciling a tree nobody is watching is not safely
   automatable. File the bug, fail the batch's nodes, **leave the tree exactly as it is**, and end
   the shift with reason `collision`.
@@ -470,7 +470,7 @@ SELECT id, node_key, kind, status FROM graph_node WHERE requirement_id = 'REQ-NN
 ```
 
 Present the plan, its tickets and their file sets, and **every roster gap the plan's Technical
-Decisions records by name** — each is a member the architect proposed and the guild does not
+Decisions records by name** — each is a member the strategist proposed and the guild does not
 have, and approving the plan is also approving the
 recruiting. Then say plainly: *this is yours to approve; `/guild:new-requirement` is where it
 happens.* Stop.

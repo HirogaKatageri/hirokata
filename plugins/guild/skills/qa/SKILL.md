@@ -27,7 +27,7 @@ the feature chain: the qa-strategist plans risk-based coverage, the qa-tester ru
 product and authors end-to-end regression specs, and any defect is filed back as a developer fix
 task paired with a re-verify qa-tester task that empirically confirms the fix.
 
-**QA's two durable outputs are board rows.** The strategist writes the risk map as `coverage`
+**QA's two durable outputs are board rows.** The qa-strategist writes the risk map as `coverage`
 rows; the tester files defects as `bug` rows and stamps the areas it drove. That is what puts
 QA's work in `v_brief`, in the dashboard's Bugs and Coverage views, and in reach of a cadence.
 `.guild/qa/` still holds the charter, the missions, the session logs and the regression
@@ -132,7 +132,7 @@ not tied to a single feature.
 - Unit and integration tests — owned by `test-writer`, planned by `test-planner`.
 ```
 
-## Step 5 — seed the strategist ticket
+## Step 5 — seed the qa-strategist ticket
 
 One ticket, whole body in the one INSERT — there is no ticket file to edit afterwards, and
 anything you leave out stays out.
@@ -205,7 +205,7 @@ QA pass seeded.
   Task: TASK-NNN — QA strategy: {scope} (qa-planning)
   Mode: {full | cadence}
 
-The strategist will map risk and declare tester missions; testers then run the app,
+The qa-strategist will map risk and declare tester missions; testers then run the app,
 author e2e specs, and file any bugs as developer fix tasks.
 
 Run /guild:check-in to execute now, or I can start the work cycle for you.
@@ -273,7 +273,7 @@ SELECT id, area, risk, interval_days, days_since, spec_path FROM v_coverage_due;
 `days_since` is **NULL for an area nobody has ever inspected** — that is not "0 days ago", and
 reporting it as such lies about the state of the product.
 
-The strategist then declares a single qa-tester mission that (a) runs the existing regression
+The qa-strategist then declares a single qa-tester mission that (a) runs the existing regression
 suite from `.guild/qa/regression.md`, and (b) does a focused exploratory pass on exactly those
 areas, filing anything new it finds. **If nothing is due, the pass ends there** — that is the
 cadence working, not failing.

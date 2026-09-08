@@ -106,7 +106,7 @@ The Guild plugin (v7.0.0) provides continuous agent orchestration through a pers
 **The one thing deliberately *not* in the database is the roster.** Who the guild's members are and what each can do is the `capabilities:` frontmatter of the agent files, read at dispatch time across every subagent available to you — this plugin's, your project's `.claude/agents/`, your `~/.claude/agents/`, and every other installed plugin's. A ticket names the capability it needs; adding an agent file that declares it is the whole of hiring, with nothing to sync.
 
 ```
-guild:new-requirement — live 3-way interview (product-owner + architect + you)
+guild:new-requirement — live 3-way interview (project-manager + strategist + you)
     → developers / developer-svelte (parallel waves, disjoint files)
     → test-planner → test-writer (unit & integration)
     → 4 reviewers in parallel → a review report you act on
@@ -182,7 +182,7 @@ or with inline context:
 I need a feature: dark mode toggle for the settings page
 ```
 
-`guild:new-requirement` runs a **live 3-way interview**: the `product-owner` and the `architect` are spawned directly (not queued as tickets), both relay their questions through the orchestrator, and by the time the skill returns the requirement, the implementation plan and every developer / test-planner / reviewer ticket already exist on the board. You do not write the requirement document manually.
+`guild:new-requirement` runs a **live 3-way interview**: the `project-manager` and the `strategist` are spawned directly (not queued as tickets), both relay their questions through the orchestrator, and by the time the skill returns the requirement, the implementation plan and every developer / test-planner / reviewer ticket already exist on the board. You do not write the requirement document manually.
 
 Between the two, the guild offers to place the requirement on a **project** — an existing one, a new project, a new goal *and* its first project, or left unaffiliated. A project can be marked `concurrent` (it runs beside its siblings instead of waiting its turn) and can be cut into its own git worktree. Direction is yours to set: no agent creates a goal or a project on its own.
 
@@ -231,7 +231,7 @@ TASK-003 done: Implement auth service → 2 follow-ups created
 TASK-005 done: Implement login endpoint → 1 follow-up created
 ```
 
-Development runs in **parallel waves** by default: the architect groups dev tickets whose file sets it has verified disjoint, and the orchestrator dispatches each wave concurrently in the shared working tree.
+Development runs in **parallel waves** by default: the strategist groups dev tickets whose file sets it has verified disjoint, and the orchestrator dispatches each wave concurrently in the shared working tree.
 
 ### Reading the board without starting work
 
@@ -250,7 +250,7 @@ The dashboard is one self-contained file — all CSS and JS inline, deterministi
 | `guild:shift` | `check-in` with you taken out of the middle — runs unattended to the next gate, then stops and says why. Never decides a gate | "work a shift", "run unattended" |
 | `guild:brief` | The narrated read of the board — direction, in flight, bugs, what moved, what's next. Read-only | "guild status", "what's the status", "show the board", "where are we", "what changed" |
 | `guild:dashboard` | Build and open `.guild/dashboard.html` — six views, offline, self-contained | "the dashboard", "show the roadmap", "visualize the board", "the activity feed" |
-| `guild:new-requirement` | Live 3-way interview (product-owner + architect + you) that leaves a planned, ticketed requirement on the board | "new requirement", "I need a feature", "I want to build" |
+| `guild:new-requirement` | Live 3-way interview (project-manager + strategist + you) that leaves a planned, ticketed requirement on the board | "new requirement", "I need a feature", "I want to build" |
 | `guild:qa` | Seed the independent QA discipline — risk-mapped coverage, e2e regression specs, bugs filed as rows | "QA the product", "run a QA pass", "build comprehensive e2e tests" |
 | `guild:comprehensive-review` | Run all 4 reviewers in parallel against recent changes | "review my changes", "run comprehensive review", "check all my code" |
 | `guild:create-workflow` | Interactively design and generate automation workflows (GitHub Actions, scripts, Makefiles) | "create a workflow", "generate a workflow", "add a GitHub Actions workflow", "set up automation" |
@@ -267,8 +267,8 @@ Agent-facing skills that specialists pre-load rather than users invoking: `guild
 
 | Agent | Role |
 |-------|------|
-| `guild:product-owner` | Interviews the user live, writes the requirement record |
-| `guild:architect` | Reads the REQ, explores the codebase, writes the PLAN, creates every downstream ticket |
+| `guild:project-manager` | Interviews the user live, writes the requirement record |
+| `guild:strategist` | Reads the REQ, explores the codebase, writes the PLAN, creates every downstream ticket |
 | `guild:developer` | Implements code per plan and requirement |
 | `guild:developer-svelte` | Svelte 5 / SvelteKit specialist — used when tasks touch `.svelte`, `+page.*`, `+layout.*`, `+server.*` files |
 | `guild:test-planner` | Inventories the implemented diff and writes the test plan |

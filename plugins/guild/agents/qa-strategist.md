@@ -10,7 +10,7 @@ skills:
   - guild:qa-artifacts
 description: |
   Use this agent when the guild needs a QA strategy: deciding what quality means
-  for a product, mapping risk, and planning what to test. The strategist surveys
+  for a product, mapping risk, and planning what to test. The qa-strategist surveys
   the running product and its specs, writes the risk map onto the board as `coverage`
   rows, builds an adversarial what-if input matrix, then declares qa-tester missions.
   It is the planning half of the guild's independent QA discipline — it does not write

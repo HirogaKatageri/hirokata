@@ -157,7 +157,7 @@ and the equivalent check is `roster.py`, which reads files rather than this data
 **What it represents.** One goal, one project, one requirement, a plan cut into three implement tickets, six
 tickets, and a `standard` graph instantiated over it with **`gate-plan` still `pending`**. Not
 one line of code has been written and nothing has been approved. This is the state a board is in
-for the minutes between the architect finishing and the guild master answering.
+for the minutes between the strategist finishing and the guild master answering.
 
 **The free text is where the traps live.** `REQ-001`'s title is two lines and **the first line
 ends in a semicolon**; its body is markdown containing a fenced TypeScript block whose lines end
@@ -176,7 +176,7 @@ and rotate the signing key on deploy' | xxd -p | tr -d '\n'
 **Seed SQL — `02-planned.sql`:**
 ```sql
 PRAGMA foreign_keys = ON;
-UPDATE guild_state SET value = 'product-owner' WHERE key = 'actor';
+UPDATE guild_state SET value = 'project-manager' WHERE key = 'actor';
 
 INSERT INTO goal (id, title, body, status, priority, created_at, updated_at)
 VALUES ('GOAL-001', CAST(x'53686970207468652073746f726566726f6e74' AS TEXT), '', 'in-progress', 2,
@@ -190,7 +190,7 @@ INSERT INTO requirement (id, project_id, title, body, status, priority, created_
 VALUES ('REQ-001', 'PROJ-001', CAST(x'48617264656e207468652073657373696f6e20636f6f6b69653a2073657420736563757265203d20747275653b0a616e6420726f7461746520746865207369676e696e67206b6579206f6e206465706c6f79' AS TEXT), CAST(x'232320416363657074616e63650a0a2d205365742d436f6f6b69652063617272696573205365637572652c20487474704f6e6c7920616e642053616d65536974653d4c61780a2d20546865207369676e696e67206b657920726f7461746573206f6e206576657279206465706c6f790a0a60606074730a636f6f6b69652e736563757265203d20747275653b0a636f6f6b69652e73616d6553697465203d20226c6178223b0a6060600a' AS TEXT),
         'todo', 2, '2026-08-01T09:10:00Z', '2026-08-01T09:10:00Z');
 
-UPDATE guild_state SET value = 'architect' WHERE key = 'actor';
+UPDATE guild_state SET value = 'strategist' WHERE key = 'actor';
 
 -- `status='done'` (the document is written) with `approval='pending'` (nobody has ruled) is
 -- exactly the state this fixture is named for.
@@ -338,7 +338,7 @@ SELECT (SELECT COUNT(*) FROM graph_node WHERE requirement_id = 'REQ-001')  AS no
 ```
 
 Three implement tickets, so `standard`'s arithmetic is N+10 nodes and 2N+11 edges: **13 and 17**, exactly
-the numbers `standard.md` §1 tells the architect to check the INSERT against. `gates` is 2 —
+the numbers `standard.md` §1 tells the strategist to check the INSERT against. `gates` is 2 —
 not one, not three. `gates_waiting` is 1 because `gate-repairs` is buried behind four unfinished
 review nodes and an undecided gate nobody can reach yet is not something to ask a human about.
 `not_todo` is 0: nothing has moved.
@@ -960,7 +960,7 @@ The graph is **6 nodes, 5 edges, 1 gate** — invariant, whatever the inspection
 **Seed SQL — `06-maintenance.sql`:**
 ```sql
 PRAGMA foreign_keys = ON;
-UPDATE guild_state SET value = 'architect' WHERE key = 'actor';
+UPDATE guild_state SET value = 'strategist' WHERE key = 'actor';
 
 -- the carrier requirement: unaffiliated, obviously not feature work
 INSERT INTO requirement (id, project_id, title, body, status, priority, created_at, updated_at)
@@ -1204,7 +1204,7 @@ enforces at all.
 Honest limits, so nobody reads a passing fixture as more than it is.
 
 **A fixture cannot assert a judgment.** Whether `reviewer-security`'s finding is *correct*,
-whether the architect's three implement tickets are the right three, whether a mission actually exercised
+whether the strategist's three implement tickets are the right three, whether a mission actually exercised
 the checkout flow or just loaded the page — none of that is in the database, and no query will
 find it. The fixtures can assert that a finding was *filed with a severity and a file and a
 line*; they cannot assert it was worth filing.

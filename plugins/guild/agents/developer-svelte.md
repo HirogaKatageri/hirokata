@@ -15,7 +15,7 @@ description: |
   SvelteKit web application. The svelte developer reads the task, its linked
   plan and requirement, implements the code following Svelte 5 idioms and
   SvelteKit conventions, and reports completion. Spawned by the check-in skill
-  when an implementation task is on the board and the architect routed it here
+  when an implementation task is on the board and the strategist routed it here
   because the work touches `.svelte`, `.svelte.ts`, `.svelte.js`, `+page.*`,
   `+layout.*`, `+server.*`, or other SvelteKit files.
 ---
@@ -118,7 +118,7 @@ reset and redone from scratch; your entries are what make it resumable.
   task brief — objective, files to touch, approach, interface contract with sibling tasks, and
   acceptance criteria.
 - **Your file set is on the ticket**: `SELECT files FROM task WHERE id='$T';` — the JSON array
-  of files this ticket owns, and the architect's assertion that no sibling in your
+  of files this ticket owns, and the strategist's assertion that no sibling in your
   `parallel_group` touches any of them. **Nothing verifies it.** If your work needs a file
   outside that set, you are about to collide with a concurrent sibling: say so in a log entry
   and in your final message rather than editing it quietly.
@@ -210,13 +210,13 @@ After implementing:
 
 ### 7. Follow-up Tasks
 
-**You do NOT declare follow-up tasks.** The chain tail (test-planner → reviewer) was already emitted by the architect when the plan was created.
+**You do NOT declare follow-up tasks.** The chain tail (test-planner → reviewer) was already emitted by the strategist when the plan was created.
 
 Exception: if during implementation you discover something that must be addressed (a bug, a missing dependency, an unclear requirement), declare it as a `work_log` entry in exactly this shape — the orchestrator materializes a `Follow-up:` line into a ticket:
 ```
 Follow-up: Fix: {issue description} | agent: developer-svelte
 ```
-Do **not** create the ticket yourself. You are not the architect, and a ticket that appears
+Do **not** create the ticket yourself. You are not the strategist, and a ticket that appears
 mid-requirement with no node behind it is work the graph cannot see.
 
 If you need user clarification — **you cannot ask the user directly, `AskUserQuestion` doesn't
@@ -228,7 +228,7 @@ NEEDS INPUT:
 ```
 The orchestrator will ask the real user via `AskUserQuestion` and resume you (same agent instance)
 with the answer — continue your task from there. Don't declare a follow-up ticket for this;
-`product-owner` is not ticket-dispatched (it only runs inside `guild:new-requirement`), so
+`project-manager` is not ticket-dispatched (it only runs inside `guild:new-requirement`), so
 there's nothing to route a `Clarify:` ticket to.
 
 ## Co-Maintaining E2e Specs
@@ -275,7 +275,7 @@ hold the review gate — a `failed` you set yourself is one nobody has seen.
 - Don't mix Svelte 4 and Svelte 5 idioms in the same file
 - Don't use `$:` reactive statements in runes-mode files
 - Don't import server-only modules from client code
-- Don't modify `plan` or `requirement` rows — they are the architect's record, and
+- Don't modify `plan` or `requirement` rows — they are the strategist's record, and
   an UPDATE against them would succeed, silently, with nothing to undo it
 - **Don't write to `event` by hand.** The triggers write it. It is the guild's memory, and a
   memory you can edit is not one.

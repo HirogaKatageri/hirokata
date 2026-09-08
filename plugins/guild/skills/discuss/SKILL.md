@@ -140,17 +140,17 @@ Then ask:
 ```
 What's next?
 
-1. Create a requirement — send this to the product owner for refinement
-2. Plan immediately — auto-generate a lightweight requirement doc and hand it to the architect now
+1. Create a requirement — send this to the project manager for refinement
+2. Plan immediately — auto-generate a lightweight requirement doc and hand it to the strategist now
 3. Discuss another subject
 4. Nothing — we're done
 ```
 
-**If the user picks option 1:** invoke the `guild:product-owner` agent, passing the discussion
+**If the user picks option 1:** invoke the `guild:project-manager` agent, passing the discussion
 summary and conclusions as the requirement brief.
 
 **If the user picks option 2:** first generate a concise requirement document from the discussion
-(title, problem statement, goals, constraints, open questions), then invoke the `guild:architect`
+(title, problem statement, goals, constraints, open questions), then invoke the `guild:strategist`
 agent with that document as context. This keeps a paper trail without slowing down the fast path.
 
 **If the user picks option 3:** return to **Mode 1 Step 2** (show the topic map again) or jump

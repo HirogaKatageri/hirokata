@@ -1,6 +1,6 @@
 # The `standard` template — build a requirement
 
-**You are the architect. There is no parser.** You read this page and you write the
+**You are the strategist. There is no parser.** You read this page and you write the
 `graph_node` / `graph_edge` / `gate` rows yourself, with the SQL at the bottom.
 
 **Shape:** approve the plan, then run to completion.
@@ -138,12 +138,12 @@ have to perform (`runbook`). Requirements that produced none of those get a work
 so, which takes a minute and is a legitimate outcome — see the note on `required` below.
 
 **Why it is `required: true`.** A node that may be dropped is a node that gets dropped, and the
-cost is invisible for months and then enormous. The architect may still RESHAPE it — a
+cost is invisible for months and then enormous. The strategist may still RESHAPE it — a
 docs-only requirement might route it to a single `technical` update — but "we'll write it up
 later" is not a reshape, and there is no later.
 
 **It is the only node that writes to the library**, which is why nothing before it needs to
-remember to. The researcher and the architect still write `doc` rows as they go (research
+remember to. The researcher and the strategist still write `doc` rows as they go (research
 findings, decisions taken at plan time); the librarian's job is the sweep at the end that
 catches what they did not.
 
@@ -156,14 +156,14 @@ the same non-null label form one batch. A NULL label means "run me alone".
 
 | node | label written at instantiation | effect |
 |---|---|---|
-| `implement.<TASK-ID>` | the implement ticket's own `parallel_group` | tickets the architect declared disjoint run together |
+| `implement.<TASK-ID>` | the implement ticket's own `parallel_group` | tickets the strategist declared disjoint run together |
 | `review.<agent>` | the literal `'review'` | all four reviewers in one wave |
 | everything else | `NULL` | serial |
 
 `document` is deliberately in "everything else". It runs alone, after everything, and it is the
 last thing the requirement does.
 
-**The disjointness assertion belongs to the architect, not to the database.** `task.files`
+**The disjointness assertion belongs to the strategist, not to the database.** `task.files`
 is where you record which files a ticket owns; if two tickets share a file, give them different
 `parallel_group` values and they serialize. Nothing in the schema checks this for you. If you
 are unsure, use different groups — a wrong serialization costs time, a wrong parallelization
@@ -194,7 +194,7 @@ gates is the only shape that preserves guild-master control.
 
 ## 5. Deviation rules — and why each one exists
 
-The architect may deviate from this template. Every deviation writes a `graph_deviation` row
+The strategist may deviate from this template. Every deviation writes a `graph_deviation` row
 carrying a **non-empty reason**.
 
 ```sql
@@ -207,7 +207,7 @@ VALUES ('REQ-007', 'add-node', 'research',
 
 | rule | why |
 |---|---|
-| A `required: true` node may be **reshaped but never dropped** | Review always happens; *how wide it fans out* is negotiable. Reshaping is a judgement about this requirement. Dropping is a judgement about the guild's standards, which is not the architect's to make. |
+| A `required: true` node may be **reshaped but never dropped** | Review always happens; *how wide it fans out* is negotiable. Reshaping is a judgement about this requirement. Dropping is a judgement about the guild's standards, which is not the strategist's to make. |
 | **A gate may be neither dropped nor added** | §4. `add-gate` is refused outright, whatever the reason. |
 | **Every deviation carries a non-empty reason** | Whitespace-only is empty. A graph with unexplained divergence cannot be diffed against a baseline when a run goes wrong — you end up staring at a bespoke graph with no way to tell intent from accident. |
 | **An `add-node` must name a capability some available subagent declares** | Otherwise you get a graph that cannot run: a node nobody can be matched to, discovered at dispatch time in the middle of a shift. **Nothing in SQL can check this** — the roster is the agent files. Check with `roster.py --covers` before you insert (§8). |
@@ -410,7 +410,7 @@ WHERE n.requirement_id = 'REQ-007'
 ORDER BY batch, n.id;
 ```
 
-`done` **and** `skipped` both count as finished. A node the architect deliberately skipped must
+`done` **and** `skipped` both count as finished. A node the strategist deliberately skipped must
 not hold its successors forever; that is the graph's spelling of a waived task. Note what a waiver
 actually is on the ticket side: `v_failed_tasks.waived` is **derived from a `Skipped by user…`
 prefix on a work-log line**, not stored in a column, so a stray log line can look like one. The
