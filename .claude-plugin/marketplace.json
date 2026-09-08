@@ -11,8 +11,8 @@
     {
       "name": "software",
       "source": "./plugins/software-project",
-      "version": "1.0.5",
-      "description": "Three focused skills for planning and committing software work: an 8-phase clean architecture vocabulary for classifying tasks (categorize-task), a planner that splits a master plan into per-phase plan files organized by feature track with complexity scores (split-plan), and an interactive Conventional Commits generator that groups your changes and writes the messages (conventional-commit). The orchestration half of this plugin moved to the guild plugin in v1.0.5.",
+      "version": "1.1.0",
+      "description": "Four focused skills for planning, committing and reporting on software work: an 8-phase clean architecture vocabulary for classifying tasks (categorize-task), a planner that splits a master plan into per-phase plan files organized by feature track with complexity scores (split-plan), an interactive Conventional Commits generator that groups your changes and writes the messages (conventional-commit), and a daily handoff writer that gathers the last 24 hours of pull requests, review comments, AI coding sessions and uncommitted work into one plain-language status document (daily-handoff).",
       "author": {
         "name": "Gian Patrick Quintana",
         "email": "gian.quintana@hirokata.dev"
@@ -25,7 +25,10 @@
         "conventional-commits",
         "commits",
         "phases",
-        "task-classification"
+        "task-classification",
+        "handoff",
+        "status-report",
+        "daily-summary"
       ]
     },
     {
