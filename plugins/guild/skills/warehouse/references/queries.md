@@ -168,7 +168,7 @@ A new plan starts `approval = 'pending'`, and **nothing is built until a human r
 yes* — so move them separately:
 
 ```sql
--- the architect has finished drafting. This does NOT approve anything.
+-- the strategist has finished drafting. This does NOT approve anything.
 UPDATE plan SET status = 'done' WHERE id = 'PLAN-001' RETURNING id, status, approval;
 
 -- the user said yes. Record WHO ruled — the trigger uses it as the event's actor.
@@ -178,7 +178,7 @@ UPDATE plan
  WHERE id = 'PLAN-001'
 RETURNING id, approval, approved_by;
 
--- rejected sends it back to the architect. The plan row stays; it is the same plan.
+-- rejected sends it back to the strategist. The plan row stays; it is the same plan.
 UPDATE plan
    SET approval = 'rejected', approved_by = 'user',
        approved_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), status = 'in-progress'
@@ -210,7 +210,7 @@ SELECT 'TASK-' || printf('%03d', (SELECT COALESCE(MAX(CAST(substr(id, instr(id,'
 RETURNING id;
 ```
 
-`files` is the JSON array of paths this ticket owns — the architect's disjointness assertion
+`files` is the JSON array of paths this ticket owns — the strategist's disjointness assertion
 for everything sharing its `parallel_group`. Nothing verifies it. Pass `'[]'` for tickets that
 touch no bounded file set (test-plan, review).
 
@@ -269,7 +269,7 @@ no `nit` — a bug is not a nit.
 ```sql
 INSERT INTO doc (slug, title, body, kind, status, area, source, created_at, updated_at)
 VALUES ('adr-session-store', 'Sessions live in Redis',
-        CAST(x'<hex-body>' AS TEXT), 'decision', 'current', 'auth', 'architect',
+        CAST(x'<hex-body>' AS TEXT), 'decision', 'current', 'auth', 'strategist',
         strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 ON CONFLICT(slug) DO UPDATE SET
   title      = excluded.title,
@@ -316,7 +316,7 @@ instead of a dangling edge** — the `FROM` clause *is* the check.
 -- this decision governs REQ-004. If REQ-004 does not exist, nothing is written
 INSERT INTO knowledge_edge (rel, from_type, from_id, to_type, to_id, note, created_by, created_at)
 SELECT 'decides', 'doc', 'adr-session-store', 'requirement', r.id,
-       CAST(x'<hex-note>' AS TEXT), 'architect', strftime('%Y-%m-%dT%H:%M:%SZ','now')
+       CAST(x'<hex-note>' AS TEXT), 'strategist', strftime('%Y-%m-%dT%H:%M:%SZ','now')
   FROM requirement r WHERE r.id = 'REQ-004'
 RETURNING id;
 ```
@@ -351,14 +351,14 @@ destroys the record of what was believed and substitutes a note about it.
 -- 1. the new decision, as its own document
 INSERT INTO doc (slug, title, body, kind, status, area, source, created_at, updated_at)
 VALUES ('adr-session-store-v2', 'Sessions move to Postgres',
-        CAST(x'<hex-body>' AS TEXT), 'decision', 'current', 'auth', 'architect',
+        CAST(x'<hex-body>' AS TEXT), 'decision', 'current', 'auth', 'strategist',
         strftime('%Y-%m-%dT%H:%M:%SZ','now'), strftime('%Y-%m-%dT%H:%M:%SZ','now'))
 RETURNING slug;
 
 -- 2. the edge, which is what actually retires the old one
 INSERT INTO knowledge_edge (rel, from_type, from_id, to_type, to_id, note, created_by, created_at)
 SELECT 'supersedes', 'doc', 'adr-session-store-v2', 'doc', d.slug,
-       CAST(x'<hex-reason>' AS TEXT), 'architect', strftime('%Y-%m-%dT%H:%M:%SZ','now')
+       CAST(x'<hex-reason>' AS TEXT), 'strategist', strftime('%Y-%m-%dT%H:%M:%SZ','now')
   FROM doc d WHERE d.slug = 'adr-session-store'
 RETURNING id;
 

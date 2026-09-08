@@ -16,6 +16,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Changed (BREAKING)
+- **`product-owner` is now `project-manager`; `architect` is now `strategist`.** The roles are
+  unchanged — the names were. "Product owner" and "architect" are software job titles, and the
+  guild is meant to be a tool for assembling a team for any purpose, not a coding tool with a
+  coding team in it. `project-manager` and `strategist` name what the roles actually do —
+  gather what is wanted, and decide how the work is shaped — in words a marketing or strategy
+  team would also recognise.
+- **`subagent_type` changed with them**: `guild:product-owner` → `guild:project-manager`,
+  `guild:architect` → `guild:strategist`. Any project pinning a ticket to `agent = 'architect'`
+  or `'product-owner'` must repin it; nothing migrates a pin, and an unknown pin dispatches
+  nobody. `SELECT id, agent FROM task WHERE agent IN ('architect','product-owner')` is the check.
+- **Capability words are UNCHANGED** — `strategist` still declares `architecture` and
+  `project-manager` still declares `requirements`. Renaming those would strand every
+  `task_capability` row on every live board, and the capability vocabulary is a separate
+  question from the roster's names. It is still an open one: `architecture` is a software word
+  for what is really "how the work is shaped".
+
+### Fixed
+- **Disambiguated `strategist` from `qa-strategist`.** The QA discipline already had a
+  `qa-strategist`, and its documents referred to it in prose as "the strategist". With a
+  top-level `strategist` now existing, those readings were ambiguous, so every bare mention in
+  `skills/qa/`, `skills/qa-artifacts/`, `agents/qa-tester.md`, `agents/qa-strategist.md` and
+  `templates/maintenance.md` is now written `qa-strategist` in full.
+
+### Note
+- **`CHANGELOG.md` and `docs/v5-design.md` were deliberately not rewritten.** Both are records of
+  what was true when they were written, and the guild does not edit history to make the present
+  tidy — the same rule that governs a superseded decision page. Entries below still say
+  `architect` and `product-owner`, correctly.
+
+---
+
 ## [8.1.2] - 2026-09-07
 
 Seven defects found by running the guild against a real product for three days, then filed on

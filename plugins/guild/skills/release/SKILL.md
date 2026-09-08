@@ -221,7 +221,7 @@ then disagrees with the live one. The slug always resolves to the current thinki
 **Never snapshot the library or the QA discipline.** `doc` rows, `doc_revision` rows,
 `knowledge_edge` rows, `coverage` rows, `.guild/docs/` and `.guild/qa/` are evergreen:
 researcher findings, business rules, the decision log, the risk map and the regression manifest
-all persist across releases so the next architect can reuse them.
+all persist across releases so the next strategist can reuse them.
 
 ## Step 7 — record the release on the board
 

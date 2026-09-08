@@ -94,7 +94,7 @@ because several projects under one goal may be in flight at once. Join
 **`requirement`** — the unit the guild master asks for. `body` holds the full REQ markdown.
 `project_id` is **nullable**: unaffiliated work is legal and normal.
 
-**`plan`** — the architect's implementation plan for a requirement. `task_id` is optional
+**`plan`** — the strategist's implementation plan for a requirement. `task_id` is optional
 and means "a plan written FOR one ticket" rather than for the whole requirement.
 
 A plan carries **two independent states**, and conflating them was the old shape's worst
@@ -102,8 +102,8 @@ loss of information:
 
 | column | question it answers |
 |---|---|
-| `status` | *is the document written?* `todo → in-progress → done`. The architect's drafting lifecycle. It says nothing about whether anybody agreed. |
-| `approval` | *did the user say yes?* `pending → approved \| rejected`. The architect writes the plan; a **human** rules on it, and nothing is built until they do. |
+| `status` | *is the document written?* `todo → in-progress → done`. The strategist's drafting lifecycle. It says nothing about whether anybody agreed. |
+| `approval` | *did the user say yes?* `pending → approved \| rejected`. The strategist writes the plan; a **human** rules on it, and nothing is built until they do. |
 
 `approved_by` and `approved_at` record the ruling. `gate_node_id` links the plan to the
 `gate-plan` node carrying the same decision, so a reader can go from either end — but
@@ -131,7 +131,7 @@ loud — the blocked task sits on the board naming the capability nobody has.
 
 Two agent columns, and they are different things:
 
-- **`agent`** — the PIN, a member the architect named on the ticket, by the `name` in that
+- **`agent`** — the PIN, a member the strategist named on the ticket, by the `name` in that
   agent's frontmatter. Optional. When set, the dispatcher spawns it and **does not run the
   capability match at all**.
 - **`claimed_by`** — who actually took it. Set it with `claimed_at` when you claim.
@@ -142,7 +142,7 @@ agent file is long gone still reads correctly on an old ticket, which is the poi
 `parallel_group` groups tickets that dispatch together (`v_batch`); `node_key` is the
 back-reference to the template node that produced the ticket. **`files`** is a JSON array of
 the paths this ticket owns, and **the disjointness of those sets across a `parallel_group` is
-an assertion by the architect, not a constraint** — it is the promise that lets the group run
+an assertion by the strategist, not a constraint** — it is the promise that lets the group run
 concurrently in one working tree, and nothing verifies it.
 
 **`task_dependency`** — **direct predecessors only.** There is no transitive closure
@@ -361,7 +361,7 @@ snapshots the old body on every body change, so documentation history needs no d
 from anybody. `knowledge_edge` is instrumented on INSERT *and* DELETE — unlike `graph_edge`,
 it is not structure but an assertion somebody made, and retracting one is as much a decision
 as making it. Deliberately *not* instrumented: `task_capability` (the
-architect rewrites a ticket's whole set at once and it would bury the feed), `graph_node` inserts (only status changes
+strategist rewrites a ticket's whole set at once and it would bury the feed), `graph_node` inserts (only status changes
 mean something moved), and pure-structure tables (`graph_edge`, `task_dependency`,
 `inspection_coverage`).
 

@@ -309,7 +309,7 @@ query until its interval elapses again.
 
 If your run also established the area's primary committed spec, record it on the row so the board
 agrees with the repo — and update **only** that column, so you cannot flatten the risk level or
-the notes the strategist wrote:
+the notes the qa-strategist wrote:
 
 ```bash
 { printf "PRAGMA foreign_keys = ON;\n"
@@ -319,7 +319,7 @@ the notes the strategist wrote:
 } | tursodb -q -m list "$DB"
 ```
 
-If the area has no row at all yet (you found a surface the strategist never mapped), INSERT one —
+If the area has no row at all yet (you found a surface the qa-strategist never mapped), INSERT one —
 `id`, `area`, `risk`, `spec_path`, `notes` — rather than skipping it. An area outside the table is
 an area the guild will never notice is unguarded.
 
@@ -390,7 +390,7 @@ makes the suite *accumulate* rather than reset.
 - **Don't stamp `last_inspected_at` for an area you did not drive.** A false stamp hides that
   area from every "what is due" query until its interval elapses again.
 - **Don't UPDATE the whole `coverage` row when you only mean to set `spec_path`.** Naming a
-  column you did not intend to change is how the strategist's risk level quietly becomes yours.
+  column you did not intend to change is how the qa-strategist's risk level quietly becomes yours.
 - Don't put committed specs under `.guild/` — they live in the repo's e2e dir and
   run in CI. `.guild/qa/` holds the missions, sessions, charter and regression manifest.
 - **Don't write to `event` by hand.** The triggers write it. It is the guild's memory, and a

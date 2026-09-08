@@ -374,7 +374,7 @@ different time:
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers implement,rust
 ```
 
-run by the architect at plan time (per ticket) and by the dispatcher at dispatch time. **State
+run by the strategist at plan time (per ticket) and by the dispatcher at dispatch time. **State
 that plainly when G5 passes** — a green G5 now means "every ticket asks an answerable question",
 not "somebody can answer it".
 
@@ -445,7 +445,7 @@ ruled on a failure. This is convention item 2 in the schema header — nothing p
 so this assertion is the only thing that reports it.
 
 **`task-built-on-unapproved-plan` asks only about the IMPLEMENTATION plan** (`p.task_id IS
-NULL`), and that scoping is load-bearing. A requirement has two plans: the architect's, which
+NULL`), and that scoping is load-bearing. A requirement has two plans: the strategist's, which
 `gate-plan` puts in front of the guild master, and the test-planner's, which an agent writes
 *after* that gate. Nothing in the process approves a test plan — no node, no gate, no step in any
 skill — because there is nothing left to decide: the direction was approved at `gate-plan` and the
@@ -763,7 +763,7 @@ Named honestly, because a proxy assertion here would convert an open question in
   signal is indirect and not an assertion: an in-flight requirement whose `v_ready_nodes` is empty
   and whose gates are all decided is either finished or looping. Distinguishing the two is a
   review duty.
-- **Whether concurrent tickets touch disjoint files.** `task.files` is the architect's assertion.
+- **Whether concurrent tickets touch disjoint files.** `task.files` is the strategist's assertion.
   §4 checks the declared sets against each other, which catches a *stated* overlap — it cannot
   catch a ticket whose file list is simply wrong or incomplete.
 - **Whether a `failed` task was genuinely adjudicated.** The waiver is a work-log line beginning
@@ -783,8 +783,8 @@ The `standard` template, end to end.
 ### Trigger
 
 `guild:new-requirement` — the user asks for a feature ("add a requirement", "I need a feature",
-"I want to build…"). The skill runs a live three-way interview between the product-owner, the
-architect and the user, and ends at `gate-plan` without building anything. Approval at that gate
+"I want to build…"). The skill runs a live three-way interview between the project-manager, the
+strategist and the user, and ends at `gate-plan` without building anything. Approval at that gate
 is what releases the rest of the flow to `guild:check-in` or `guild:shift`.
 
 ### Preconditions
@@ -806,14 +806,14 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py"
 
 **P4.b is not SQL**, and that is the point: it reads the agent files directly, which is the
 only place the answer is true. An empty result means no subagent
-declares any capability — every unpinned ticket the architect writes will go `blocked`.
+declares any capability — every unpinned ticket the strategist writes will go `blocked`.
 
 P4.c must be a **separate round trip.** A failing statement does not stop a tursodb script and
 `COMMIT` still commits, so a guard in the same script as the INSERTs is not a guard.
 
 ### Expected sequence
 
-1. **Interview.** The orchestrator spawns the product-owner and the architect and moderates.
+1. **Interview.** The orchestrator spawns the project-manager and the strategist and moderates.
    Nothing is written to the board yet.
 2. **Create the requirement**, `status = 'todo'`, body as `CAST(x'…' AS TEXT)`. Id derived inside
    the INSERT with `printf('%03d', COALESCE(MAX(…),0)+1)`, never hand-assigned.
@@ -824,11 +824,11 @@ P4.c must be a **separate round trip.** A failing statement does not stop a turs
    at `gate-plan`.
 5. **Create the tickets**, all at `todo`, each with its `task_capability` rows or a pinned
    `agent`, `files` as a JSON array — the disjointness assertion that parallel dispatch depends
-   on — and `parallel_group` where the architect declared a wave.
+   on — and `parallel_group` where the strategist declared a wave.
 6. **Instantiate the graph** from `templates/standard.md`: nodes, edges, two gate rows, and the
    `guild_state` key `graph-template:REQ-NNN`. With *N* implement tickets this is **N + 10 nodes
    and 2N + 11 edges** — for two tickets, 12 and 15.
-7. **Validate the graph read-only** and send failures back to the architect. Do not patch a graph
+7. **Validate the graph read-only** and send failures back to the strategist. Do not patch a graph
    by hand: deviations are its record, and a graph the orchestrator patched has a shape nobody
    justified.
 8. **Present `gate-plan` and stop.** On approval, two writes in this order: the `gate` row, then
@@ -2218,7 +2218,7 @@ ORDER BY breach, row_id;
 
 **No clause here is scoped to a requirement, and that is the point.** Two inspections on two
 carriers still share one machine. A `parallel_group` on a `qa-execute` node is not a deviation
-an architect may justify — it is a defect, which is why it is asserted as an absolute rather than
+an strategist may justify — it is a defect, which is why it is asserted as an absolute rather than
 excused by a `graph_deviation` row the way an added node would be.
 
 *Verified to fire:* claiming `TASK-904` alongside `TASK-903` returns two

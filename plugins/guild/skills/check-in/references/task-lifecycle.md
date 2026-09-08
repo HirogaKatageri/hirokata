@@ -16,7 +16,7 @@ SELECT objective FROM task WHERE id = 'TASK-001';
 SELECT body      FROM task WHERE id = 'TASK-001';
 ```
 
-**`agent` and `claimed_by` are different things.** `agent` is the **pin** the architect wrote
+**`agent` and `claimed_by` are different things.** `agent` is the **pin** the strategist wrote
 on the ticket — optional, and when set it wins the match outright. `claimed_by` is who
 actually took it, written with `claimed_at` at dispatch.
 
@@ -120,7 +120,7 @@ SELECT id, who, waived, reason, title FROM v_failed_tasks;
 
 ## Parallel groups
 
-`parallel_group` is a **safety assertion by the architect**, not a dependency graph: "these
+`parallel_group` is a **safety assertion by the strategist**, not a dependency graph: "these
 tickets touch disjoint files and neither needs the other's output". The disjointness lives in
 `task.files` and **nothing verifies it** — a collision found afterwards is a bug filed
 for the repairs gate.

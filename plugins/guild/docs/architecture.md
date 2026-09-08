@@ -84,7 +84,7 @@ The honest half. Nothing enforces these — they are documented in the `schema.s
 3. **"A `failed` task is adjudicated when it is waived."** The waiver is a *prefix* on a work-log
    line, matched with `LIKE`. A marker, not a column. A stray log line can look like one.
 4. **"Concurrently dispatched tickets touch disjoint files."** `task.files` is a JSON array. The
-   disjointness across a `parallel_group` is an assertion by the architect; nothing checks it.
+   disjointness across a `parallel_group` is an assertion by the strategist; nothing checks it.
 5. **"A ticket's capabilities name something a real agent declares."** The vocabulary is the agent
    files, so no SQL check can reach it at all — an unknown capability inserts fine and matches
    nobody. The dispatcher makes it speak by writing the ticket `blocked`; skip that write and the

@@ -28,7 +28,7 @@ Three properties the compiler depends on:
 - **Concurrency is a decision you make from the template plus the data**, per SKILL.md 3.2 —
   the template's `parallel:` is the ceiling, `group` is the grouping, and no two `serial = 1`
   members may share a concurrent batch.
-- **`task` and `agent` may be empty.** An unbound node is ordinary — the architect binds a
+- **`task` and `agent` may be empty.** An unbound node is ordinary — the strategist binds a
   ticket only where the correspondence is unambiguous. You resolve those yourself (3.3) and
   record the binding with `UPDATE graph_node SET status='running', task_id='TASK-NNN'`.
 

@@ -42,8 +42,8 @@ NOT live here; they live in the project's real e2e dir and run in CI.
 
 ```
 .guild/qa/
-  charter.md            # strategist: what quality means + where the oracle comes from
-  missions/             # strategist: one MISSION-{slug}.md per quality area
+  charter.md            # qa-strategist: what quality means + where the oracle comes from
+  missions/             # qa-strategist: one MISSION-{slug}.md per quality area
   sessions/             # tester: one SESSION-{slug}-{date}.md per run
   regression.md         # tester: index of committed specs in the repo
 ```

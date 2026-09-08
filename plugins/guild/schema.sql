@@ -303,9 +303,9 @@ CREATE TABLE IF NOT EXISTS requirement (
 
 -- ---- STATUS AND APPROVAL ARE TWO DIFFERENT QUESTIONS --------------------------------
 --
---   status    IS THE DOCUMENT WRITTEN? todo -> in-progress -> done. It is the architect's
+--   status    IS THE DOCUMENT WRITTEN? todo -> in-progress -> done. It is the strategist's
 --             drafting lifecycle and says nothing about whether anybody agreed with it.
---   approval  DID THE USER SAY YES? pending -> approved | rejected. The architect writes
+--   approval  DID THE USER SAY YES? pending -> approved | rejected. The strategist writes
 --             the plan, a HUMAN rules on it, and nothing is built until they do.
 --
 -- Collapsing them into one column was the old shape and it could not tell 'finished
@@ -371,7 +371,7 @@ CREATE TABLE IF NOT EXISTS task (
                  CHECK (status IN ('todo', 'in-progress', 'done',
                                    'failed', 'blocked', 'waived')),
   priority       INTEGER NOT NULL DEFAULT 3 CHECK (priority BETWEEN 1 AND 5),
-  -- `agent` is the PIN: a subagent the architect named on the ticket, by the `name` in
+  -- `agent` is the PIN: a subagent the strategist named on the ticket, by the `name` in
   -- that agent's frontmatter. Optional. When it is set the dispatcher spawns it and does
   -- NOT run the capability match at all — a pin is a decision that has already been made.
   -- NOT a foreign key, and it cannot be one: the roster is a directory of markdown files.
@@ -459,7 +459,7 @@ CREATE TABLE IF NOT EXISTS graph_node (
                  -- what you are ABOUT to run.
                  --
                  -- `done` AND `skipped` BOTH COUNT AS FINISHED for a successor's
-                 -- readiness. A node the architect deliberately skipped must not hold its
+                 -- readiness. A node the strategist deliberately skipped must not hold its
                  -- successors forever — `skipped` is the graph's spelling of `waived`.
   UNIQUE (requirement_id, node_key, task_id)
 ) STRICT;
@@ -1241,7 +1241,7 @@ SELECT g.node_id       AS node_id,
 -- ------------------------------------------------------------------------------------
 -- v_plans_pending_approval — the plans a HUMAN still has to rule on
 -- ------------------------------------------------------------------------------------
--- The architect writes a plan. Nothing is built until the user approves it, and this is
+-- The strategist writes a plan. Nothing is built until the user approves it, and this is
 -- the queue that says who is waiting. A plan still at `status = 'todo'` is not listed:
 -- it has not been drafted yet, so there is nothing to agree with.
 --
@@ -2036,7 +2036,7 @@ UNION ALL SELECT 28, 'work_undocumented',   CAST((SELECT COUNT(*) FROM v_undocum
 --     guard is written that way rather than relying on the default being OFF.
 --
 -- WHAT IS DELIBERATELY NOT INSTRUMENTED, and why:
---   * `task_capability` — the architect writes the whole set at plan time and rewrites it
+--   * `task_capability` — the strategist writes the whole set at plan time and rewrites it
 --     wholesale when a ticket is re-scoped, so instrumenting it would bury the feed under
 --     churn that says nothing. The `task` row itself is instrumented instead.
 --   * `graph_node` INSERTS — instantiating one requirement's graph writes dozens of nodes

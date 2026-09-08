@@ -98,7 +98,7 @@ reset and redone from scratch; your entries are what make it resumable.
   task brief — objective, files to touch, approach, interface contract with sibling tasks, and
   acceptance criteria. In most cases it is all the plan context you need.
 - **Your file set is on the ticket**: `SELECT files FROM task WHERE id='$T';` — the JSON array
-  of files this ticket owns, and the architect's assertion that no sibling in your
+  of files this ticket owns, and the strategist's assertion that no sibling in your
   `parallel_group` touches any of them. **Nothing verifies it.** If your work needs a file
   outside that set, you are about to collide with a concurrent sibling: say so in a log entry
   and in your final message rather than editing it quietly.
@@ -108,7 +108,7 @@ reset and redone from scratch; your entries are what make it resumable.
 - **Requirement**: `SELECT body FROM requirement WHERE id='REQ-NNN';` — ONLY if your acceptance
   criteria reference user stories or constraints the objective does not restate.
 
-If the ticket's `objective` is empty (non-architect-spawned work), fall back to the full PLAN-NNN.
+If the ticket's `objective` is empty (non-strategist-spawned work), fall back to the full PLAN-NNN.
 
 ### 3. Explore the Codebase
 
@@ -171,13 +171,13 @@ After implementing:
 
 ### 6. Follow-up Tasks
 
-**You do NOT declare follow-up tasks.** The chain tail (test-planner → reviewer) was already emitted by the architect when the plan was created.
+**You do NOT declare follow-up tasks.** The chain tail (test-planner → reviewer) was already emitted by the strategist when the plan was created.
 
 Exception: If during implementation you discover something that must be addressed (a bug, a missing dependency, an unclear requirement), declare it as a `work_log` entry in exactly this shape — the orchestrator materializes a `Follow-up:` line into a ticket:
 ```
 Follow-up: Fix: {issue description} | agent: developer
 ```
-Do **not** create the ticket yourself. You are not the architect, and a ticket that appears
+Do **not** create the ticket yourself. You are not the strategist, and a ticket that appears
 mid-requirement with no node behind it is work the graph cannot see.
 
 Or if you need user clarification — **you cannot ask the user directly, `AskUserQuestion` doesn't
@@ -189,7 +189,7 @@ NEEDS INPUT:
 ```
 The orchestrator will ask the real user via `AskUserQuestion` and resume you (same agent instance)
 with the answer — continue your task from there. Don't declare a follow-up ticket for this;
-`product-owner` is not ticket-dispatched (it only runs inside `guild:new-requirement`), so
+`project-manager` is not ticket-dispatched (it only runs inside `guild:new-requirement`), so
 there's nothing to route a `Clarify:` ticket to.
 
 ## Co-Maintaining E2e Specs
@@ -234,7 +234,7 @@ hold the review gate — a `failed` you set yourself is one nobody has seen.
 - Don't create documentation files (*.md, README)
 - Don't refactor code outside your task's scope
 - Don't add unnecessary abstractions or utilities
-- Don't modify `plan` or `requirement` rows — they are the architect's record, and
+- Don't modify `plan` or `requirement` rows — they are the strategist's record, and
   an UPDATE against them would succeed, silently, with nothing to undo it
 - **Don't write to `event` by hand.** The triggers write it. It is the guild's memory, and a
   memory you can edit is not one.

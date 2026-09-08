@@ -116,7 +116,7 @@ no question the dispatcher can answer — it will sit on the board forever.
 
 Not checked here: whether a declared capability is one some agent file actually
 declares. The roster is not in the database, so no SQL assertion can reach it —
-`roster.py --covers` is the check, and it is the architect's to run at plan time.
+`roster.py --covers` is the check, and it is the strategist's to run at plan time.
 ```
 
 - **Print the offending rows verbatim.** Never compress a failure into a count; the rows

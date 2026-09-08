@@ -60,7 +60,7 @@ bash. Nothing polices them now — they are documented in `schema.sql` and nowhe
 3. **"A `failed` task is adjudicated when the orchestrator waives it."** The waiver lives in a
    work-log line's *prefix*, matched with `LIKE`. It is a marker, not a column.
 4. **"Concurrently dispatched tickets touch disjoint files."** `task.files` is a JSON array; the
-   disjointness across a `parallel_group` is an assertion by the architect. Nothing checks it.
+   disjointness across a `parallel_group` is an assertion by the strategist. Nothing checks it.
 5. **"A ticket's capabilities name something a real agent declares."** The vocabulary is the agent
    files, not a table, so no SQL check can reach it — a misspelled tag inserts fine and matches
    nobody. The dispatcher is what makes it speak, by writing the ticket `blocked`.
@@ -175,7 +175,7 @@ goal → project → requirement → plan → task
 A goal is a high-level target. A project is a named group of work that has to be done to reach it —
 it can run beside its sibling projects (`concurrent`) and can be cut into its own git worktree
 (`isolation`, `worktree_path`). A requirement is one unit of shipped value. A plan is how the
-architect intends to build it, and **nothing is built until a human approves it** (`plan.approval`,
+strategist intends to build it, and **nothing is built until a human approves it** (`plan.approval`,
 separate from `plan.status`, which only says whether the document is written). A task is a bounty a
 guild member can claim, carrying the file set it owns in `files`.
 
@@ -305,7 +305,7 @@ the price of moving the vocabulary into the engine, and it is a real one.
 | `guild:shift` | `check-in` with the human taken out of the middle. Runs unattended to the next gate, then stops and says why. Never decides a gate — not even "the obvious ones". |
 | `guild:brief` | Where the project stands: direction, in flight, bugs, coverage due, what moved. Read-only. |
 | `guild:dashboard` | Renders the board as one self-contained offline HTML page. Read-only. |
-| `guild:new-requirement` | A live 3-way interview between the product-owner, the architect and you. Writes the requirement, the plan, the tickets **and the execution graph**, then ends at `gate-plan` — nothing is built until you approve. |
+| `guild:new-requirement` | A live 3-way interview between the project-manager, the strategist and you. Writes the requirement, the plan, the tickets **and the execution graph**, then ends at `gate-plan` — nothing is built until you approve. |
 | `guild:qa` | Seeds a QA pass onto the board: a qa-strategist plans risk-based coverage, then qa-testers run the app, author Playwright specs, and file bugs back to the board. |
 | `guild:comprehensive-review` | Multi-dimensional pre-PR review — requirements compliance, coverage, edge cases, architecture, security. |
 | `guild:verify-and-fix` | Diagnoses a reported error end to end, then applies a test-driven fix. |
@@ -337,8 +337,8 @@ to first.
 
 | Agent | Model | Capabilities | Role |
 |-------|-------|--------------|------|
-| `architect` | Opus | `architecture` | Explores the codebase, writes the implementation plan and its tickets, composes the execution graph. Recommends direction; never sets it. |
-| `product-owner` | Sonnet | `requirements` | Interviews you live alongside the architect, writes the requirement record. |
+| `strategist` | Opus | `architecture` | Explores the codebase, writes the implementation plan and its tickets, composes the execution graph. Recommends direction; never sets it. |
+| `project-manager` | Sonnet | `requirements` | Interviews you live alongside the strategist, writes the requirement record. |
 | `developer` | Sonnet | `implement`, `backend`, `frontend` | Implements code per plan and requirement. |
 | `developer-svelte` | Sonnet | `implement`, `frontend`, `svelte`, `sveltekit` | Svelte 5 / SvelteKit specialist, pre-loaded with four reference skills. |
 | `test-planner` | Sonnet | `test-planning` | Inventories the implemented diff and writes the test plan. |

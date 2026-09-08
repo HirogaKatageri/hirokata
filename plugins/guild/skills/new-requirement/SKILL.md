@@ -4,8 +4,8 @@ description: >
   This skill should be used when the user asks to "add a requirement",
   "new requirement", "I need a feature", "add to the guild", "create requirement",
   "queue a feature", "I want to build", or wants to add a new work item to the
-  guild board. Runs a live 3-way interview between the product-owner, the
-  architect, and the user, places the requirement in the guild's direction (or
+  guild board. Runs a live 3-way interview between the project-manager, the
+  strategist, and the user, places the requirement in the guild's direction (or
   deliberately leaves it unaffiliated), then writes the requirement, the
   implementation plan, the developer/test-planner/reviewer tickets,
   and the requirement's execution graph — and ends at `gate-plan`, where the guild
@@ -23,7 +23,7 @@ arguments:
 
 # New Requirement — Add Work to the Guild
 
-Run the product-owner and architect through a live interview with the user, then hand the board
+Run the project-manager and strategist through a live interview with the user, then hand the board
 a fully-planned requirement: the requirement itself, an implementation plan, every
 ticket needed to build it, and the **execution graph** that says what runs when. Unlike the rest
 of the guild's pipeline, none of this is ticket-dispatched — you (the orchestrator) spawn both
@@ -78,7 +78,7 @@ Ask for whichever was not supplied:
 
 ```
 What's the title of this requirement? (e.g., "User Authentication", "Payment Integration")
-Briefly describe what you need. The product-owner will dig into full details in the interview.
+Briefly describe what you need. The project-manager will dig into full details in the interview.
 ```
 
 This is a seed — the interview in Step 5 gathers the real detail.
@@ -87,7 +87,7 @@ This is a seed — the interview in Step 5 gathers the real detail.
 
 Goals and projects are the layer *above* requirements, and a requirement's project is what makes
 it appear under Direction in the brief and on the dashboard's roadmap. Read what exists now — you
-need it twice: as context for the product-owner (Step 5) and to build the placement question
+need it twice: as context for the project-manager (Step 5) and to build the placement question
 (Step 6.5).
 
 ```sql
@@ -106,9 +106,9 @@ where the user makes it.
 
 ### 2.6. Read the Roster
 
-The architect writes tickets that name a **capability**, not a member. **There is nothing to
+The strategist writes tickets that name a **capability**, not a member. **There is nothing to
 sync** — the roster is the frontmatter of the agent files, not a table — but you do have to
-read it, so you can tell the architect what the guild can actually do:
+read it, so you can tell the strategist what the guild can actually do:
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py"
@@ -119,10 +119,10 @@ across this plugin, the project's `.claude/agents/`, the user's `~/.claude/agent
 other installed plugin. **The union of that last column is the whole vocabulary** — there is no
 seed list, and a word is legal exactly when some agent declares it.
 
-**Why this is not optional:** the architect has to aim its `task_capability` rows at words
+**Why this is not optional:** the strategist has to aim its `task_capability` rows at words
 somebody actually declares. A tag nobody has inserts fine and then **matches nobody, silently**
 — no view can catch it, because the database cannot see the agent files. Pass the members and
-their capabilities into the architect's prompt (Step 3) so it is aiming at the real roster
+their capabilities into the strategist's prompt (Step 3) so it is aiming at the real roster
 rather than at the table in its own instructions.
 
 The script also flags members declaring **no** capabilities. Those can still be pinned by name;
@@ -130,7 +130,7 @@ they simply never win a capability match.
 
 ### 3. Do NOT Create the Requirement Yet
 
-**The product-owner creates it, at the end of the interview**, in one INSERT that carries the
+**The project-manager creates it, at the end of the interview**, in one INSERT that carries the
 whole document in `body` (hex transport — a requirement body quotes code, and a `;` ending a
 line would split the statement). It then reports the REQ id back to you, and everything
 downstream uses that id.
@@ -153,35 +153,35 @@ else
 fi
 ```
 
-Both modes run the same interview shape — product-owner and architect spawned concurrently,
+Both modes run the same interview shape — project-manager and strategist spawned concurrently,
 both still relaying user-facing questions through you via `NEEDS INPUT` (whether or not Agent
 Teams is active, `AskUserQuestion` is not confirmed to work for teammates, so **never skip the
 relay for a user-facing question**). The only difference is how the two agents exchange context
 with each other:
 
 - **`team`**: tell each agent it can `SendMessage` the other directly by name
-  (`"product-owner"`, `"architect"`) for cross-talk.
+  (`"project-manager"`, `"strategist"`) for cross-talk.
 - **`relay`** (default, always safe): you manually forward short "FYI" summaries between them
   whenever one surfaces something the other should know.
 
 If anything about team mode misbehaves, fall back to `relay` for the rest of the session — do
 not let an experimental feature stall the interview.
 
-### 5. Spawn the Product-Owner and Architect
+### 5. Spawn the Product-Owner and Strategist
 
 Spawn both **in the same message** so they run concurrently:
 
 ```
 Agent(
-  subagent_type: "guild:product-owner",
+  subagent_type: "guild:project-manager",
   prompt: "You're gathering requirements for a new feature — \"{title}\". Load the
            guild:warehouse skill: there is no CLI, you write SQL. There is NO requirement
            row yet — compose the document, then create it yourself with the INSERT in
            queries.md §1 (body as CAST(x'<hex>' AS TEXT)) and report the REQ id it returns.
            Seed description: {description}. Today's date: {today}.
-           Interview mode: {MODE}. {if team: 'The architect is running concurrently and you
-           can SendMessage it by name (\"architect\") for cross-talk.'} {if relay: 'The
-           architect is running concurrently; the orchestrator will relay context between you.'}
+           Interview mode: {MODE}. {if team: 'The strategist is running concurrently and you
+           can SendMessage it by name (\"strategist\") for cross-talk.'} {if relay: 'The
+           strategist is running concurrently; the orchestrator will relay context between you.'}
            Current direction (Step 2.5): {one line per goal and project, or 'none declared yet'}.
            End your report with a one-line Placement proposal — an existing PROJ id, a new
            goal/project you'd suggest, or none at all. It is a recommendation for the user, not
@@ -190,10 +190,10 @@ Agent(
            per your own instructions if this turns out to be a simple fix."
 )
 Agent(
-  subagent_type: "guild:architect",
+  subagent_type: "guild:strategist",
   prompt: "You're planning for a new feature — \"{title}\", currently being interviewed by the
-           product-owner. Load the guild:warehouse skill: there is no CLI, you write SQL.
-           The requirement row does not exist yet; the product-owner creates it when the
+           project-manager. Load the guild:warehouse skill: there is no CLI, you write SQL.
+           The requirement row does not exist yet; the project-manager creates it when the
            interview concludes and I will send you its REQ id then — read it with
            `SELECT body FROM requirement WHERE id = 'REQ-NNN'` at that point.
            Interview mode: {MODE}. {if team / if relay: as above}.
@@ -233,12 +233,12 @@ Both agents may pause with a `NEEDS INPUT:` block — from either one, in any or
 run concurrently:
 
 1. Whichever agent's completion notification carries `NEEDS INPUT:`, call **AskUserQuestion**
-   yourself with exactly those questions. **One kind is not a plain question — an architect
+   yourself with exactly those questions. **One kind is not a plain question — an strategist
    block whose first line reads `ROSTER GAP` is handled by Step 6.6.**
 2. `SendMessage` the answers back to that same agent instance to resume it.
 3. **`relay` mode only**: if the answer (or the agent's own framing) reveals something the
    *other* agent should know — a scope decision, a technical constraint — send a short FYI to
-   the other instance too (`"FYI: user decided X"` / `"FYI: architect flagged Y — factor it
+   the other instance too (`"FYI: user decided X"` / `"FYI: strategist flagged Y — factor it
    into scope"`).
 4. Repeat until an agent reports done, or the user signals they're finished.
 
@@ -250,29 +250,29 @@ round-robin.
 **Product-owner reports done:** it reports the **REQ id it created** — record it as `$REQ`.
 
 - If it took the **bug-fix short-circuit** (created the requirement plus its own
-  fix/test-writer/reviewer tickets, per its own instructions), tell the architect to stop —
+  fix/test-writer/reviewer tickets, per its own instructions), tell the strategist to stop —
   this doesn't need a plan — and `TaskStop` its session. Skip to Step 6.5, where the placement
   question is usually a one-liner answered "unaffiliated".
-- Otherwise `SendMessage` the architect: "The requirement is final: it is {REQ} — read it with
+- Otherwise `SendMessage` the strategist: "The requirement is final: it is {REQ} — read it with
   `SELECT body FROM requirement WHERE id = '{REQ}'` and proceed to Design and Write the Plan."
   Keep relaying further `NEEDS INPUT` rounds until it reports done.
 
-**Architect reports done:** it reports the PLAN id, the ticket ids and their file sets, and **the
+**Strategist reports done:** it reports the PLAN id, the ticket ids and their file sets, and **the
 graph** — which template, how many nodes, and every deviation with its reason. It wrote all of
 that itself; you do not re-create any of it. Go to Step 6.7 and check the graph yourself before
 you take anything to the user.
 
 ### 6.5. Place the Requirement in the Direction
 
-Run this as soon as you have `$REQ` — you do not have to wait for the architect. **Ask the user;
-never decide for them.** The product-owner's `Placement:` line is a recommendation, not an
+Run this as soon as you have `$REQ` — you do not have to wait for the strategist. **Ask the user;
+never decide for them.** The project-manager's `Placement:` line is a recommendation, not an
 answer.
 
 Ask once, with **AskUserQuestion**, offering only the choices that apply:
 
 | Choice | What you write |
 |---|---|
-| An existing project — one option per plausible project from Step 2.5, the product-owner's proposal first, labelled `PROJ-002 · Cart & coupon rework` | `UPDATE requirement SET project_id = 'PROJ-002' WHERE id = '{REQ}' RETURNING id, project_id;` |
+| An existing project — one option per plausible project from Step 2.5, the project-manager's proposal first, labelled `PROJ-002 · Cart & coupon rework` | `UPDATE requirement SET project_id = 'PROJ-002' WHERE id = '{REQ}' RETURNING id, project_id;` |
 | A new project under an existing goal | the `project` INSERT from queries.md §1 (its `ordinal` is derived from the goal's existing projects), then the UPDATE above |
 | A new goal *and* its first project | the `goal` INSERT, then the `project` INSERT, then the UPDATE |
 | **Leave it unaffiliated** | nothing — `project_id` stays NULL |
@@ -303,30 +303,30 @@ does not need a goal.
   question → leave it unaffiliated and say so in Step 8.
 - **No direction on the board yet?** Still offer, but keep it to two choices — "start a goal for
   this" / "leave it unaffiliated" — and one line.
-- In `relay` mode, send the architect a one-line FYI when the requirement lands on a project, so
+- In `relay` mode, send the strategist a one-line FYI when the requirement lands on a project, so
   the plan stays consistent with that project's other requirements. Include the project's
-  `isolation` — it changes how far the architect's file-disjointness assertion has to reach.
+  `isolation` — it changes how far the strategist's file-disjointness assertion has to reach.
 
-### 6.6. Recruiting — the Architect Hit a Roster Gap
+### 6.6. Recruiting — the Strategist Hit a Roster Gap
 
-This step runs **only** when the architect's `NEEDS INPUT:` block opens with `ROSTER GAP`. The
+This step runs **only** when the strategist's `NEEDS INPUT:` block opens with `ROSTER GAP`. The
 plan needs a capability no available subagent declares, and it is now the **guild master's
 decision** — the roster is their layer, exactly like goals and projects.
 
-> **Nothing here creates an agent without the user saying so.** Not you, not the architect, not
+> **Nothing here creates an agent without the user saying so.** Not you, not the strategist, not
 > on a "reasonable inference". An agent file is a permanent addition to the guild.
 
 **Why live rather than at `gate-plan`.** The gap is written into the plan's Technical
-Decisions, so it **also** surfaces at `gate-plan` — but the architect cannot write the affected
+Decisions, so it **also** surfaces at `gate-plan` — but the strategist cannot write the affected
 ticket until it knows the answer, and its session does not survive the gate.
 
-**1. Verify the gap before you ask.** The architect's block is a claim; this is the check:
+**1. Verify the gap before you ask.** The strategist's block is a claim; this is the check:
 
 ```bash
 python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers implement,rust
 ```
 
-**Any output at all means there is no gap** — somebody already declares it, and the architect
+**Any output at all means there is no gap** — somebody already declares it, and the strategist
 should simply use them. Only empty output justifies the question below.
 
 **2. Ask once, with AskUserQuestion**, putting the rationale and the proposed spec in the
@@ -336,11 +336,11 @@ question body so the decision is informed:
 |---|---|
 | **Create `{proposed-agent}`** | The guild grows a permanent new member. The next requirement needing this capability finds it already there. |
 | **Assign to `{existing member}` anyway** | The work goes to a generalist. The gap stays on the record, because the guild still cannot do this work well. |
-| **Revise the plan** | The architect redraws the tickets so the capability is not needed. Collect what the user wants changed. |
+| **Revise the plan** | The strategist redraws the tickets so the capability is not needed. Collect what the user wants changed. |
 
 **3a. On "create":**
 
-1. Scaffold the agent file from the architect's proposed spec, in the guild's agents directory
+1. Scaffold the agent file from the strategist's proposed spec, in the guild's agents directory
    (`$GUILD_AGENTS_DIR` if set, else `${CLAUDE_PLUGIN_ROOT}/agents/{name}.md`):
 
    ```markdown
@@ -372,7 +372,7 @@ question body so the decision is informed:
 
    No output means the file's `capabilities:` does not actually say what you think — a typo, a
    malformed list, or a file in a directory the scan does not reach. Fix the file.
-5. `SendMessage` the architect: `"Roster gap resolved: developer-rust exists and declares
+5. `SendMessage` the strategist: `"Roster gap resolved: developer-rust exists and declares
    [implement, backend, rust]. Create the held tickets requiring implement + rust."`
 
    **A newly added agent file is in the roster immediately, but the `Agent` tool resolves
@@ -381,7 +381,7 @@ question body so the decision is informed:
    restart Claude Code, and until they do, the ticket is dispatchable only by pinning it to an
    existing member.
 
-**3b. On "assign anyway":** `SendMessage` the architect the member's name and let *it* write the
+**3b. On "assign anyway":** `SendMessage` the strategist the member's name and let *it* write the
 tickets — pin `agent` **and** declare the capabilities, so the board records both the pin and
 what the work actually required. Two things to say out loud, because both look like problems
 later and neither is:
@@ -390,10 +390,10 @@ later and neither is:
   plan's Technical Decisions as the record that the guild still cannot do this work well.
 - **The pinned ticket dispatches normally.** A pin skips the capability match entirely, so it
   will not go `blocked` and it will not appear as a gap on the board. The record of what the
-  work actually required is the `task_capability` rows the architect wrote alongside the pin —
+  work actually required is the `task_capability` rows the strategist wrote alongside the pin —
   that is what makes the pin reviewable later.
 
-**3c. On "revise the plan":** `SendMessage` the architect what the user wants changed and let it
+**3c. On "revise the plan":** `SendMessage` the strategist what the user wants changed and let it
 redraw them. The same note about the request staying open applies.
 
 **4. Never do any of these:** write an agent file the user did not approve; create or re-create
@@ -402,7 +402,7 @@ ambiguous, ask again rather than picking.
 
 ### 6.7. Check the Graph Before You Take It to the User
 
-The architect says the graph is sound. **Check it yourself** — it reads only, and a graph that
+The strategist says the graph is sound. **Check it yourself** — it reads only, and a graph that
 cannot start is a run nothing will ever begin:
 
 ```sql
@@ -435,13 +435,13 @@ python3 "${CLAUDE_PLUGIN_ROOT}/skills/check-in/scripts/roster.py" --covers imple
 
 Read them against `guild:warehouse` → `references/templates/standard.md`. Seven things fail a
 graph,
-and each one is a message back to the architect — **do not fix a graph by hand**, because
+and each one is a message back to the strategist — **do not fix a graph by hand**, because
 deviations are its record and its reasoning, and a graph the orchestrator patched has a shape
 nobody justified:
 
 | What you see | What it means |
 |---|---|
-| no `graph_node` rows | the architect never built the graph — send it back |
+| no `graph_node` rows | the strategist never built the graph — send it back |
 | more or fewer than the template's two gates | **never negotiable.** Dropping a gate removes the guild master's control surface; adding one turns unattended operation into a session that stops every twenty minutes |
 | a REQUIRED key missing — `gate-plan`, `implement`, `review`, `gate-repairs` or `document` (`document` on `standard` only) | **a `drop-node` deviation does NOT make this legal.** G8 asserts `dropped-required-node` over that exact set and fires whatever reason was recorded. A required node may be RESHAPED — fanned out, re-pointed, given a different capability — never dropped. Doing the paperwork correctly is what hides this one |
 | a node key not in the template, with no `graph_deviation` row | the shape changed and nothing recorded why |
@@ -453,7 +453,7 @@ An empty `reason` is impossible (the CHECK rejects it) and an edge to a node tha
 is impossible (the foreign key rejects it, when `PRAGMA foreign_keys = ON` was set) — those two
 the database already caught.
 
-**If the architect took the bug-fix short-circuit**, there is no graph and nothing to validate —
+**If the strategist took the bug-fix short-circuit**, there is no graph and nothing to validate —
 skip this step and Step 7's gate. A simple fix does not get a plan gate, because there is no plan
 to approve. Say so plainly in Step 8 and let check-in pick the tickets up.
 
@@ -484,7 +484,7 @@ REQ-007 — Session-backed authentication
 Approve implementation?
 ```
 
-Include the roster-gap block **only** when the architect raised one and it is still unresolved
+Include the roster-gap block **only** when the strategist raised one and it is still unresolved
 — read it from the plan's Technical Decisions. It goes in front of the guild master here, with
 the plan, as part of the same decision.
 
@@ -534,7 +534,7 @@ its own point" — there was no such point, and every test-writer ticket carryin
 breached G6 with no documented write that could clear it.)
 
 On reject: `'rejected'` on the gate, `'skipped'` on the node, `'rejected'` on the plan. A
-rejected gate may be decided again later — reject, let the architect revise, then approve; that
+rejected gate may be decided again later — reject, let the strategist revise, then approve; that
 loop is the whole point of the plan gate. An **approved** one may not.
 
 Pass the user's own words through `decision` when they give any — a bare approval is a decision
@@ -615,10 +615,10 @@ success — §4.b is the strongest single statement that nothing can be built ye
   ticket leaves `todo`, no node is moved — regardless of how obviously good the plan is, and
   regardless of the user saying "yes" enthusiastically. Approval records a decision; it does not
   start work.
-- **The graph is the architect's artifact, and only the architect edits it.** You run the
+- **The graph is the strategist's artifact, and only the strategist edits it.** You run the
   read-only checks and send failures back. A graph the orchestrator patched has a shape nobody
   justified.
-- **Two gates, fixed** — `gate-plan` here, `gate-repairs` after review. Never ask the architect
+- **Two gates, fixed** — `gate-plan` here, `gate-repairs` after review. Never ask the strategist
   for an extra approval point and never accept a graph that grew one. A third gate reads as
   caution and is what turns an unattended run into a session that stops every twenty minutes.
 - **The gate write is yours alone** — it records a guild-master decision, so it runs only on an
@@ -629,15 +629,15 @@ success — §4.b is the strongest single statement that nothing can be built ye
   user. Both agents always relay via `NEEDS INPUT`.
 - **Direction is the guild master's call** — the goal, project and `project_id` writes are yours
   alone, run only in Step 6.5 on an explicit answer, and so are `concurrent`, `isolation` and
-  `worktree_path`. The product-owner proposes a placement and the architect may flag a mismatch;
+  `worktree_path`. The project-manager proposes a placement and the strategist may flag a mismatch;
   neither of them writes one.
 - **A requirement with no project is a finished requirement.** `project_id` is nullable by design.
   Never block, re-ask, or apologise because the user left one unaffiliated.
 - **Never write `plan.approval` except at `gate-plan`, on the user's explicit answer.** It is the
   same decision the gate carries and it belongs to the same person.
-- **File sets, capabilities and parallel groups are the architect's to set.** `task.files` is
+- **File sets, capabilities and parallel groups are the strategist's to set.** `task.files` is
   the disjointness assertion parallel dispatch depends on, and **nothing verifies it** — if a
-  ticket is missing or its file set is wrong, that is a message to the architect, not an edit
+  ticket is missing or its file set is wrong, that is a message to the strategist, not an edit
   you make.
 - **A capability request is closed by recruiting, not by withdrawal.** Only an admitted agent
   moves it `open → created`; `declined` keeps the word out of the vocabulary entirely. Say
