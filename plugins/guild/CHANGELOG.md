@@ -35,6 +35,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   question from the roster's names. It is still an open one: `architecture` is a software word
   for what is really "how the work is shaped".
 
+### Added
+- **`skills/domain-software/` — the strategist's domain is now a profile it loads.** The
+  strategist carried its method and its domain in one file, and the domain half was what made it
+  a *software* planner rather than a planner. That half now lives in a skill answering five
+  slots: what surveying the current state means, what two concurrent tickets contend for, which
+  capabilities the work routes to, and what sections a plan and a ticket carry. `software`
+  answers them with the codebase, file paths, `implement,backend` and friends, `## Codebase
+  Analysis` and `## Files to Touch` — the same text as before, moved rather than rewritten.
+- **`domain:` in `.guild/config.yaml`**, naming the profile. Absent means `software`, so every
+  existing project is unaffected and no migration is needed. Another domain is a second
+  `skills/domain-<name>/SKILL.md` and one line of config; the profile page carries a worked
+  marketing example.
+
+### Changed
+- **`agents/strategist.md` is 30% software-flavoured no longer — it is 13%.** Step 2 keeps the
+  guild's own library and decision log (domain-free) and defers the rest to Slot 1. Step 3's
+  disjointness rule now says "resources", with the profile saying what a resource is. Step 3.5
+  keeps the capability *mechanism* and defers the routing table. The plan and ticket templates
+  keep the sections every domain shares and mark where the profile's go.
+- **`task.files` is documented as an opaque JSON array**, which it always was — it carries
+  `CHECK (json_valid(files))` and no view in the schema parses it. A non-software domain puts its
+  own resource handles in the same column and gets correct batching, a correct `implement`
+  fan-out and a correct G9 audit with no schema change. The column keeps its misleading name for
+  now; renaming it is a migration that buys nothing until a second domain exists.
+
 ### Fixed
 - **Disambiguated `strategist` from `qa-strategist`.** The QA discipline already had a
   `qa-strategist`, and its documents referred to it in prose as "the strategist". With a

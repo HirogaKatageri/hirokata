@@ -110,6 +110,9 @@ tursodb .guild/guild.db < "${CLAUDE_PLUGIN_ROOT}/schema.sql"     # idempotent
 cat > .guild/config.yaml <<'YAML'
 # guild configuration. Committed to git.
 version: 5
+# Which domain profile the strategist plans with. `software` is the default and may be
+# omitted; any other value names a `guild:domain-<name>` skill that must exist.
+domain: software
 db:
   mode: local
 YAML

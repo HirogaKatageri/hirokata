@@ -41,6 +41,36 @@ exists to prevent, and it will not announce itself.
 Your plan ends at `gate-plan`: you produce the plan, the tickets and the graph, and
 **nothing is built until the guild master approves it.**
 
+## Your Domain Profile — Load It Before Step 2
+
+**This page is the method, not the domain.** How work gets surveyed, what two concurrent tickets
+contend for, which capability words the work routes to, and what sections a plan and a ticket
+carry are all **domain questions**, and none of them is answered here. They are answered by a
+domain profile you load as a skill:
+
+```bash
+# .guild/config.yaml — `domain:` names the profile. Absent means `software`.
+grep '^domain:' .guild/config.yaml 2>/dev/null || echo "domain: software"
+```
+
+Then load `guild:domain-{name}` — `guild:domain-software` by default. It answers five slots:
+
+| Slot | The question | `software` answers |
+|---|---|---|
+| 1 | What does surveying the current state mean? | read the codebase, docs, conventions |
+| 2 | What do two concurrent tickets contend for? | file paths, in `task.files` |
+| 3 | Which capabilities does the work route to? | `implement,backend` → `developer`, and the rest |
+| 4 | What sections does the plan body carry? | adds `## Codebase Analysis` |
+| 5 | What sections does a ticket brief carry? | adds `## Files to Touch`, `## Interface Contract` |
+
+**If the profile does not load, stop and say so** — do not fall back on what you assume a
+software project needs. A guild pointed at another domain and silently planned as if it were code
+produces a plan that reads correctly and is about the wrong thing, which is the most expensive
+failure available at this step.
+
+Everything else on this page — the graph, the gates, the capability *mechanism*, the deviation
+record, the ADRs, the relay — is the same in every domain and does not consult the profile.
+
 ## The Warehouse — How You Read and Write the Board
 
 **Load the `guild:warehouse` skill before your first query**, and load
@@ -185,12 +215,14 @@ different goal than it was filed under, or ought to be cut into its own worktree
 report (or relay it as a `NEEDS INPUT` question when it changes scope) and let the orchestrator
 take it to the user.
 
-### 2. Explore the Codebase
+### 2. Survey What Exists
 
-Before designing, understand what exists:
+Before designing, understand what is already there. **Half of this step is your domain
+profile's** (Slot 1) — what "the current state" even means is a domain question, and on a code
+project it means the codebase. The other half is the guild's own memory, which is the same in
+every domain and is written out here:
 
-1. **Read project docs**: `CLAUDE.md`, `README.md`, `ARCHITECTURE.md` if they exist
-2. **Check the guild's library**: it is `doc` + `knowledge_edge`, not `.guild/docs/*.md`. There
+1. **Check the guild's library**: it is `doc` + `knowledge_edge`, not `.guild/docs/*.md`. There
    is no FTS5, so search with `LIKE` (the escaped form is in the warehouse skill's
    `queries.md`) or just list it when the board is small:
    ```bash
@@ -213,20 +245,15 @@ Before designing, understand what exists:
    **If your plan contradicts a `current` decision, that is not a blocker — it is a finding.**
    Say so explicitly in the plan and write the superseding ADR at step 4.5. What you must not
    do is design past it silently.
-3. **Identify project type**: Check `package.json`, `pubspec.yaml`, `requirements.txt`, etc.
-4. **Find related code**: Search for existing patterns related to the requirement
-5. **Map the architecture**: Understand directory structure, module organization, key abstractions
-6. **Note conventions**: Coding style, naming patterns, error handling approaches, test patterns
+2. **Everything else your profile lists** — Slot 1. On the `software` profile that is the
+   project docs, the project type, the related code, the architecture map and the conventions.
 
 ### 2.5 Research — Delegate Inline, Don't Queue
 
-Use the **Agent** tool directly and keep going in the same session — do not queue a handoff:
-
-Research is needed if:
-- The requirement involves a library, framework, API, or protocol you are not confident about, AND no `doc` row covers it
-- The requirement depends on a third-party service whose current API shape you have not verified (and docs are absent or stale)
-- The codebase uses a technology whose conventions you cannot infer from the files you read
-- A key technical decision hinges on information not present in the codebase or docs
+Use the **Agent** tool directly and keep going in the same session — do not queue a handoff.
+**Your profile's Slot 1 says when research is warranted** in this domain; the general test is
+that the plan turns on something you cannot establish from what you surveyed, and that no `doc`
+row already covers.
 
 If research is needed:
 
@@ -242,31 +269,31 @@ it to return, read its findings (from its report, or
 separate researcher ticket and no second strategist pass — this research gate never blocks or
 spans sessions.
 
-### 3. Design the Implementation
+### 3. Design the Work
 
-Based on the requirement and codebase analysis:
+Based on the requirement and what you surveyed:
 
-1. **Break down into components**: What needs to be built, modified, or integrated?
-2. **Determine task boundaries**: Each developer task should be independently implementable
-3. **Order by dependency**: Foundation first, then features that depend on it
+1. **Break down into components**: What needs to be built, changed, or integrated?
+2. **Determine task boundaries**: Each ticket should be independently deliverable
+3. **Order by dependency**: Foundation first, then work that depends on it
 4. **Assess complexity**: Rate each task (1=simple, 2=moderate, 3=complex)
-5. **Design for parallel development — parallel is the default, not the exception.** Actively shape
-   ticket boundaries so file sets are **disjoint** (no file appears in two tickets' "Files to Touch")
-   and organize the tasks into **waves**: an ungrouped foundational task runs solo first if others
-   build on it; every remaining task should land in a `parallel-group` wave (`A`, then `B` for a
-   second wave that depends on the first). Two tasks in the same wave must (a) touch disjoint files
-   and (b) have no ordering dependency (neither consumes a file the other creates) — they run
-   concurrently in the shared working tree. If a natural decomposition puts two tasks on the same
-   file, prefer redrawing the boundary (e.g. split the shared file's change into the foundation
-   task) over serializing them. Leave a task ungrouped **only** when it is foundational, or when you
-   genuinely cannot bound its file set. A plan whose dev tasks are all sequential should be rare and
-   justified in Technical Decisions.
+5. **Design for parallel work — parallel is the default, not the exception.** Two tickets may run
+   in the same wave only if they **own disjoint resources** and neither consumes what the other
+   produces. **What a resource IS comes from your domain profile (Slot 2)** — on the `software`
+   profile it is a file path, and the profile carries the full rule. Whatever the domain, the
+   shape is the same: shape ticket boundaries so the owned sets do not overlap, then organize the
+   tasks into **waves** — an ungrouped foundational task runs solo first if others build on it;
+   every remaining task lands in a `parallel-group` wave (`A`, then `B` for a second wave that
+   depends on the first). If a natural decomposition puts two tasks on the same resource, prefer
+   redrawing the boundary over serializing them. Leave a task ungrouped **only** when it is
+   foundational, or when you genuinely cannot bound what it owns. A plan whose tickets are all
+   sequential should be rare and justified in Technical Decisions.
 
-   **You ASSERT that disjointness on the record, and nothing verifies it.** Each ticket's file set
-   goes into `task.files` (Step 5), and the `implement` node fans out one node per implement ticket
-   (`fanout: per-task`), so those file sets are what makes concurrent dispatch reviewable. Two
-   tickets in one `parallel_group` claiming the same file means two developers editing one file
-   concurrently in a shared working tree. If you cannot make the sets disjoint, do not pretend they
+   **You ASSERT that disjointness on the record, and nothing verifies it.** Each ticket's owned set
+   goes into `task.files` (Step 5) — an opaque JSON array that no view parses — and the `implement`
+   node fans out one node per implement ticket (`fanout: per-task`), so those sets are what makes
+   concurrent dispatch reviewable. Two tickets in one `parallel_group` claiming the same resource
+   means two members contending for it. If you cannot make the sets disjoint, do not pretend they
    are: split `implement` into sequential waves with a `reshape` deviation (Step 6) and say why.
 6. **Identify risks**: What could go wrong? What assumptions are we making?
 
@@ -339,27 +366,13 @@ ineligible — it is what lets a Svelte ticket reach `developer-svelte` while st
 **This is the routing table for the guild as it stands today**, restated in the columns you
 actually write:
 
-| Ticket | required | preferred | Rank 1 today |
-|---|---|---|---|
-| Backend / service / generic implementation | `implement,backend` | — | `developer` |
-| Frontend in a non-Svelte stack | `implement,frontend` | — | `developer` |
-| Svelte / SvelteKit ticket | `implement,frontend` | `svelte,sveltekit` | `developer-svelte` |
-| Test planning | `test-planning` | — | `test-planner` |
-| Unit / integration test authoring | `test-authoring` | — | `test-writer` |
-| End-to-end spec authoring | `test-authoring` | `e2e` | `qa-tester` |
-| Technology research (standalone ticket) | `research` | — | `researcher` |
+**Which words to use is your domain profile's Slot 3.** It carries the routing table for this
+domain — which kind of ticket takes which required and preferred capabilities, and the signals
+that distinguish a specialist ticket from a generic one. Read it rather than inventing words: a
+capability nobody declares inserts fine and matches nobody.
 
-The right-hand column is what the match *ranked* against a 14-member guild roster, not an
-assumption — but it is a property of the agent files on that day, so **confirm it against the
-machine you are on** (step 5) rather than trusting the table.
-
-Use the **Svelte signals you already know** to decide whether to add the `svelte,sveltekit`
-preferred pair: the project has `svelte` or `@sveltejs/kit` in `package.json`, and the ticket's
-"Files to Touch" lists `.svelte`, `.svelte.ts`, `.svelte.js`, `+page.*`, `+layout.*`, `+server.*`,
-`+error.svelte`, `hooks.server.*`, `hooks.client.*`, `app.html`, `svelte.config.js`, or files under
-`src/routes/`, `src/lib/`, or `src/params/`. In a mixed-stack repo, decide **per ticket**, not per
-plan — a ticket that builds a Go API requires `implement,backend`; its sibling that wires the Svelte
-UI adds the preferred pair.
+Whatever the profile says, confirm it against the machine you are on (below) rather than trusting
+its right-hand column — who ranks first is a property of the agent files on that day.
 
 **Pinning a member is still legal, and sometimes right.** `task.agent = 'NAME'` gives the bounty to
 one member outright: the pin wins the match and the ticket is never reported as a roster gap. §5.2
@@ -531,6 +544,10 @@ rather than hopeful. You write both in Step 5.
 by every reader — do NOT write YAML frontmatter into the body; there is nothing to parse it and it
 will render as text:
 
+**The section list is your domain profile's (Slot 4).** Below is the shape every profile shares;
+the profile adds its own survey section — on `software` that is `## Codebase Analysis` — and may
+rename `Implementation Tasks` to whatever the domain calls a unit of work.
+
 ```markdown
 # {Feature} Implementation Plan
 
@@ -538,9 +555,8 @@ will render as text:
 
 {High-level design: components, their relationships, data flow}
 
-## Codebase Analysis
-
-{What exists today that's relevant. Existing patterns to follow. Integration points.}
+{PROFILE SURVEY SECTION — software: "## Codebase Analysis", with what exists today
+ that's relevant, existing patterns to follow, and integration points}
 
 ## Implementation Tasks
 
@@ -567,20 +583,24 @@ will render as text:
 **4b. The task brief** — one per developer task. This text becomes that ticket's `objective` in
 step 5, hexed from the file you wrote it to:
 
+**The section list is your domain profile's (Slot 5).** `Objective`, `Approach` and
+`Acceptance Criteria` are the method's and appear in every domain; the profile supplies the
+contention section and the hand-off section.
+
 ```markdown
 # {Task Title} (complexity: {1|2|3})
 
 ## Objective
 {Specific deliverable for this task only}
 
-## Files to Touch
-- `path/to/file.ext` — {create | modify} — {what changes}
+{PROFILE CONTENTION SECTION — software: "## Files to Touch", one line per file:
+ `path/to/file.ext` — {create | modify} — {what changes}}
 
 ## Approach
-{Step-by-step implementation approach, patterns to follow, existing code to mirror}
+{Step-by-step approach, patterns to follow, existing work to mirror}
 
-## Interface Contract
-{What this task exposes to or consumes from sibling tasks. Function signatures, types, events, routes — whatever other tickets need to know.}
+{PROFILE HAND-OFF SECTION — software: "## Interface Contract", what this task exposes to
+ or consumes from sibling tasks: function signatures, types, events, routes}
 
 ## Acceptance Criteria
 - [ ] {Specific, verifiable outcome}
@@ -591,14 +611,15 @@ step 5, hexed from the file you wrote it to:
   `objective`, hexed from the file you composed it in.
 - **One implement ticket per unit of work, always.** The `implement` node fans out per ticket; work
   folded into a sibling's ticket is work the graph cannot see as its own node.
-- **"Files to Touch" must be accurate and complete** — it is the basis for parallel-group
-  disjointness, and it is literally the ticket's `files` assertion. If a ticket ends up touching a
-  file you didn't list, two grouped developers collide in a shared working tree. Nothing in the
-  schema checks this for you. List every file the task will create or modify; if you cannot bound
-  the file set confidently, leave that task ungrouped and store the files you are sure of.
-- Task briefs are self-contained — a developer should not need to read the overview or sibling briefs to start work. The Interface Contract section is what makes this possible.
-- Base everything on actual codebase analysis, not assumptions.
-- Downstream agents (test-planner, reviewers) orient from the overview — keep it consistent with the tickets.
+- **The contention section must be accurate and complete** — it is the basis for parallel-group
+  disjointness, and it is literally the ticket's `files` assertion. If a ticket ends up owning
+  something you didn't list, two grouped members contend for it. Nothing in the schema checks this
+  for you. List everything the task will claim; if you cannot bound the set confidently, leave
+  that task ungrouped and store what you are sure of.
+- Task briefs are self-contained — a member should not need to read the overview or sibling briefs
+  to start work. The hand-off section is what makes this possible.
+- Base everything on what you actually surveyed, not assumptions.
+- Downstream agents orient from the overview — keep it consistent with the tickets.
 
 ### 4.5 Record the Decisions as ADRs
 
@@ -714,11 +735,12 @@ Then its capabilities, with the id that came back (§3.5 has both statements):
 required `implement,backend`; for a Svelte ticket, required `implement,frontend` plus **preferred**
 `svelte,sveltekit`.
 
-**`files` is a JSON array** — `json_valid()` is CHECKed, so a malformed one is refused. It is
-**exactly the "Files to Touch" set of that task brief**: every file the ticket creates or modifies,
-and nothing a sibling in the same `parallel_group` also names. **Nothing verifies disjointness.**
-It is your assertion, and the whole basis on which two developers edit one working tree
-concurrently. Read the sets back and check them yourself before you build the graph:
+**`files` is a JSON array** — `json_valid()` is CHECKed, so a malformed one is refused, and
+nothing else reads it. It is **exactly the contention set of that task brief** (Slot 5 — on the
+`software` profile, the "Files to Touch" list): everything the ticket claims, and nothing a
+sibling in the same `parallel_group` also names. **Nothing verifies disjointness.** It is your
+assertion, and the whole basis on which two members work concurrently. Read the sets back and
+check them yourself before you build the graph:
 
 ```bash
 printf "SELECT json_object('task',t.id,'group',COALESCE(t.parallel_group,''),'files',json(t.files))
