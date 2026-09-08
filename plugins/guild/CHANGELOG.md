@@ -49,11 +49,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   marketing example.
 
 ### Changed
-- **`agents/strategist.md` is 30% software-flavoured no longer — it is 13%.** Step 2 keeps the
+- **The strategist's software knowledge moves into the profile — most of it.** Step 2 keeps the
   guild's own library and decision log (domain-free) and defers the rest to Slot 1. Step 3's
   disjointness rule now says "resources", with the profile saying what a resource is. Step 3.5
   keeps the capability *mechanism* and defers the routing table. The plan and ticket templates
   keep the sections every domain shares and mark where the profile's go.
+
+  **Measured honestly, because the first number written here was wrong.** Counting concrete
+  software specifics — `package.json`, `src/routes`, `svelte.config`, "Files to Touch" and the
+  like — there were 64. Fifty-one now live in `skills/domain-software/`; **27 remain in the agent**
+  as illustrative examples that make the capability match concrete. As a share of prose the file
+  barely moved, 15% to 13%, because that counts mentions rather than swappable definitions. So the
+  definitions are in one replaceable file and the agent still *reads* as software — and those 27
+  are exactly what a second domain profile would expose.
 - **`task.files` is documented as an opaque JSON array**, which it always was — it carries
   `CHECK (json_valid(files))` and no view in the schema parses it. A non-software domain puts its
   own resource handles in the same column and gets correct batching, a correct `implement`
