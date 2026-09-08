@@ -1,8 +1,8 @@
 # Software Plugin
 
-Three focused skills for planning and committing software work: an 8-phase clean architecture
-vocabulary for classifying tasks, a planner that splits a master plan into per-phase plan files,
-and a conventional-commit generator.
+Four focused skills for planning, committing and reporting on software work: an 8-phase clean
+architecture vocabulary for classifying tasks, a planner that splits a master plan into per-phase
+plan files, a conventional-commit generator, and a daily handoff writer.
 
 > **This plugin used to be a workflow engine.** Through v1.0.4 it also shipped a
 > `develop-project` orchestration skill, a `generate-requirements` skill, a
@@ -71,6 +71,7 @@ for well-defined, isolated work with existing code to copy from.
 | Skill | Invocable | What it does |
 |-------|-----------|--------------|
 | `software:conventional-commit` | **Yes** | Analyzes staged and unstaged changes, groups related modifications, and generates Conventional Commits messages. |
+| `software:daily-handoff` | **Yes** | Gathers the last 24 hours from GitHub, local checkouts and AI coding sessions, and writes a plain-language handoff document. |
 | `software:split-plan` | Reference | Splits a master plan into 8 phase plan files organized by track, with complexity scores. |
 | `software:categorize-task` | Reference | The classification guide — which of the 8 phases a given task belongs to. |
 
@@ -99,6 +100,49 @@ Generates properly formatted conventional commits.
 - `references/commit-patterns.md` — patterns, anti-patterns and best practices
 - `examples/commit-messages.txt`, `examples/multi-commit-workflow.sh`
 - `scripts/group-changes.py`, `scripts/validate-commit-msg.sh`
+
+### `software:daily-handoff`
+
+Writes an end-of-day handoff a teammate can read without asking follow-up questions.
+
+**Say:** "daily handoff", "write my handoff", "end of day summary", "EOD report", "what did I
+work on today", "standup notes".
+
+**Arguments (all optional):** `hours` (default 24), `scan-root` (default `~/Projects`), `output`
+(default `~/YYYY-MM-DD-handoff.md`).
+
+**What it gathers, for the last 24 hours:**
+
+- Pull requests you authored — merged, open, and closed without merging — with their diffs,
+  review state, requested reviewers and check results.
+- Every comment you left on a pull request or issue, including inline code-review comments.
+- Claude Code, Codex CLI and OpenCode sessions, reduced to the prompts you actually typed.
+- Local checkouts carrying uncommitted changes, unpushed commits or stashes — including agent
+  worktrees under `.claude/worktrees/`, which are the easiest work to lose.
+
+**How it sorts:**
+
+| Bucket | What lands there |
+|--------|------------------|
+| **Done (Merged)** | Pull requests merged inside the window |
+| **Ready for Merging** | Open non-draft PRs, and finished branches with no PR yet |
+| **In Progress (Uncommitted)** | Uncommitted changes, stashes, draft PRs, sessions that produced nothing |
+| **What's Next** | Follow-ups, unanswered review feedback, failing checks, dropped PRs |
+
+**How it writes:** plain language, aimed at a teammate who does not know the codebase. General
+information is summarized in one to three sentences; anything waiting on another person is
+detailed — what is waiting, who on, what exactly they need to do, why it matters, how urgent.
+
+**Supporting files:**
+
+- `scripts/collect-github.sh` — PRs and comments via the `gh` CLI
+- `scripts/collect-repos.sh` — uncommitted changes, unpushed commits, stashes (read-only)
+- `scripts/collect-sessions.py` — Claude Code / Codex / OpenCode session transcripts
+- `references/handoff-template.md` — the document structure
+- `references/plain-language.md` — how to say technical things without technical words
+
+Missing tooling degrades the document rather than stopping it: if `gh` is not signed in, the
+handoff still covers local work and says the GitHub half is missing.
 
 ### `software:split-plan`
 
@@ -193,6 +237,15 @@ plugins/software-project/
 │   │   └── scripts/
 │   │       ├── group-changes.py
 │   │       └── validate-commit-msg.sh
+│   ├── daily-handoff/
+│   │   ├── SKILL.md
+│   │   ├── references/
+│   │   │   ├── handoff-template.md
+│   │   │   └── plain-language.md
+│   │   └── scripts/
+│   │       ├── collect-github.sh
+│   │       ├── collect-repos.sh
+│   │       └── collect-sessions.py
 │   ├── split-plan/
 │   │   └── SKILL.md
 │   └── categorize-task/
@@ -209,7 +262,9 @@ plugins/software-project/
 
 - **Claude Code**: latest version
 - **Plan format**: markdown, with features described as headed sections
-- `git` on `PATH` for `conventional-commit`
+- `git` on `PATH` for `conventional-commit` and `daily-handoff`
+- For `daily-handoff`: `jq`, `python3` 3.9+, and an authenticated `gh` (`gh auth status`) for the
+  GitHub half
 
 ---
 

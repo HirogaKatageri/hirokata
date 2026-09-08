@@ -11,6 +11,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-08
+
+### Added
+- **`daily-handoff` skill.** Writes an end-of-day handoff document from the last 24 hours of
+  activity, aimed at a teammate who was not there. Three read-only collectors feed it:
+  - `scripts/collect-github.sh` — pull requests the user authored (merged, open, and closed
+    without merging) with diffs, review state, requested reviewers and check results, plus every
+    comment the user left on a PR or issue, including inline code-review comments. Search date
+    qualifiers are day-granular, so results are re-filtered against the exact cutoff timestamp.
+  - `scripts/collect-repos.sh` — local checkouts carrying uncommitted changes, unpushed commits
+    or stashes. Scans six levels deep, which reaches agent worktrees under `.claude/worktrees/`;
+    those are tagged so the handoff can name them as the easy-to-lose work they are.
+  - `scripts/collect-sessions.py` — Claude Code, Codex CLI and OpenCode transcripts, reduced to
+    the prompts the user actually typed. Synthetic turns (hook output, command expansions,
+    system reminders) and subagent-only transcripts are dropped.
+  - Output sorts into Done (Merged), Ready for Merging, In Progress (Uncommitted) and What's
+    Next, and is written to `~/YYYY-MM-DD-handoff.md`.
+  - `references/plain-language.md` governs the voice: general information is summarized, while
+    anything waiting on another person is detailed — what is waiting, who on, what exactly they
+    need to do, why it matters, and how urgent it is. `references/handoff-template.md` holds the
+    structure.
+  - Every collector reports its own failures in an `errors` array rather than exiting non-zero,
+    so a missing `gh` login degrades the document instead of stopping it — and the skill is
+    required to say so in a *Gaps in this handoff* section.
+
 ### Changed
 - **README rewritten to match what ships.** It still documented the `/software:develop-project`
   command, the `comprehensive-review` and `generate-requirements` skills and all eight agents —
@@ -19,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `split-plan` and `categorize-task` as `user-invocable: false` reference skills rather than
   commands, records the actual `split-plan` output path
   (`tasks/{base-name}/plans/{base-name}-{NN}-{phase}.md`), and points at the guild plugin for the
-  orchestration that left.
+  orchestration that left. It then gained the `daily-handoff` entry, making four skills in all.
 
 ## [1.0.5] - 2026-04-12
 
