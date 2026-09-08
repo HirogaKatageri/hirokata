@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [9.0.0] - 2026-09-08
 
 ### Changed (BREAKING)
 - **`product-owner` is now `project-manager`; `architect` is now `strategist`.** The roles are
@@ -66,6 +66,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   top-level `strategist` now existing, those readings were ambiguous, so every bare mention in
   `skills/qa/`, `skills/qa-artifacts/`, `agents/qa-tester.md`, `agents/qa-strategist.md` and
   `templates/maintenance.md` is now written `qa-strategist` in full.
+
+### Upgrading from 8.1.2
+
+Nothing in the database changes — schema version stays 9 and there is no migration. Two things
+in a project might:
+
+```bash
+# 1. Any ticket pinned to a renamed member. Repin it; an unknown pin dispatches nobody.
+printf "SELECT id, agent FROM task WHERE agent IN ('architect','product-owner');\n" \
+  | tursodb -q -m list .guild/guild.db
+
+# 2. Any project-local or user-level agent file, skill or note that spawns them by name.
+grep -rn 'guild:architect\|guild:product-owner' .claude/ ~/.claude/ 2>/dev/null
+```
+
+`event` rows recording work the old names did are left exactly as they are. They are the record
+of what happened, and the guild does not rewrite history to match the present.
 
 ### Note
 - **`CHANGELOG.md` and `docs/v5-design.md` were deliberately not rewritten.** Both are records of
