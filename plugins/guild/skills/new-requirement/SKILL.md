@@ -233,7 +233,7 @@ Both agents may pause with a `NEEDS INPUT:` block — from either one, in any or
 run concurrently:
 
 1. Whichever agent's completion notification carries `NEEDS INPUT:`, call **AskUserQuestion**
-   yourself with exactly those questions. **One kind is not a plain question — an strategist
+   yourself with exactly those questions. **One kind is not a plain question — a strategist
    block whose first line reads `ROSTER GAP` is handled by Step 6.6.**
 2. `SendMessage` the answers back to that same agent instance to resume it.
 3. **`relay` mode only**: if the answer (or the agent's own framing) reveals something the

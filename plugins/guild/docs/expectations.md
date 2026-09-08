@@ -2218,7 +2218,7 @@ ORDER BY breach, row_id;
 
 **No clause here is scoped to a requirement, and that is the point.** Two inspections on two
 carriers still share one machine. A `parallel_group` on a `qa-execute` node is not a deviation
-an strategist may justify — it is a defect, which is why it is asserted as an absolute rather than
+a strategist may justify — it is a defect, which is why it is asserted as an absolute rather than
 excused by a `graph_deviation` row the way an added node would be.
 
 *Verified to fire:* claiming `TASK-904` alongside `TASK-903` returns two

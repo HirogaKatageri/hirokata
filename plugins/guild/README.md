@@ -316,7 +316,14 @@ the price of moving the vocabulary into the engine, and it is a real one.
 | `guild:warehouse` | **The reference every member loads before touching guild data.** |
 
 Agent-facing skills that specialists pre-load rather than users invoking: `guild:qa-mindset`,
-`guild:qa-artifacts`, and the four `guild:svelte-*` skills, plus `guild:svelte-env-vars-check`.
+`guild:qa-artifacts`, `guild:domain-software`, and the four `guild:svelte-*` skills, plus
+`guild:svelte-env-vars-check`.
+
+`guild:domain-software` is the strategist's **domain profile** — what surveying the current state
+means, what two concurrent tickets contend for, which capabilities the work routes to, and what
+sections a plan and a ticket carry. `domain:` in `.guild/config.yaml` picks one; absent means
+`software`, so an existing project is unaffected. Another purpose is a second
+`skills/domain-<name>/SKILL.md` and one line of config.
 
 ---
 
