@@ -42,6 +42,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rule.
 
 ### Fixed
+- **Software Plugin v1.1.1 — `daily-handoff` wrote its detail in the wrong places.** The skill's
+  rule is that general information is summarized while anything needing another person is
+  detailed. Its template rendered the waiting-on block in one section out of four, and the two
+  sections where blockers actually land showed only a bullet or a resume note — so the generated
+  handoff spent paragraphs on merged work and one line each on the things that stall the team. The
+  block now appears in every section that can hold a blocker, `What's Next` orders the
+  needs-a-person items first under their own headings, and *Done (Merged)* is capped at three
+  sentences. Marketplace bumped to v7.1.1.
 - **Three v7 leftovers naming the dropped `agent` table**, one of them live. `docs/expectations.md`
   §9.a carried `COUNT(*) FROM agent`, so the release fingerprint errored with `no such table:
   agent` on every board built since v7.0.0 — written to *stdout*, where an exit-code check never

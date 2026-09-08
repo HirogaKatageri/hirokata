@@ -11,6 +11,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-09-08
+
+### Fixed
+- **`daily-handoff` applied its own two-level rule backwards.** The rule is stated correctly in
+  `SKILL.md` — general information is summarized, anything needing another person is detailed —
+  but `references/handoff-template.md` rendered the waiting-on block in exactly one of its four
+  sections, *Ready for Merging*. The other two sections that hold real work showed only compressed
+  shapes: *In Progress* offered *Where it lives / State / To resume*, and *What's Next* offered a
+  one-line bullet. Blockers overwhelmingly land in those two, so a generated handoff came out with
+  paragraphs on merged work nobody acts on and single bullets for the items that stall the team —
+  one of them a warning that a production cutover would lock every user out, with no named
+  recipient and no urgency. The template taught the shape; the prose rule lost to it.
+  - The waiting-on block (**Waiting on / What they need to do / Why it matters / Urgency**) now
+    appears in *Ready for Merging*, *In Progress* and *What's Next*.
+  - *What's Next* carries two explicit shapes: a `###` heading with the full block for anything
+    needing a person, ordered first, and the one-line bullet only for follow-ups the next person
+    can just do. A warning is an item needing a person — the template says to name who receives it.
+  - `SKILL.md` Step 5 gains the routing rule (**the block goes wherever the item is** — the bucket
+    never decides the level of detail) and its counterweight (**summarised means summarised** —
+    *Done (Merged)* capped at three sentences, no aside nobody acts on).
+  - Section headings now match the bucket names from Step 4: *Done (Merged)*, *Ready for Merging*,
+    *In Progress (Uncommitted)*, *What's Next*. They had drifted to shortened forms.
+
 ## [1.1.0] - 2026-09-08
 
 ### Added
