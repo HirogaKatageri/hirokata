@@ -3,7 +3,7 @@ name: reviewer-architecture
 model: haiku
 color: yellow
 tools: ["Read", "Grep", "Glob", "Bash"]
-capabilities: [review, architecture]
+capabilities: [review, software-architecture]
 serial: false
 description: |
   Use this agent for architecture-focused code review. Evaluates implementation
