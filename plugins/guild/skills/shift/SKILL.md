@@ -486,8 +486,8 @@ SELECT id, who, waived, replace(replace(COALESCE(reason,'-'), char(10),' '), '|'
   FROM v_failed_tasks;
 ```
 
-Write the dated review record to `.guild/reviews/REQ-NNN.md`, then put it up as **one decision,
-as a MULTI-SELECT** — one option per numbered item, so the user can approve some, all, or none:
+Put it up as **one decision, as a MULTI-SELECT** — one option per numbered item, so the user can
+approve some, all, or none:
 
 ```
 REQ-007 — Session-backed authentication: the run is complete.
@@ -500,8 +500,6 @@ REQ-007 — Session-backed authentication: the run is complete.
     4. BUG-004 critical  Preference toggles silently revert after save
   1 failed task:
     5. TASK-013 Migrate legacy preference rows — migration is not idempotent
-
-  Report: .guild/reviews/REQ-007.md
 
 Findings and bugs from REQ-007 — approve which get repaired.
 ```

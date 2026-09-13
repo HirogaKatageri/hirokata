@@ -15,7 +15,6 @@ that does the same thing. Every member reaches the warehouse the same way — lo
   guild.db            # gitignored. THE BOARD
   docs/               # evergreen researcher knowledge (the `doc` table is the primary copy)
   qa/                 # evergreen QA artifacts — charter, missions, session logs
-  reviews/REQ-NNN.md  # per-requirement review records, appended per round
   dashboard.html      # gitignored. regenerated wholesale by guild:dashboard
   templates/*.yaml    # optional. a project's override of the shipped execution templates
 ```
@@ -40,7 +39,7 @@ a binary file is a bad thing to merge, which means the board is **machine-local*
 guild is running in cloud mode.
 
 What git carries instead is the human-readable residue: `config.yaml`, `.guild/docs/`,
-`.guild/qa/`, `.guild/reviews/`, and the repo's own `CHANGELOG.md`.
+`.guild/qa/`, and the repo's own `CHANGELOG.md`.
 
 ## Applying the schema
 

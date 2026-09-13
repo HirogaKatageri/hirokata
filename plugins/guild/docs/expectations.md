@@ -1813,9 +1813,9 @@ None of these is a thing a member may do, and each has been someone's shortcut:
   the product and the project's decisions, neither of which stopped being true.
 - **Deleting `knowledge_edge` rows** to clear a G10 breach. A dangling edge means something it
   pointed at is already gone; the fix is finding out what, not cutting the evidence.
-- **`rm -rf` inside `.guild/`.** `.guild/docs/`, `.guild/qa/` and `.guild/reviews/` are evergreen
-  and a shell glob does not know that. Moving `guild.db` aside is the only removal in this
-  section, and it moves rather than deletes.
+- **`rm -rf` inside `.guild/`.** `.guild/docs/` and `.guild/qa/` are evergreen and a shell glob
+  does not know that. Moving `guild.db` aside is the only removal in this section, and it moves
+  rather than deletes.
 
 ### Postconditions
 
@@ -1885,11 +1885,8 @@ three preconditions and they are shell, not SQL.
 3. The pre-release gate: **warn, never block**, and distinguish a waived failure from a bare one.
 4. The version: validated, not already tagged, not already on the board.
 5. `CHANGELOG.md` at **repo root**, `[Unreleased]` → `[{version}] - {today}`.
-6. Render the snapshot: structure written by the shell from ids and enum words, free text
-   appended as a whole block by a single-column query and **never** interpolated into a heading,
-   a table cell or a filename.
-7. **One** board write: the `release:<version>` upsert.
-8. Commit and tag. No push, no `--no-verify`.
+6. **One** board write: the `release:<version>` upsert.
+7. Commit and tag. No push, no `--no-verify`.
 
 ### Postconditions
 
@@ -1937,7 +1934,7 @@ snapshotted-and-deleted, or "tidied" something.
 whole assertion out — `no such table: …`, on *stdout*, where a member checking the exit code would
 not see it. The two library tables are on the list because a release must not touch them either.
 
-Under `--dry-run` the correct diff is **empty**. Steps 2, 3 and 4 are reads and are safe; step 7's
+Under `--dry-run` the correct diff is **empty**. Steps 2, 3 and 4 are reads and are safe; step 6's
 upsert is not and must not run.
 
 **§9.b — the release record is well-formed and honest.** Expect **zero rows**:
@@ -2017,10 +2014,6 @@ a ticket nobody on the roster could take, and that is the loud case the skill sp
 
 ### Cannot be asserted
 
-- **The snapshot's contents.** `.guild/releases/{version}/REQ-NNN.md` is a file. That it contains
-  the requirement's real body — rather than a truncated one from `-m pretty`, or a tursodb error
-  message that landed on stdout and was appended as content — is checkable only by reading it.
-  The skill's rule to check every query's exit code is the guard, and nothing enforces it.
 - **Whether `CHANGELOG.md` was transformed correctly.** Repo root, not `.guild/`; a real
   `[Unreleased]` section; the bullets moved rather than duplicated. All file state.
 - **Whether the git tag matches the board record.** Two systems, one convention. A tag `v1.2.0`

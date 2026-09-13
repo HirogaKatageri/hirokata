@@ -111,7 +111,7 @@ Put the `export` line in your shell profile. Every skill assumes `tursodb` is on
 ### 2. Apply the schema
 
 ```bash
-mkdir -p .guild/docs .guild/qa .guild/reviews
+mkdir -p .guild/docs .guild/qa
 tursodb .guild/guild.db < "${CLAUDE_PLUGIN_ROOT}/schema.sql"
 ```
 
@@ -226,8 +226,8 @@ second run resets every document's tagging.
 **`event` is the record.** There is no journal any more. `guild.db` is not derived state that can be
 thrown away and rebuilt; it is the board. It is gitignored because a binary file is a bad thing to
 merge, which means the board is machine-local unless you run in cloud mode. What git carries instead
-is the human-readable residue: `config.yaml`, `.guild/docs/`, `.guild/qa/`, `.guild/reviews/`, and
-the repo's own `CHANGELOG.md`.
+is the human-readable residue: `config.yaml`, `.guild/docs/`, `.guild/qa/`, and the repo's own
+`CHANGELOG.md`.
 
 ### The views are the API
 
@@ -416,7 +416,6 @@ The board, in your repository:
 ├── guild.db            # gitignored. THE BOARD
 ├── docs/               # evergreen researcher knowledge (the `doc` table is the primary copy)
 ├── qa/                 # evergreen QA artifacts — charter, missions, bug ledger, session logs
-├── reviews/REQ-NNN.md  # per-requirement review records, appended per round
 ├── dashboard.html      # gitignored. regenerated wholesale
 └── templates/*.yaml    # optional. a project's override of the shipped execution templates
 ```
