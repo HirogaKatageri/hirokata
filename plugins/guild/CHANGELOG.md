@@ -16,6 +16,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [9.1.1] - 2026-09-13
+
+### Removed
+- **`.guild/reviews/REQ-NNN.md`, the per-requirement review record.** `check-in` and `shift` wrote
+  a dated markdown mirror of `v_open_findings` / `v_open_bugs` / `v_failed_tasks` at every
+  `gate-repairs` gate. That data already lives in `review_finding`, `bug` and `work_log` rows;
+  the gate decision is still gathered and presented exactly as before, only the disk copy is gone.
+- **The per-requirement release snapshot**, `.guild/releases/{version}/REQ-NNN.md` and
+  `RELEASE.md`, rendered by `guild:release` from the board at release time (and which copied the
+  review record above into `REQ-NNN.review.md`). A release now only stamps `CHANGELOG.md` and
+  records `guild_state['release:<version>']` — plans, tasks, work logs, findings and bugs stay on
+  the board, which is the durable copy.
+
+### Why
+Both files were a second, disk-only answer to a question the database already answers, and a
+review round or a release could drift from the board the moment someone hand-edited the markdown.
+`guild.db` is the board; nothing needs a prose mirror to be auditable.
+
 ## [9.1.0] - 2026-09-08
 
 ### Changed

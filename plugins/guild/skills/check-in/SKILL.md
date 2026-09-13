@@ -105,7 +105,7 @@ interesting column.
 ### First check-in (no `.guild/config.yaml`)
 
 ```bash
-mkdir -p .guild/docs .guild/qa .guild/reviews
+mkdir -p .guild/docs .guild/qa
 tursodb .guild/guild.db < "${CLAUDE_PLUGIN_ROOT}/schema.sql"     # idempotent
 cat > .guild/config.yaml <<'YAML'
 # guild configuration. Committed to git.
@@ -547,20 +547,6 @@ SELECT id, who, waived, reason, title FROM v_failed_tasks WHERE requirement_id =
 SELECT prompt, kind FROM gate WHERE node_id = 'REQ-NNN/gate-repairs';
 ```
 
-Write the review record to `.guild/reviews/REQ-NNN.md` — **append a new dated section, never
-overwrite a prior round's**:
-
-```markdown
-## {today} — REQ-NNN
-
-### reviewer-security — {PASS | ISSUES FOUND}
-{findings, verbatim}
-
-### reviewer-architecture — …
-### reviewer-business-logic — …
-### reviewer-edge-case — …
-```
-
 **2. Present it as one decision.** Use the gate's own prompt — the template wrote it:
 
 ```
@@ -575,8 +561,6 @@ REQ-007 — Session-backed authentication: the run is complete.
     5. BUG-005 minor     Loading spinner flashes on fast responses
   1 failed task:
     6. TASK-013 Migrate legacy preference rows — migration is not idempotent
-
-  Report: .guild/reviews/REQ-007.md
 
 Findings and bugs from REQ-007 — approve which get repaired.
 ```

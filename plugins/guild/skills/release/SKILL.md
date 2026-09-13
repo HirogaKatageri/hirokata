@@ -4,22 +4,22 @@ description: >
   This skill should be used when the user asks to "cut a release", "release the
   guild", "ship it", "create a release", "tag a version", "publish a release",
   "guild release", or wants to finalize completed requirements into a versioned
-  release. Renames CHANGELOG Unreleased to a version, snapshots the completed
-  requirements out of the board into a dated release directory, and creates an
-  annotated git tag. Does not push.
+  release. Renames CHANGELOG Unreleased to a version, records the released
+  requirements on the board, and creates an annotated git tag. Does not push.
 version: 5.0.0
 user-invocable: true
 allowed-tools: Bash(tursodb *), Bash(git *)
 ---
 
-# Guild Release — snapshot and tag a version
+# Guild Release — stamp the changelog and tag a version
 
 Finalize completed guild requirements into a versioned release: stamp `CHANGELOG.md`'s
-Unreleased section with a version, render the released requirements out of the database into a
-dated snapshot directory, record the release on the board, and create an annotated git tag.
+Unreleased section with a version, record the release on the board, and create an annotated
+git tag.
 
-Status is a **column**. There are no status directories and no ticket files — a release copies
-nothing and moves nothing; it *renders*. Load `guild:warehouse` before the first query.
+Status is a **column**. There are no status directories, no ticket files, and no per-requirement
+snapshot — a release copies nothing and moves nothing; the board and `CHANGELOG.md` are the whole
+record. Load `guild:warehouse` before the first query.
 
 ```bash
 export PATH="$HOME/.turso:$PATH"
@@ -137,93 +137,7 @@ Then transform it:
 4. Replace the heading block with a fresh empty `## [Unreleased]`, then
    `## [{version}] - {today}` carrying `UNRELEASED_BODY`.
 
-## Step 6 — render the snapshot
-
-There is no export command. Render each requirement out of the database with SQL,
-one file per requirement, plans and tasks and records inlined.
-
-**The one rule that keeps this safe:** structure is written by the shell from ids and enum
-words; free text is appended as a whole block by a single-column query and is never interpolated
-into a heading, a table cell or a filename. A `body` containing `## [v9.9.9]` can only ever be
-body text; it can never become a section of the document.
-
-```bash
-V=v1.2.0; REQ=REQ-007
-mkdir -p ".guild/releases/$V"
-OUT=".guild/releases/$V/$REQ.md"
-
-q() { printf '%s\n' "$1" | tursodb -q -m list "$DB"; }   # -m list ALWAYS: `pretty` truncates
-
-{
-  printf '# %s\n\n' "$REQ"
-  printf '## Requirement\n\n'
-} > "$OUT"
-q "SELECT body FROM requirement WHERE id = '$REQ';" >> "$OUT"
-
-printf '\n## Plans\n\n' >> "$OUT"
-q "SELECT body FROM plan WHERE requirement_id = '$REQ' ORDER BY id;" >> "$OUT"
-
-printf '\n## Ticket file sets\n\n' >> "$OUT"
-q "SELECT '- ' || t.id || ' — ' || replace(replace(t.title, char(10),' '), '|','!')
-        || '  files: ' || t.files
-     FROM task t
-    WHERE t.requirement_id = '$REQ' AND t.node_key = 'implement' ORDER BY t.id;" >> "$OUT"
-
-printf '\n## Tasks\n\n' >> "$OUT"
-q "SELECT '- ' || id || '  [' || status || ']  ' || COALESCE(claimed_by, agent, '-') || '  '
-        || replace(replace(title, char(10),' '), '|','!')
-     FROM task WHERE requirement_id = '$REQ' ORDER BY id;" >> "$OUT"
-
-printf '\n## Work log\n\n' >> "$OUT"
-q "SELECT '### ' || w.task_id || ' · ' || w.ts || ' · ' || w.agent || char(10) || char(10) || w.entry
-     FROM work_log w JOIN task t ON t.id = w.task_id
-    WHERE t.requirement_id = '$REQ' ORDER BY w.ts, w.id;" >> "$OUT"
-
-printf '\n## Review findings\n\n' >> "$OUT"
-q "SELECT '### ' || f.severity || ' · ' || f.reviewer || ' · ' || f.disposition
-        || ' · ' || f.task_id || COALESCE(' · ' || f.file || ':' || f.line, '')
-        || char(10) || char(10) || f.summary || char(10) || char(10) || COALESCE(f.detail, '')
-     FROM review_finding f JOIN task t ON t.id = f.task_id
-    WHERE t.requirement_id = '$REQ' ORDER BY f.id;" >> "$OUT"
-
-printf '\n## Bugs\n\n' >> "$OUT"
-q "SELECT '### ' || id || ' · ' || severity || ' · ' || status || char(10) || char(10)
-        || title || char(10) || char(10) || COALESCE(repro, '')
-     FROM bug WHERE requirement_id = '$REQ' ORDER BY id;" >> "$OUT"
-
-[ -f ".guild/reviews/$REQ.md" ] && cp ".guild/reviews/$REQ.md" ".guild/releases/$V/$REQ.review.md"
-```
-
-Check the exit status of every `q` and do not send its output to `/dev/null` on the failure path
-— tursodb writes errors to **stdout**, so a failed query would otherwise land in the snapshot
-looking like content.
-
-**Point at the decisions, do not copy them.** A requirement's snapshot should name the ADRs
-that governed it, so a reader of `v1.2.0` a year from now can find the reasoning without
-guessing at slugs:
-
-```bash
-q "SELECT '### Decisions' || char(10) || char(10)
-        || group_concat('- \`' || d.slug || '\` — '
-             || replace(replace(d.title, char(10), ' '), '|', '!')
-             || ' (' || d.status || ')', char(10))
-     FROM knowledge_edge ke JOIN doc d ON d.slug = ke.from_id
-    WHERE ke.rel = 'decides' AND ke.from_type = 'doc'
-      AND ke.to_type = 'requirement' AND ke.to_id = '$REQ'
-      AND d.kind = 'decision';" >> "$OUT"
-```
-
-**The slug, not the body.** A decision keeps evolving after the release that introduced it —
-that is the whole point of `supersedes` — and a copied body freezes it at the wrong moment and
-then disagrees with the live one. The slug always resolves to the current thinking, and
-`v_decision_log` shows what replaced it.
-
-**Never snapshot the library or the QA discipline.** `doc` rows, `doc_revision` rows,
-`knowledge_edge` rows, `coverage` rows, `.guild/docs/` and `.guild/qa/` are evergreen:
-researcher findings, business rules, the decision log, the risk map and the regression manifest
-all persist across releases so the next strategist can reuse them.
-
-## Step 7 — record the release on the board
+## Step 6 — record the release on the board
 
 This is what makes Step 2 a query next time, and it is the only board write a release makes:
 
@@ -239,38 +153,16 @@ ON CONFLICT(key) DO UPDATE SET value = excluded.value
 RETURNING key, value;
 ```
 
-Then write `.guild/releases/{version}/RELEASE.md` as the human artifact beside the snapshots:
-
-```markdown
----
-released: {today}
-version: {version}
-requirements:
-  - REQ-NNN: {flattened title}
----
-
-# Release {version}
-
-Each requirement in this release is captured beside this file as `REQ-NNN.md`, rendered from the
-board at release time — plans, tasks, work logs, findings and bugs inlined.
-
-The requirements themselves stay on the live board as `done`. Nothing was deleted: the board is
-the record, and `guild_state['release:{version}']` is what marks these as shipped.
-
-IDs are derived as `MAX(n) + 1` and are never reused, so the sequence stays continuous across
-releases and nothing has to be reset.
-```
-
 **A release never changes a requirement's status and never deletes a row.** `done` requirements
 cost nothing on the board — `v_next_task` only ever looks at open tasks — and deleting them would
 orphan every work log, finding and event that explains how the release was built. Nor is there
 anywhere to hand that job off to: **nothing in the guild deletes records** (G11), so a board that
 reads as crowded is one to narrow with `guild:brief` and priorities, not one to empty.
 
-## Step 8 — commit and tag
+## Step 7 — commit and tag
 
 ```bash
-git add CHANGELOG.md .guild/
+git add CHANGELOG.md
 git commit -m "$(cat <<'EOF'
 chore(release): {version}
 
@@ -288,22 +180,19 @@ EOF
 
 Do NOT push. Do NOT pass `--no-verify`.
 
-If pre-commit hooks fail, surface the error and stop. The snapshot files are already written and
-the board row is already recorded, but nothing was moved or deleted — re-running the release
-after fixing the hook is safe, because Step 7's write is an upsert and Step 2 will then find the
-scope already released and say so.
+If pre-commit hooks fail, surface the error and stop. The board row is already recorded, but
+nothing was moved or deleted — re-running the release after fixing the hook is safe, because
+Step 6's write is an upsert and Step 2 will then find the scope already released and say so.
 
-## Step 9 — report
+## Step 8 — report
 
 ```
 Released {version}
 ==================
 
 Changelog: CHANGELOG.md (new [{version}] section)
-Snapshot:  .guild/releases/{version}/
-  {N} requirement(s), rendered from the board with plans, tasks, work logs,
-  findings and bugs inlined
 Board:     guild_state['release:{version}'] records what shipped
+  {N} requirement(s) — plans, tasks, work logs, findings and bugs stay on the board
 
   Released requirements stay on the live board as `done`. Nothing was deleted.
 
@@ -315,7 +204,7 @@ Not pushed. Push with:
   git push && git push --tags
 ```
 
-## Step 10 — verify against §9
+## Step 9 — verify against §9
 
 Run `guild:validate release`. §9 of `docs/expectations.md` follows from one sentence — a
 release *records*, it does not retire: §9.a fingerprints the board before and after and the
@@ -326,10 +215,10 @@ failure with its rows.** Under `--dry-run`, §9.a's diff must be empty.
 ## Dry-run mode
 
 With `--dry-run`, run steps 1–5 to build the plan and print it: the version, the requirements in
-scope with their titles, the CHANGELOG transformation, the files that would be written, and the
-git actions that would run — plus every warning from the pre-release gate. **Write no file, run
-no git command, and make no board write.** The step-2, step-3 and step-4 queries are all reads
-and are safe to run; step 7's upsert is not, and must not run.
+scope with their titles, the CHANGELOG transformation, and the git actions that would run — plus
+every warning from the pre-release gate. **Write no file, run no git command, and make no board
+write.** The step-2, step-3 and step-4 queries are all reads and are safe to run; step 6's upsert
+is not, and must not run.
 
 ## Rules
 
@@ -337,18 +226,15 @@ and are safe to run; step 7's upsert is not, and must not run.
 - **Never skip hooks** — no `--no-verify`.
 - **Never delete or restatus a released requirement.** A release records; it does not retire.
 - **`-m list`, always.** The default `pretty` output mode truncates long values with an ellipsis,
-  and a truncated requirement body in a release snapshot is a lie that outlives the release.
+  and a truncated title is a lie that outlives the release.
 - **Flatten free text before it becomes structure.** A newline in a title forges a changelog
   bullet or a heading; `replace(replace(x, char(10),' '), '|','!')` in SQL, before it leaves the
   engine.
-- **Check every query's exit code.** Errors arrive on stdout and would be written into the
-  snapshot as content.
+- **Check every query's exit code.** Errors arrive on stdout and would otherwise be read as
+  content.
 - **IDs are derived, never counters** — nothing is reset at a release.
 - **CHANGELOG.md lives at repo root**, not inside `.guild/`.
 - **`doc`, `doc_revision`, `knowledge_edge`, `coverage`, `.guild/docs/` and `.guild/qa/` are
-  evergreen** — never snapshotted, never touched. A release **names** the decision slugs a
-  requirement was governed by and copies none of them: a decision goes on evolving after the
-  release that introduced it, and a frozen copy is a second answer to a settled question.
-- **`.guild/reviews/REQ-NNN.md` is COPIED into the snapshot** — it is per-requirement history,
-  not cross-cutting knowledge. The original stays where it is.
-- **One commit, one tag**, both created in step 8.
+  evergreen** — a release never touches them. Plans, tasks, work logs, findings and bugs stay on
+  the board; a release names requirements and decision slugs, it does not copy their contents.
+- **One commit, one tag**, both created in step 7.

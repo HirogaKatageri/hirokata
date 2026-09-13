@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Removed
+- **Guild Plugin v9.1.1 — the review record and the release snapshot no longer write markdown to
+  disk.** `check-in` and `shift` stopped writing `.guild/reviews/REQ-NNN.md` at `gate-repairs`,
+  and `guild:release` stopped rendering `.guild/releases/{version}/REQ-NNN.md` and `RELEASE.md`.
+  Both duplicated data already held in `review_finding`, `bug`, `work_log` and `guild_state` rows;
+  gate decisions and release recording are unchanged, only the disk-only markdown mirrors are gone.
 - **Guild Plugin v8.1.0 — `guild:clear-board` is gone, and the guild deletes no records.** The
   skill had been there since v1.0.4 and its job was to empty the board in place
   while keeping a hand-maintained list of things that "outlive a board." That list was the tell: it

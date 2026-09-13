@@ -198,14 +198,13 @@ The board, in a repository:
 ├── guild.db            # gitignored. THE BOARD — not derived, not rebuildable
 ├── docs/               # evergreen researcher knowledge
 ├── qa/                 # evergreen QA artifacts
-├── reviews/REQ-NNN.md  # per-requirement review records
 ├── dashboard.html      # gitignored, regenerated wholesale
 └── templates/*.yaml    # optional per-repo override of the execution templates
 ```
 
 `guild.db` is gitignored because a binary file is a bad thing to merge — which means **the board is
 machine-local** unless the guild runs in cloud mode. What git carries is the human-readable residue:
-`config.yaml`, `docs/`, `qa/`, `reviews/`, and the repo's `CHANGELOG.md`.
+`config.yaml`, `docs/`, `qa/`, and the repo's `CHANGELOG.md`.
 
 ## 8. Validation: not testing code, validating behavior
 
