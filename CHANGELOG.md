@@ -7,6 +7,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- **Guild Plugin v9.0.0 — the roster gets neutral names.** `product-owner` is now `project-manager`
+  and `architect` is now `strategist`; the roles are unchanged, but "product owner" and "architect"
+  are software job titles, and the guild is meant to assemble a team for any purpose, not a coding
+  tool with a coding team baked in. `subagent_type` changed with them
+  (`guild:product-owner` → `guild:project-manager`, `guild:architect` → `guild:strategist`); a
+  ticket pinned to the old `agent` value dispatches nobody until it is repinned. Capability words
+  were left unchanged in this release (`strategist` still declares `architecture`,
+  `project-manager` still declares `requirements`) — renaming those would have stranded every
+  `task_capability` row on every live board.
+- **The strategist's domain becomes a profile it loads.** A new `skills/domain-software/` skill
+  carries everything that made the strategist a *software* planner rather than a planner — what
+  surveying the current state means, what two concurrent tickets contend for, which capabilities
+  the work routes to, and what sections a plan and a ticket carry. `domain:` in
+  `.guild/config.yaml` picks one; absent still means `software`, so no existing project or board
+  needs a migration. A second domain is a second `skills/domain-<name>/SKILL.md` and one config
+  line.
+- **Guild Plugin v9.1.0 — `architecture` splits into `planning` and `software-architecture`.**
+  9.0.0 made the strategist domain-driven, and a capability word naming only software stranded it
+  from any non-software domain. `strategist` now declares `planning, software-architecture`;
+  `reviewer-architecture` declares `review, software-architecture`. Nothing on a guild-built board
+  is stranded by this — no ticket the guild itself generates has ever required the bare
+  `architecture` word, since the strategist and project-manager are spawned directly rather than
+  matched by capability. A hand-written ticket requiring `architecture` is the one board that could
+  be affected; `SELECT task_id, capability FROM task_capability WHERE capability = 'architecture'`
+  finds it.
+- Versions: guild **8.1.0 → 9.1.1**; marketplace **7.1.1 → 8.1.1**. Full detail, including the
+  8.1.1 and 8.1.2 releases folded into this jump and the 9.1.1 markdown-mirror removal below, is
+  in [`plugins/guild/CHANGELOG.md`](plugins/guild/CHANGELOG.md).
+
+### Added
+- **Guild Plugin v8.1.2 — a fix need not be a ticket.** `bug.fix_ref` and
+  `review_finding.fix_ref` (free text — a sha, a PR url, "shipped in 8.1.1") let G6 accept either a
+  fix task or a fix ref, closing the gap where a defect resolved by a direct commit had no honest
+  status to carry. `migrations/009-a-fix-need-not-be-a-ticket.sql`, schema version **8 → 9**.
+  Also adds a seventh warehouse rule: SQL passed through a shell `printf` to build a statement has
+  its own `%`-format sequences eaten before SQLite sees them, so `printf('%03d', …)` inside a
+  guild query must never be built that way.
+
+### Fixed
+- **Guild Plugin v8.1.1 — version archaeology removed from every file a member loads.** The
+  agents, skills, their references and `schema.sql`'s own comments carried a running commentary on
+  what the plugin used to be in v4 through v7. The rule each passage stated survives; the
+  comparison to a version nobody runs does not — that history lives in the CHANGELOG and the
+  README instead. `docs/v6-architecture.md` is renamed `docs/architecture.md` and rewritten as a
+  description of the design rather than a diff against v5. The deprecated `guild:guild-status`
+  alias is also gone.
+- **The root README and guild README's upgrade sections stopped at migration 008.** Migration
+  `009-a-fix-need-not-be-a-ticket.sql` (schema version 8 → 9) shipped with v8.1.2 but neither
+  README's migration table nor `schema.sql seeds version 8` line was updated, so a reader upgrading
+  a live board from these instructions alone would stop one migration short. Both now list 009 and
+  read `schema.sql` correctly as seeding version **9**.
+
 ### Removed
 - **Guild Plugin v9.1.1 — the review record and the release snapshot no longer write markdown to
   disk.** `check-in` and `shift` stopped writing `.guild/reviews/REQ-NNN.md` at `gate-repairs`,
@@ -129,6 +182,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `tursodb-gotchas.md`.
 
 ### Documentation
+- **Second full audit: README, CHANGELOG, marketplace manifest and every plugin manifest against
+  what actually ships.** The prior audit (below) never got a follow-up once guild kept releasing.
+  Findings and fixes:
+  - **The root README's version table and prose were four guild releases stale**, still reading
+    guild `8.1.0`/`v7.0.0` and the marketplace `7.1.1` after guild had moved through 8.1.1, 8.1.2,
+    9.0.0, 9.1.0 and 9.1.1. Both now read guild `9.1.1` and marketplace `8.1.1`.
+  - **`software:daily-handoff`, shipped in v1.1.0, was missing entirely from the root README's
+    "Other Plugins" listing** — only `conventional-commit`, `split-plan` and `categorize-task` were
+    described, and the section header still read `v1.0.5`. Both fixed.
+  - **`plugin.json` for the software and guild plugins carried no `keywords`, `homepage` or
+    `repository`**, while `marketplace.json`'s entries for the same two plugins (and both
+    `plugin.json` files for research and storytelling) already did. All four now match.
+  - **The marketplace root version had stopped tracking guild's major bumps.** Guild 6.1.0 and
+    7.0.0's breaking changes each moved the marketplace major by one (`4.2.0→5.0.0`,
+    `6.0.0→7.0.0`); guild 8.0.0 and 9.0.0's breaking changes did not carry a marketplace bump at
+    the time they shipped. Marketplace now moves to `8.1.1`, keeping the established offset.
+  - **Every plugin's own README and CHANGELOG were re-checked against its actual `skills/`/`agents/`
+    directories.** `research`, `storytelling` and `software` matched exactly. The guild README's
+    upgrade section stopped at migration `008` and still read `schema.sql seeds version 8`; the
+    schema seeds `9`. Both the root and guild READMEs now list migration `009` and read `9`.
 - **Every plugin README and CHANGELOG audited against what actually ships.** Findings and fixes:
   - **The install instructions pointed at a repository that does not exist.** The root README told
     users to `/plugin marketplace add hirogakatageri/hirokata-cc-marketplace` and to

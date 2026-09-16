@@ -1,6 +1,6 @@
 {
   "name": "hirokata",
-  "version": "7.1.2",
+  "version": "8.1.1",
   "owner": {
     "name": "Gian Patrick Quintana",
     "email": "gian.quintana@hirokata.dev"
@@ -17,6 +17,7 @@
         "name": "Gian Patrick Quintana",
         "email": "gian.quintana@hirokata.dev"
       },
+      "homepage": "https://github.com/HirogaKatageri/hirokata/tree/main/plugins/software-project",
       "license": "MIT",
       "keywords": [
         "development",
@@ -40,6 +41,7 @@
         "name": "Gian Patrick Quintana",
         "email": "gian.quintana@hirokata.dev"
       },
+      "homepage": "https://github.com/HirogaKatageri/hirokata/tree/main/plugins/guild",
       "license": "MIT",
       "keywords": [
         "orchestration",

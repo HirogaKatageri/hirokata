@@ -6,5 +6,8 @@
     "name": "Gian Patrick Quintana",
     "email": "gian.quintana@hirokata.dev"
   },
-  "license": "MIT"
+  "homepage": "https://github.com/HirogaKatageri/hirokata/tree/main/plugins/software-project",
+  "repository": "https://github.com/HirogaKatageri/hirokata",
+  "license": "MIT",
+  "keywords": ["development", "clean-architecture", "planning", "conventional-commits", "commits", "phases", "task-classification", "handoff", "status-report", "daily-summary"]
 }

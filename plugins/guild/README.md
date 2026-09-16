@@ -478,6 +478,7 @@ tursodb .guild/guild.db "SELECT version FROM schema_version;"
 tursodb .guild/guild.db < migrations/006-project-and-plan-approval.sql   # → 6
 tursodb .guild/guild.db < migrations/007-roster-leaves-the-database.sql  # → 7
 tursodb .guild/guild.db < migrations/008-the-library-becomes-a-graph.sql # → 8
+tursodb .guild/guild.db < migrations/009-a-fix-need-not-be-a-ticket.sql  # → 9
 tursodb .guild/guild.db < schema.sql
 ```
 
@@ -486,15 +487,19 @@ tursodb .guild/guild.db < schema.sql
 | **006** | 6 (v6.2) | Renames `phase` to `project`, rewrites `PHASE-NNN` ids, splits `plan.status` from `plan.approval`. |
 | **007** | 7 (v7.0) | Drops `agent`, `agent_capability` and `capability_request` and the six roster views; rebuilds `task` without the FK to `agent(name)`. |
 | **008** | 8 (v8.0) | Gives `doc` a `kind`, `status`, `area` and `created_at`; adds `knowledge_edge` and `doc_revision`. **Check the version reads 7 first** — a second run does not fail safely, it resets every document's tagging. |
+| **009** | 9 (v8.1.2) | Adds `bug.fix_ref` and `review_finding.fix_ref`, so G6 accepts either a fix task or free-text (a sha, a PR url) for a defect somebody fixed by committing directly instead of through a ticket. |
 
-`schema.sql` seeds version **8**. **No migration is idempotent** — a second run of 006 fails on
+`schema.sql` seeds version **9**. **No migration is idempotent** — a second run of 006 fails on
 `CREATE TABLE project`, which is the safe direction to fail — and **order is not optional**. A fresh
 board needs none of this.
 
-**v8.1.0 ships no migration.** Removing `guild:clear-board` touched skills and documentation only;
-`schema.sql` is unchanged, so a v8.0 board is already a v8.1 board. The new invariant it brings, **G11
-— nothing is deleted**, reads `event` rows the existing triggers already wrote, so there was
-nothing to add to the schema for it.
+**v8.1.0 and v9.0.0–v9.1.1 ship no migration.** Removing `guild:clear-board` (8.1.0), renaming
+the roster to `project-manager`/`strategist` and splitting `architecture` into `planning` and
+`software-architecture` (9.0.0–9.1.0), and dropping the on-disk review/release markdown mirrors
+(9.1.1) touched skills, agents and documentation only — `schema.sql` carries none of it, so a v9.0
+board is already a v9.1.1 board. The new invariant 8.1.0 brings, **G11 — nothing is deleted**,
+reads `event` rows the existing triggers already wrote, so there was nothing to add to the schema
+for it.
 
 ---
 
@@ -581,7 +586,7 @@ see `docs/v5-design.md` — but the expression of them here is new.
 ## Version history
 
 See [CHANGELOG.md](CHANGELOG.md) for the guild's own history, and the
-[marketplace CHANGELOG](../../CHANGELOG.md) for the long-form rationale behind the v5–v7 entries.
+[marketplace CHANGELOG](../../CHANGELOG.md) for the long-form rationale behind the v5–v9 entries.
 
 ---
 
