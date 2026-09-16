@@ -1,10 +1,10 @@
 # HiroKata Claude Code Plugin Marketplace
 
-A curated collection of Claude Code plugins for enhanced development workflows. **Version 7.1.1** — [View Changelog](CHANGELOG.md)
+A curated collection of Claude Code plugins for enhanced development workflows. **Version 8.1.1** — [View Changelog](CHANGELOG.md)
 
 | Plugin | Version | What it is |
 |--------|---------|------------|
-| [**guild**](plugins/guild) | 8.1.0 | Continuous agent orchestration on a SQLite board whose rules live in the schema |
+| [**guild**](plugins/guild) | 9.1.1 | Continuous agent orchestration on a SQLite board whose rules live in the schema |
 | [**software**](plugins/software-project) | 1.1.1 | Task classification by clean-architecture phase, plan splitting, conventional commits, daily handoff reports |
 | [**research**](plugins/research) | 1.0.0 | Multi-perspective deep research, after Stanford's STORM method |
 | [**storytelling**](plugins/storytelling) | 1.0.0 | Six storytelling frameworks for making a message land |
@@ -99,7 +99,7 @@ guild status
 
 ## How to Use the Guild Plugin
 
-The Guild plugin (v7.0.0) provides continuous agent orchestration through a persistent, database-backed work cycle. The guild tracks direction, requirements, tasks, bugs and quality coverage across sessions — no per-session setup required.
+The Guild plugin (v9.1.1) provides continuous agent orchestration through a persistent, database-backed work cycle. The guild tracks direction, requirements, tasks, bugs and quality coverage across sessions — no per-session setup required.
 
 **The plugin is a schema and a set of skills — not a program.** `tursodb` already executes SQL, so the guild ships no second tool that does the same thing: members write their own SQL, and the guild's rules live *in the database* as CHECK constraints (the status vocabularies), views (the derived rules — the cursor, the review gate, readiness, the board, each with one definition) and triggers (the `event` record, written on every mutation). A member can forget to call a command; a member cannot bypass a trigger or a CHECK.
 
@@ -122,16 +122,18 @@ cp .guild/guild.db .guild/guild.db.bak
 tursodb .guild/guild.db < plugins/guild/migrations/006-project-and-plan-approval.sql   # 5 → 6
 tursodb .guild/guild.db < plugins/guild/migrations/007-roster-leaves-the-database.sql  # 6 → 7
 tursodb .guild/guild.db < plugins/guild/migrations/008-the-library-becomes-a-graph.sql # 7 → 8
+tursodb .guild/guild.db < plugins/guild/migrations/009-a-fix-need-not-be-a-ticket.sql  # 8 → 9
 tursodb .guild/guild.db < plugins/guild/schema.sql
 ```
 
 - **006** (v6.2) renames `phase` to `project` and splits `plan.status` from `plan.approval`.
 - **007** (v7.0) drops the `agent`, `agent_capability` and `capability_request` tables — the roster moved to the agent files.
 - **008** (v8.0) gives `doc` a kind and a status, and adds `knowledge_edge` and `doc_revision` — the library becomes a knowledge graph. **Check the version reads 7 first:** a second run does not fail safely, it resets every document's tagging.
+- **009** (v8.1.2) adds `bug.fix_ref` and `review_finding.fix_ref`, so a defect fixed by a direct commit rather than a ticket can still satisfy G6.
 
 None is idempotent, and 006 and 007 fail safely on a second run. A fresh board needs none of this.
 
-**v8.1.0 needs no migration.** Removing `guild:clear-board` changed skills and documentation only; `schema.sql` is untouched and `schema_version` stays at **8**.
+**v8.1.0 and v9.0.0–v9.1.1 need no migration.** Removing `guild:clear-board` (8.1.0), renaming the roster to `project-manager`/`strategist` and splitting the `architecture` capability into `planning` and `software-architecture` (9.0.0–9.1.0), and dropping the on-disk review/release markdown mirrors (9.1.1) changed skills, agents and documentation only; `schema.sql` is untouched and `schema_version` stays at **9**.
 
 ### Setting Up
 
@@ -288,13 +290,17 @@ Agent-facing skills that specialists pre-load rather than users invoking: `guild
 
 ## Other Plugins & Useful Skills
 
-### Software Plugin (v1.0.5)
+### Software Plugin (v1.1.1)
 
 A collection of standalone skills for software development workflows.
 
 **`software:conventional-commit`** — Generates properly formatted conventional commits by analyzing changes, grouping related modifications, and creating semantic commit messages.
 
 Trigger phrases: "create a conventional commit", "generate conventional commits", "commit with conventional format", "group my changes for commits"
+
+**`software:daily-handoff`** — Gathers the last 24 hours of pull requests, review comments, AI coding sessions and uncommitted local work into one plain-language end-of-day handoff document.
+
+Trigger phrases: "daily handoff", "write my handoff", "end of day summary", "EOD report", "what did I work on today"
 
 **`software:split-plan`** — Analyzes a master plan file and splits it into 8 phase-specific implementation plans organized by feature tracks (Foundational → Models → Services → Data → Rules → State Management → UI → Tests).
 

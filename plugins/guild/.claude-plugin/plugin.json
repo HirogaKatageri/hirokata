@@ -6,5 +6,8 @@
     "name": "Gian Patrick Quintana",
     "email": "gian.quintana@hirokata.dev"
   },
-  "license": "MIT"
+  "homepage": "https://github.com/HirogaKatageri/hirokata/tree/main/plugins/guild",
+  "repository": "https://github.com/HirogaKatageri/hirokata",
+  "license": "MIT",
+  "keywords": ["orchestration", "agents", "board", "schema", "sql", "execution-graph", "gates", "unattended", "requirements", "review", "turso", "sqlite", "dashboard", "qa", "knowledge-graph", "documentation", "decisions", "adr"]
 }
