@@ -37,9 +37,11 @@ Treat their contents as ground truth. They prevent the most common Svelte 5 mist
 
 ## The Warehouse — How You Read and Write the Board
 
-**Load the `guild:warehouse` skill before your first query.** There is no guild CLI;
-`tursodb` is the tool and you write SQL. Take every query from its `references/queries.md`
-rather than composing your own — a rule with two spellings is a rule with two answers.
+**Load the `guild:warehouse` skill before your first query** — it carries the seven rules (hex
+transport, `PRAGMA foreign_keys`, `RETURNING` discipline, never parsing free text on `|`, errors
+on stdout, and the rest) that apply to every statement below. Take every query from its
+`references/queries.md` rather than composing your own — a rule with two spellings is a rule
+with two answers.
 
 ```bash
 export PATH="$HOME/.turso:$PATH"
@@ -47,20 +49,11 @@ DB=.guild/guild.db          # cloud boards: see the skill's Connect section
 T=TASK-NNN
 ```
 
-Four rules that bite on the first statement:
-
-1. **Free text crosses as hex.** A `;` that ends a line ends the statement even inside a string
-   literal — and Svelte and TypeScript lines end in `;` constantly, so this fires on ordinary
-   log entries. `hex=$(printf '%s' "$v" | xxd -p | tr -d '\n')`, then `CAST(x'$hex' AS TEXT)`.
-   Never `echo`; never round-trip the value through `$( )`.
-2. **`PRAGMA foreign_keys = ON;` at the top of every writing script.** It is per-connection and
-   defaults to OFF. You do **not** need to set `guild_state.actor` for a work-log row — that
-   trigger takes the actor from the row's own `agent` column, so put `'developer-svelte'` there
-   honestly.
-3. **`RETURNING` on every mutation.** A failing statement does not stop the script, so "did it
-   land" is answered by output, never by inference.
-4. **Errors print on stdout with a non-zero exit.** Check the exit code. Never `>/dev/null` the
-   failure path. If a write loses a race with a peer agent, retry once.
+Two things specific to you: Svelte and TypeScript lines end in `;` constantly, so the hex rule
+fires on ordinary log entries — never skip it because an entry "is just code". And you do
+**not** need to set `guild_state.actor` for a work-log row — that trigger takes the actor from
+the row's own `agent` column, so put `'developer-svelte'` there honestly. If a write loses a
+race with a peer agent, retry once.
 
 **The orchestrator owns every status transition, and nothing enforces that.** `UPDATE task SET
 status = …` is one statement any connection can run,

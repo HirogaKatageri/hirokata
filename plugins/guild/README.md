@@ -305,12 +305,11 @@ the price of moving the vocabulary into the engine, and it is a real one.
 | `guild:shift` | `check-in` with the human taken out of the middle. Runs unattended to the next gate, then stops and says why. Never decides a gate — not even "the obvious ones". |
 | `guild:brief` | Where the project stands: direction, in flight, bugs, coverage due, what moved. Read-only. |
 | `guild:dashboard` | Renders the board as one self-contained offline HTML page. Read-only. |
-| `guild:new-requirement` | A live 3-way interview between the project-manager, the strategist and you. Writes the requirement, the plan, the tickets **and the execution graph**, then ends at `gate-plan` — nothing is built until you approve. |
+| `guild:new-requirement` | A live interview with the project-manager, then the strategist plans from the finished requirement — sequentially, never concurrently. Writes the requirement, the plan, the tickets **and the execution graph**, then ends at `gate-plan` — nothing is built until you approve. |
 | `guild:qa` | Seeds a QA pass onto the board: a qa-strategist plans risk-based coverage, then qa-testers run the app, author Playwright specs, and file bugs back to the board. |
 | `guild:comprehensive-review` | Multi-dimensional pre-PR review — requirements compliance, coverage, edge cases, architecture, security. |
 | `guild:verify-and-fix` | Diagnoses a reported error end to end, then applies a test-driven fix. |
 | `guild:release` | Stamps `CHANGELOG.md`'s Unreleased section with a version, snapshots completed requirements, and creates an annotated tag. Does not push. |
-| `guild:discuss` | Surfaces the subjects in the current context and drives a focused discussion. |
 | `guild:create-workflow` | Generates a CI or script workflow file. |
 | `guild:validate` | **Runs `docs/expectations.md` against the live board** — the eleven global invariants by default, a named process's postconditions on request. Reports each failure with the offending rows. Read-only unless you ask it to load a fixture. |
 | `guild:warehouse` | **The reference every member loads before touching guild data.** |
@@ -345,7 +344,7 @@ to first.
 | Agent | Model | Capabilities | Role |
 |-------|-------|--------------|------|
 | `strategist` | Opus | `planning`, `software-architecture` | Explores the codebase, writes the implementation plan and its tickets, composes the execution graph. Recommends direction; never sets it. |
-| `project-manager` | Sonnet | `requirements` | Interviews you live alongside the strategist, writes the requirement record. |
+| `project-manager` | Sonnet | `requirements` | Interviews you live, writes the requirement record, then hands off to the strategist. |
 | `developer` | Sonnet | `implement`, `backend`, `frontend` | Implements code per plan and requirement. |
 | `developer-svelte` | Sonnet | `implement`, `frontend`, `svelte`, `sveltekit` | Svelte 5 / SvelteKit specialist, pre-loaded with four reference skills. |
 | `test-planner` | Sonnet | `test-planning` | Inventories the implemented diff and writes the test plan. |
@@ -493,11 +492,12 @@ tursodb .guild/guild.db < schema.sql
 `CREATE TABLE project`, which is the safe direction to fail — and **order is not optional**. A fresh
 board needs none of this.
 
-**v8.1.0 and v9.0.0–v9.1.1 ship no migration.** Removing `guild:clear-board` (8.1.0), renaming
+**v8.1.0 and v9.0.0–v9.2.0 ship no migration.** Removing `guild:clear-board` (8.1.0), renaming
 the roster to `project-manager`/`strategist` and splitting `architecture` into `planning` and
-`software-architecture` (9.0.0–9.1.0), and dropping the on-disk review/release markdown mirrors
-(9.1.1) touched skills, agents and documentation only — `schema.sql` carries none of it, so a v9.0
-board is already a v9.1.1 board. The new invariant 8.1.0 brings, **G11 — nothing is deleted**,
+`software-architecture` (9.0.0–9.1.0), dropping the on-disk review/release markdown mirrors
+(9.1.1), and removing `guild:discuss` while making `new-requirement`'s interview sequential
+instead of a concurrent 3-way (9.2.0) touched skills, agents and documentation only — `schema.sql`
+carries none of it, so a v9.0 board is already a v9.2.0 board. The new invariant 8.1.0 brings, **G11 — nothing is deleted**,
 reads `event` rows the existing triggers already wrote, so there was nothing to add to the schema
 for it.
 

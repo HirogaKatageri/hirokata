@@ -16,6 +16,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [9.2.0] - 2026-09-20
+
+### Removed
+- **`guild:discuss` is gone.** It duplicated `new-requirement`'s interview, and its "Plan
+  immediately" path spawned the strategist directly with a locally-generated requirement document
+  rather than a board row — bypassing the requirement `strategist.md` expects to already exist
+  (`SELECT body FROM requirement WHERE id='REQ-NNN'`, with the id already in its dispatch prompt).
+  No other skill invoked it. Removed the skill and its catalog entries from both READMEs and
+  `docs/architecture.md`'s file tree. `new-requirement` already does everything this did, correctly,
+  so nothing replaces it.
+
+### Changed
+- **`new-requirement` interviews sequentially, not concurrently.** The project-manager and the
+  strategist no longer run as a live 3-way with cross-talk; the project-manager interviews you to
+  a finished requirement first, and the strategist plans from that requirement once it exists. The
+  experimental team-mode interview scaffolding this replaced is gone. `README.md` and
+  `docs/expectations.md` now describe the interview as sequential.
+- **Fifteen agent files and nine skills load their playbooks on demand instead of upfront.**
+  Shared and procedural content moved out of the agent definitions into `agents/references/`
+  (`reviewer-shared`, `strategist-templates`, `strategist-graph-deviations`,
+  `strategist-recruiting`, `project-manager-bugfix-tickets`), and out of `check-in`,
+  `new-requirement`, `brief`, `dashboard`, `qa`, `qa-artifacts`, `shift`, `create-workflow` and
+  `svelte-build-deploy` into per-skill `references/` and `scripts/` directories — `brief`'s and
+  `dashboard`'s SQL now live in `scripts/*.sql` rather than inline in the skill body. Each file
+  loads its own playbook up front and pulls in procedure detail only when it is needed; no skill
+  or agent's observable behavior changes.
+
+### Fixed
+- **`comprehensive-review` under-reported its own findings.** The skill launches and describes
+  five review agents (`product-reviewer`, `reviewer-business-logic`, `reviewer-edge-case`,
+  `reviewer-architecture`, `reviewer-security`), but its two worked examples and
+  `references/review-interpretation.md`'s closing summary still described four — the
+  PR-readiness example even filed a CSRF finding under the edge-case reviewer's report instead of
+  the security reviewer's. Both examples now carry a distinct Security Reviewer report and a
+  matching Security row in the Review Dimensions Summary, the reference guide says "five
+  perspectives," and `SKILL.md` no longer calls agent dispatch "the Task tool" (it's the `Agent`
+  tool).
+
+### Why this is a minor and not a major
+
+Removing `guild:discuss` drops a public skill, but every board effect it produced — a requirement
+row, a plan and downstream tickets — is exactly what `new-requirement` produces, and nothing
+pinned a ticket, a migration or a schema object to `guild:discuss` the way v9.0.0's roster rename
+did. The same reasoning that kept `guild:clear-board`'s removal (v8.1.0) a minor applies here:
+no schema change, no action required of an existing board, and a documented equivalent path.
+
+### Migration
+**None.** `schema.sql` is unchanged and `schema_version` stays at **9** — a v9.0 board is already
+a v9.2.0 board. What changed is which skills ship, how agents and skills load their own
+documentation, and `new-requirement`'s interview mechanics.
+
+---
+
 ## [9.1.1] - 2026-09-13
 
 ### Removed

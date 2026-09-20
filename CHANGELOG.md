@@ -33,9 +33,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matched by capability. A hand-written ticket requiring `architecture` is the one board that could
   be affected; `SELECT task_id, capability FROM task_capability WHERE capability = 'architecture'`
   finds it.
-- Versions: guild **8.1.0 → 9.1.1**; marketplace **7.1.1 → 8.1.1**. Full detail, including the
-  8.1.1 and 8.1.2 releases folded into this jump and the 9.1.1 markdown-mirror removal below, is
-  in [`plugins/guild/CHANGELOG.md`](plugins/guild/CHANGELOG.md).
+- Versions: guild **8.1.0 → 9.2.0**; marketplace **7.1.1 → 8.2.0**. Full detail, including the
+  8.1.1 and 8.1.2 releases folded into this jump, the 9.1.1 markdown-mirror removal and the 9.2.0
+  interview/skill changes below, is in [`plugins/guild/CHANGELOG.md`](plugins/guild/CHANGELOG.md).
+
+### Changed
+- **Guild Plugin v9.2.0 — `new-requirement` interviews sequentially instead of concurrently.**
+  The project-manager and the strategist no longer run as a live 3-way with cross-talk; the
+  project-manager now interviews you to a finished requirement first, and the strategist plans
+  from that requirement once it exists — the experimental team-mode interview scaffolding this
+  replaced is gone. `README.md` and `docs/expectations.md` describe the interview as sequential
+  to match.
+- **Guild Plugin v9.2.0 — playbooks moved into `references/`, loaded on demand.** Fifteen agent
+  files and nine skills (`check-in`, `new-requirement`, `brief`, `dashboard`, `qa`,
+  `qa-artifacts`, `shift`, `create-workflow`, `svelte-build-deploy`) had their shared or
+  procedural content split into `agents/references/` and per-skill `references/`/`scripts/`
+  directories — `brief` and `dashboard`'s SQL moved into `scripts/*.sql`. Each file now loads its
+  own playbook up front and defers procedure detail until it is needed; no skill or agent's
+  observable behavior changes.
 
 ### Added
 - **Guild Plugin v8.1.2 — a fix need not be a ticket.** `bug.fix_ref` and
@@ -47,6 +62,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guild query must never be built that way.
 
 ### Fixed
+- **Guild Plugin v9.2.0 — `comprehensive-review` under-reported its own findings.** The skill launches
+  and describes five review agents (`product-reviewer`, `reviewer-business-logic`,
+  `reviewer-edge-case`, `reviewer-architecture`, `reviewer-security`), but its two worked examples
+  and `references/review-interpretation.md`'s closing summary still described four — the
+  PR-readiness example even filed a CSRF finding under the edge-case reviewer's report instead of
+  the security reviewer's. Both examples now carry a distinct Security Reviewer report and a
+  matching Security row in the Review Dimensions Summary, the reference guide says "five
+  perspectives," and `SKILL.md` no longer calls agent dispatch "the Task tool" (it's the `Agent`
+  tool).
 - **Guild Plugin v8.1.1 — version archaeology removed from every file a member loads.** The
   agents, skills, their references and `schema.sql`'s own comments carried a running commentary on
   what the plugin used to be in v4 through v7. The rule each passage stated survives; the
@@ -61,6 +85,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read `schema.sql` correctly as seeding version **9**.
 
 ### Removed
+- **Guild Plugin v9.2.0 — `guild:discuss` removed.** It duplicated `new-requirement`'s interview, and its
+  "Plan immediately" path spawned the strategist directly with a locally-generated requirement
+  document rather than a board row — bypassing the requirement `strategist.md` expects to already
+  exist (`SELECT body FROM requirement WHERE id='REQ-NNN'`, with the id already in its dispatch
+  prompt). No other skill invoked `guild:discuss`. Removed the skill and its catalog entries from
+  both READMEs and `docs/architecture.md`'s file tree. No migration path is needed:
+  `new-requirement` already does everything `guild:discuss` did, correctly.
 - **Guild Plugin v9.1.1 — the review record and the release snapshot no longer write markdown to
   disk.** `check-in` and `shift` stopped writing `.guild/reviews/REQ-NNN.md` at `gate-repairs`,
   and `guild:release` stopped rendering `.guild/releases/{version}/REQ-NNN.md` and `RELEASE.md`.
