@@ -570,63 +570,26 @@ ticket became a roster gap rather than a silent skip, §11.e that every stop sai
 *after* the night, not during it, so a failure here is something the user reads at breakfast.
 **Report every one with its rows, before the summary.**
 
-## Arming it on a cadence — opt-in, per project
+## Arming it, and notifying on it
 
-A shift is one loop; a cadence is what makes it a night's work. Both of these arm **this skill**.
+Two opt-in features, neither part of running a single shift: a recurring cadence (`/loop` or a
+scheduled agent) so a shift becomes a night's work, and a `PushNotification` when a gate
+arrives or the night ends abnormally. Set up only on request — full detail, including the
+notify-marker file and the exact events to fire on: `references/automation.md`.
 
-```
-/loop 10m /guild:shift              # this session, on an interval
-```
+## Rules — at a glance
 
-or a scheduled agent (the `schedule` skill) running `/guild:shift` on a cron expression.
+Each is argued in full where it first applies above; this is the checklist, not the argument.
 
-**Only set one up when the user asks, and only for the project they asked about.** Say what it
-will do and how it stops: each run works until the next gate, the budget applies per run, and a
-gate arrival ends the run rather than pausing it. Tell them how to disarm it in the same breath.
-
-## Notifications — the one moment a shift genuinely needs a human
-
-A gate is that moment. Nothing else is.
-
-**Opt-in per project.** The marker is a file, so it is a fact and not a memory:
-
-```bash
-[ -f .guild/shift.notify ] && echo "notifications on"
-```
-
-Create it only when the user says yes, with the one line they agreed to inside it. Absent means
-**never notify**.
-
-When it exists, send **PushNotification** on exactly two events: **a gate arrived** (stop reason
-`gate`), and **an abnormal stop** (`infrastructure` or `collision`, because both mean the night
-ended early and something is wrong). One line, under 200 characters, leading with what they would
-act on:
-
-> `REQ-007 repairs gate ready — 3 findings, 2 bugs, 1 failed task. 5 tasks done, 42 min.`
-
-Never notify on `max-tasks`, `max-minutes`, `idle`, `operator`, or on per-task progress. A shift
-that pushes for every event trains the user to mute it, and then the gate notification — the one
-that mattered — arrives silenced.
-
-## Rules
-
-1. **Never decide a gate.** Not `gate-plan`, not `gate-repairs`, not "the obvious ones". Nothing
-   refuses this for you.
-2. **Never push, never commit to the default branch, never rewrite history.** The git allowlist
-   in §2.2 is the whole of what a shift may run.
-3. **The budget is fixed when the shift opens.** It lives in the `started` event's payload. If
-   you want a different ceiling, end the shift and open a new one, and say why.
-4. **One requirement, one batch, per turn.** Never queue a whole segment blind.
-5. **A failure does not stop the run and does not wake the user.** It is collected and judged at
-   `gate-repairs`. Exactly two exceptions: a file collision, and a failure that leaves the whole
-   requirement with nothing runnable.
-6. **Record both halves, always** — the ticket and the node. A node left `running` silently
-   stalls everything behind it, and at 3am there is nobody to notice.
-7. **Never improvise a member.** No eligible agent means the ticket is a roster gap; block it and
-   move on. **Write the block** — nothing else records it, and an unblocked gap makes the shift
-   re-pick the same ticket until morning.
-8. **Never change direction.** No `goal`, no `project`, no `priority`, no retitling somebody else's
-   work. A shift executes the plan; it does not edit it.
-9. **`started` and `ended` are the only `event` rows you write by hand,** and they are never
-   updated or deleted. Everything else in `event` is the triggers' to write.
-10. **End with the reason and the report**, not a list of everything that went right.
+1. Never decide a gate — not `gate-plan`, not `gate-repairs`, not "the obvious ones" (§4).
+2. Never push, never commit to the default branch, never rewrite history — the §2.2 allowlist
+   is the whole of what a shift may run.
+3. The budget is fixed when the shift opens (§1) — a different ceiling means a new shift.
+4. One requirement, one batch, per turn — never queue a whole segment blind (§2).
+5. A failure does not stop the run or wake the user (§2.5) — collected and judged at
+   `gate-repairs`, except a file collision or a requirement left with nothing runnable.
+6. Record both halves, always — the ticket and the node (§2.3).
+7. Never improvise a member — no eligible agent means write the block (§2.5), not a substitute.
+8. Never change direction — no goal, project, priority, or retitling somebody else's work.
+9. `started` and `ended` are the only hand-written `event` rows, never updated or deleted (§1).
+10. End with the reason and the report (§3, §5), not a list of everything that went right.

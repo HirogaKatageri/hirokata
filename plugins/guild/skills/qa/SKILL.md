@@ -79,7 +79,7 @@ SELECT id, status FROM requirement WHERE title = 'Product QA & E2E Regression';
 
 If it exists, use that id and skip to Step 5. If not, create it — and **write the whole document
 in the one INSERT**. The body crosses as hex, because it contains `#`, `|` and lines that could
-end in `;`:
+end in `;`. Full document text: `references/umbrella-body.md`.
 
 ```bash
 hex=$(xxd -p < /tmp/qa-umbrella.md | tr -d '\n')       # never echo; never round-trip via $( )
@@ -99,38 +99,6 @@ RETURNING id, status;
 
 It opens `in-progress` and **stays there forever** — it is standing work, not a feature, and it
 is deliberately never included in a release. `project_id` is NULL: QA is not part of any one project.
-
-The umbrella's body, for reference:
-
-```markdown
-# Product QA & E2E Regression
-
-## Summary
-
-Umbrella for the guild's independent QA discipline: risk-based coverage planning, empirical
-testing of the running product, end-to-end regression specs, and defect findings. Standing —
-not tied to a single feature.
-
-## User Stories
-
-### US-1: Risk-based coverage
-**As a** maintainer **I want** the highest-risk product areas covered first
-**So that** a regression in something that matters is caught before release.
-
-### US-2: Committed e2e regression
-**As a** maintainer **I want** e2e specs committed to the project's test dir and run in CI
-**So that** the suite keeps working without a QA pass.
-
-## Technical Considerations
-
-- e2e specs live in the project's real test dir and run in CI.
-- Defects are `bug` rows and quality areas are `coverage` rows — both on the board.
-- The charter, missions, session logs and regression manifest live under `.guild/qa/`.
-
-## Out of Scope
-
-- Unit and integration tests — owned by `test-writer`, planned by `test-planner`.
-```
 
 ## Step 5 — seed the qa-strategist ticket
 
@@ -257,26 +225,10 @@ SELECT fact, value FROM v_brief;
 
 ## Standing cadence — opt-in, per project
 
-QA can run on a schedule so quality is checked continuously. **Opt-in per project**; it does not
-auto-arm, and a shift never starts one.
-
-```
-/schedule create "weekly product QA" --cron "0 9 * * 1" --prompt "/guild:qa product cadence"
-```
-
-A `cadence` pass skips full re-planning and asks the board what is due:
-
-```sql
-SELECT id, area, risk, interval_days, days_since, spec_path FROM v_coverage_due;
-```
-
-`days_since` is **NULL for an area nobody has ever inspected** — that is not "0 days ago", and
-reporting it as such lies about the state of the product.
-
-The qa-strategist then declares a single qa-tester mission that (a) runs the existing regression
-suite from `.guild/qa/regression.md`, and (b) does a focused exploratory pass on exactly those
-areas, filing anything new it finds. **If nothing is due, the pass ends there** — that is the
-cadence working, not failing.
+QA can run on a schedule so quality is checked continuously, via `/schedule`. **Opt-in per
+project**; it does not auto-arm, and a shift never starts one. Full setup and what a `cadence`
+pass does differently (skips full re-planning, asks `v_coverage_due` what's due, and ending
+with nothing due is success, not failure): `references/cadence.md`.
 
 ## Verify against §10
 

@@ -783,9 +783,10 @@ The `standard` template, end to end.
 ### Trigger
 
 `guild:new-requirement` — the user asks for a feature ("add a requirement", "I need a feature",
-"I want to build…"). The skill runs a live three-way interview between the project-manager, the
-strategist and the user, and ends at `gate-plan` without building anything. Approval at that gate
-is what releases the rest of the flow to `guild:check-in` or `guild:shift`.
+"I want to build…"). The skill runs a live interview between the project-manager and the user,
+then hands the finished requirement to the strategist to plan — the two never run concurrently —
+and ends at `gate-plan` without building anything. Approval at that gate is what releases the
+rest of the flow to `guild:check-in` or `guild:shift`.
 
 ### Preconditions
 
@@ -813,8 +814,9 @@ P4.c must be a **separate round trip.** A failing statement does not stop a turs
 
 ### Expected sequence
 
-1. **Interview.** The orchestrator spawns the project-manager and the strategist and moderates.
-   Nothing is written to the board yet.
+1. **Interview.** The orchestrator spawns the project-manager alone and moderates its interview
+   loop; once it reports done, the orchestrator spawns the strategist and moderates that in
+   turn. Nothing is written to the board until the project-manager creates the requirement.
 2. **Create the requirement**, `status = 'todo'`, body as `CAST(x'…' AS TEXT)`. Id derived inside
    the INSERT with `printf('%03d', COALESCE(MAX(…),0)+1)`, never hand-assigned.
 3. **Place it in the direction** — `project_id`, on the user's explicit answer. Nullable by design;

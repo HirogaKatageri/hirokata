@@ -33,6 +33,8 @@ text, and the view catalog. Everything below assumes it. Nothing here shells out
 - `references/state-format.md` — what is on disk under `.guild/`, and what is derived
 - `references/workflow-compilation.md` — only when you want the **Workflow** tool to drive
   a batch, or a run crashed mid-batch
+- `references/edge-cases.md` — a requirement with no execution graph (§3.7), no eligible
+  agent for a ticket (§3.8), and the CHANGELOG bullet on completion (§3.9)
 
 ## Core model
 
@@ -73,28 +75,19 @@ together at `gate-repairs`.
 
 ## Running SQL
 
-Write a script to a scratch file with a **quoted** heredoc and feed it in — that keeps the
-shell out of your SQL:
+`guild:warehouse` covers the connection, the hex rule, and the rest of the seven rules — this
+is the one addition for check-in's longer scripts: write to a scratch file with a **quoted**
+heredoc rather than piping, and set the actor before any write:
 
 ```bash
 export PATH="$HOME/.turso:$PATH"
 cat > /tmp/q.sql <<'SQL'
+PRAGMA foreign_keys = ON;
+UPDATE guild_state SET value = 'orchestrator' WHERE key = 'actor';
 SELECT fact, value FROM v_brief;
 SQL
 tursodb -q -m list .guild/guild.db < /tmp/q.sql
 ```
-
-Every **writing** script starts with the preamble, and every mutation carries `RETURNING` so
-"did it land" is answered by output rather than by hope:
-
-```sql
-PRAGMA foreign_keys = ON;
-UPDATE guild_state SET value = 'orchestrator' WHERE key = 'actor';
-```
-
-Free text — a title, a decision, a log entry — crosses as `CAST(x'<hex>' AS TEXT)`. Never
-parse `-m list` output positionally; ask for `json_object(...)` when a row has more than one
-interesting column.
 
 ---
 
@@ -643,81 +636,20 @@ Then summarize the requirement and ask: continue with the next one, or wrap up?
 
 ### 3.7 A requirement with no graph — the cursor fallback
 
-For a board that predates the graph, the cursor still works and it is the fallback:
-
-```sql
-SELECT * FROM v_next_task;                                   -- resume, else claim
-SELECT member_id, member_status, member_title FROM v_batch WHERE task_id = 'TASK-NNN';
-```
-
-**Use it only when the requirement has no `graph_node` rows, and say so out loud.**
-`v_next_task` applies the review gate but deliberately ignores dependencies and eligibility,
-so check `v_open_bounties` before dispatching. Resolve the member with the pin/capability
-rule in 3.3, and skip 3.5 — there is no gate on a graph-less requirement, so a review report goes to
-the user directly.
-
-**Offer the fix once**: only the strategist should decide a graph's shape, so hand the
-requirement back to `guild:new-requirement` rather than instantiating one yourself.
+A board that predates the graph falls back to the cursor (`v_next_task`, `v_batch`). Full
+procedure: `references/edge-cases.md` § cursor fallback.
 
 ### 3.8 No eligible agent — block it, loudly
 
-When the match in 3.3 comes back empty — the ticket declared capabilities, has no pin, and no
-roster member's `capabilities` cover its required set — that is a **gap in the roster** and it
-should be loud.
-
-**This write is the ONLY thing that makes the gap visible.** The database cannot see the agent
-files, so no view can derive "nobody covers this": `v_open_bounties` will keep offering the
-ticket every check-in until you write it down. Reading never blocks a ticket; blocking is a
-decision, so it is a write you make on purpose:
-
-```sql
-UPDATE task SET status = 'blocked'
- WHERE id = 'TASK-005' AND status = 'todo'
-   AND COALESCE(agent, '') = ''
-RETURNING id, status;
-
-INSERT INTO work_log (task_id, ts, agent, entry)
-SELECT t.id, strftime('%Y-%m-%dT%H:%M:%SZ','now'), 'orchestrator', CAST(x'<hex>' AS TEXT)
-  FROM task t WHERE t.id = 'TASK-005';
-
-UPDATE graph_node SET status = 'failed' WHERE task_id = 'TASK-005' AND status = 'running'
-RETURNING id, status;
-```
-
-**Tell the user now, do not batch it into the wrap-up.** Name the ticket, the missing
-capabilities (`v_blocked_tasks.who` spells them: `needs:implement+rust`), and the one thing
-that fixes it:
-
-```
-TASK-005 "Port the codec to Rust" is blocked: no subagent available to you declares
-[implement, rust]. Nothing will pick it up until one does. Adding an agent file with
-`capabilities: [implement, rust]` to .claude/agents/ is the whole fix — or reassign
-the work by pinning a member you accept.
-```
-
-**Say which capability is missing, not just that the match failed.** The word is the agent
-file somebody needs to write, and it is the only actionable half of the report.
-
-Then continue the loop. `blocked` means exactly one thing — **no guild member can take this
-bounty** — never "waiting on a person or a decision". It holds the review gate and keeps its
-requirement open at 3.6, both deliberately. **Never substitute a member you think is close
-enough**; if the user wants a generalist to take it anyway, that is their call, out loud.
-
-**Unblocking**: the moment an agent file declaring the capability exists, the gap is closed —
-there is nothing to sync. Re-run the roster scan, confirm the new member covers the required
-set, then `UPDATE task SET status = 'todo'` and `UPDATE graph_node SET status = 'pending'`.
+When the match in 3.3 comes back empty, that is a roster gap and it must be written down —
+nothing else can make it visible. Full procedure, including the exact writes and the message
+to the user: `references/edge-cases.md` § no eligible agent.
 
 ### 3.9 CHANGELOG maintenance
 
-When a requirement reaches `done` (3.6), append a bullet under `## [Unreleased]` in the
-repo-root `CHANGELOG.md` (create the file with the Keep-a-Changelog preamble if missing):
-
-```
-- REQ-NNN: {requirement title}
-```
-
-Skip if a bullet starting with `- REQ-NNN:` is already there (idempotent). With waived tasks,
-use `- REQ-NNN: {title} (TASK-NNN skipped)`. `guild:release` renames `## [Unreleased]` later.
+On requirement completion (3.6), append a bullet under `## [Unreleased]` in the repo-root
+`CHANGELOG.md`. Full format and the waived-task variant: `references/edge-cases.md` §
+CHANGELOG maintenance.
 
 ---
 
@@ -765,48 +697,32 @@ dispatching by a hardcoded name, letting somebody else move a status, building p
 and re-deriving a rule instead of reading the view. **Report every failure with its rows.**
 Your own account of what you wrote is not evidence; the board is.
 
-## Key Rules
+## Key Rules — at a glance
 
-1. **The graph is the chain, and you do not know it.** What runs and what runs together comes
-   from `v_ready_nodes` plus the template's `parallel:` ceiling. Never invent an order, widen
-   a batch, merge two, or dispatch a node the graph did not offer.
-2. **You own every status transition** — `task.status`, `graph_node.status`, `gate.status`.
-   Agents report; their only board writes are `work_log`, `review_finding` and `bug` rows.
-   **No constraint enforces this.** It holds because you honor it.
-3. **Record BOTH halves.** A ticket moved without its node leaves the graph stalled; a node
-   moved without its ticket leaves the board lying. Every 3.4 row is two statements.
-4. **Two gates, and only one of them is yours.** `gate-plan` belongs to
-   `guild:new-requirement`; `gate-repairs` is yours. Never add a gate, never approve one that
-   is not yours, never build past a pending one, and never approve one `v_ready_nodes` does
-   not list.
-5. **Problems are collected, not escalated.** A finding, a bug, a failed task, a file
-   collision — record it and keep running. They are judged together at `gate-repairs`.
-   Stopping the user per problem converts agent time into their time, which is the exact
-   thing the two-gate model exists to prevent.
-6. **The graph orders; the matcher only names the member.** `v_open_bounties` answers "who
-   could take this", not "may this run yet".
-7. **There is no reviewer fan-out to perform.** The `review` node *is* four nodes; the member
-   is the suffix of the node id.
-8. **Read the view, do not re-derive the rule.** `v_next_task`, `v_ready_nodes`,
-   `v_task_actionable`, `v_brief` each hold ONE definition. A second spelling is a second
-   answer, and both look right. **The match is the exception and the only one**: it is not a
-   view because the roster is not in the database, so the ONE definition of it is the table
-   in 3.3. Follow it literally rather than judging who seems suitable.
-9. **Serial members are never concurrent**, and a batch that would hold two is a stop-and-
-   report, not something you quietly serialize.
-10. **Subagents can't ask the user.** Every agent relays through `NEEDS INPUT:`; you ask, then
-    `SendMessage` the answers back. This is also why a gate can never live inside a dispatched
-    workflow.
-11. **A ticket names a capability; YOU name the member.** Honor the pin when it is set,
-    otherwise run the 3.3 match against the roster you scanned this session and dispatch
-    rank 1. Never invent a member for a ticket nothing matched, and never widen the superset
-    test to make one fit.
-12. **`blocked` means "no subagent available can take this bounty" and nothing else.**
-    Written only by you, only after the match came back empty, reported the moment it
-    happens. **No view can derive it** — if you skip the write, the ticket silently comes
-    back next check-in. Writing an agent file is the fix.
-13. **You never write an `agents/*.md` file.** Creating a guild member happens in
-    `guild:new-requirement`, on an explicit answer from the user, and nowhere else.
-14. **Guard every mutation and read the `RETURNING`.** A failing statement does not stop a
-    tursodb script and `COMMIT` still commits, so one logical change per invocation, and zero
-    rows back is information you act on rather than ignore.
+Each is argued in full where it first applies above; this is the checklist, not the argument.
+
+1. The graph is the chain, and you do not know it — never invent an order, widen a batch,
+   merge two, or dispatch a node the graph did not offer (§3.1–3.2).
+2. You own every status transition — `task.status`, `graph_node.status`, `gate.status`.
+   Agents' only board writes are `work_log`, `review_finding`, `bug` (Core model).
+3. Record BOTH halves of every 3.4 row — ticket and node, always.
+4. Two gates, and only one is yours: `gate-plan` (new-requirement's), `gate-repairs` (§3.5).
+5. Problems are collected, not escalated — judged together at `gate-repairs` (§3.5).
+6. The graph orders; `v_open_bounties` only names who could take a ticket, not whether it may
+   run yet.
+7. There is no reviewer fan-out to perform — the `review` node is four nodes, the member is
+   the suffix of the node id (§3.3).
+8. Read the view, do not re-derive the rule — the one exception is the agent match, whose
+   single definition is §3.3.
+9. Serial members are never concurrent; a batch that would hold two is stop-and-report, not
+   something you quietly serialize (§3.2).
+10. Subagents can't ask the user — relay through `NEEDS INPUT:`, `AskUserQuestion`, then
+    `SendMessage` the answer back (§3.3).
+11. A ticket names a capability; YOU name the member — honor a pin, else run §3.3 and dispatch
+    rank 1, never invent or widen the superset test.
+12. `blocked` means "no subagent available can take this bounty" and nothing else, written by
+    you the moment the match fails (§3.8).
+13. You never write an `agents/*.md` file — that happens only in `guild:new-requirement`, on
+    the user's explicit answer.
+14. Guard every mutation and read the `RETURNING` — one logical change per invocation, and
+    zero rows back is information you act on.

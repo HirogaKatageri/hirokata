@@ -305,7 +305,7 @@ the price of moving the vocabulary into the engine, and it is a real one.
 | `guild:shift` | `check-in` with the human taken out of the middle. Runs unattended to the next gate, then stops and says why. Never decides a gate — not even "the obvious ones". |
 | `guild:brief` | Where the project stands: direction, in flight, bugs, coverage due, what moved. Read-only. |
 | `guild:dashboard` | Renders the board as one self-contained offline HTML page. Read-only. |
-| `guild:new-requirement` | A live 3-way interview between the project-manager, the strategist and you. Writes the requirement, the plan, the tickets **and the execution graph**, then ends at `gate-plan` — nothing is built until you approve. |
+| `guild:new-requirement` | A live interview with the project-manager, then the strategist plans from the finished requirement — sequentially, never concurrently. Writes the requirement, the plan, the tickets **and the execution graph**, then ends at `gate-plan` — nothing is built until you approve. |
 | `guild:qa` | Seeds a QA pass onto the board: a qa-strategist plans risk-based coverage, then qa-testers run the app, author Playwright specs, and file bugs back to the board. |
 | `guild:comprehensive-review` | Multi-dimensional pre-PR review — requirements compliance, coverage, edge cases, architecture, security. |
 | `guild:verify-and-fix` | Diagnoses a reported error end to end, then applies a test-driven fix. |
@@ -345,7 +345,7 @@ to first.
 | Agent | Model | Capabilities | Role |
 |-------|-------|--------------|------|
 | `strategist` | Opus | `planning`, `software-architecture` | Explores the codebase, writes the implementation plan and its tickets, composes the execution graph. Recommends direction; never sets it. |
-| `project-manager` | Sonnet | `requirements` | Interviews you live alongside the strategist, writes the requirement record. |
+| `project-manager` | Sonnet | `requirements` | Interviews you live, writes the requirement record, then hands off to the strategist. |
 | `developer` | Sonnet | `implement`, `backend`, `frontend` | Implements code per plan and requirement. |
 | `developer-svelte` | Sonnet | `implement`, `frontend`, `svelte`, `sveltekit` | Svelte 5 / SvelteKit specialist, pre-loaded with four reference skills. |
 | `test-planner` | Sonnet | `test-planning` | Inventories the implemented diff and writes the test plan. |
