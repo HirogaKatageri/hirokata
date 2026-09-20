@@ -75,6 +75,11 @@ All five agents launched simultaneously:
 - 1 warning: OrderService directly imports database config (should use repository)
 - Overall architecture compliance: 95%
 
+**Security Reviewer Report:**
+- No critical vulnerabilities found
+- Reviewed for injection flaws, authentication/authorization issues, hardcoded secrets, and missing input validation
+- No high-severity findings
+
 ### Step 4: Consolidated Report
 
 ```markdown
@@ -119,6 +124,11 @@ All five agents launched simultaneously:
 - Architectural Warnings: 1
 - Status: Good - Clean architecture followed
 - Details: See Section 4 below
+
+### Security
+- Critical Vulnerabilities: 0
+- Status: Good - No vulnerabilities found
+- Details: See Section 5 below
 
 ## Priority Actions
 

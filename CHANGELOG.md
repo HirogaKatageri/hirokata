@@ -47,6 +47,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guild query must never be built that way.
 
 ### Fixed
+- **Guild Plugin — `comprehensive-review` under-reported its own findings.** The skill launches
+  and describes five review agents (`product-reviewer`, `reviewer-business-logic`,
+  `reviewer-edge-case`, `reviewer-architecture`, `reviewer-security`), but its two worked examples
+  and `references/review-interpretation.md`'s closing summary still described four — the
+  PR-readiness example even filed a CSRF finding under the edge-case reviewer's report instead of
+  the security reviewer's. Both examples now carry a distinct Security Reviewer report and a
+  matching Security row in the Review Dimensions Summary, the reference guide says "five
+  perspectives," and `SKILL.md` no longer calls agent dispatch "the Task tool" (it's the `Agent`
+  tool).
 - **Guild Plugin v8.1.1 — version archaeology removed from every file a member loads.** The
   agents, skills, their references and `schema.sql`'s own comments carried a running commentary on
   what the plugin used to be in v4 through v7. The rule each passage stated survives; the

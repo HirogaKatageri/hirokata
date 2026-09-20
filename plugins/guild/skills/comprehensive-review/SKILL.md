@@ -45,7 +45,7 @@ Orchestrates five specialized review agents in parallel to provide a complete, m
 
 ### Step 2: Launch All Five Agents in Parallel
 
-Launch all agents in a **single message** using multiple Task tool calls. Include specific file paths and context in each prompt so agents don't waste time on discovery.
+Launch all agents in a **single message** using multiple Agent tool calls. Include specific file paths and context in each prompt so agents don't waste time on discovery.
 
 **product-reviewer:**
 > "Review recent changes against [requirements-file]. Map each requirement to its implementation. Flag anything missing or partially implemented. [State the project's architecture conventions only if a plan or phase document actually defines them.]"
