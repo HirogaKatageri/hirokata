@@ -492,11 +492,12 @@ tursodb .guild/guild.db < schema.sql
 `CREATE TABLE project`, which is the safe direction to fail — and **order is not optional**. A fresh
 board needs none of this.
 
-**v8.1.0 and v9.0.0–v9.1.1 ship no migration.** Removing `guild:clear-board` (8.1.0), renaming
+**v8.1.0 and v9.0.0–v9.2.0 ship no migration.** Removing `guild:clear-board` (8.1.0), renaming
 the roster to `project-manager`/`strategist` and splitting `architecture` into `planning` and
-`software-architecture` (9.0.0–9.1.0), and dropping the on-disk review/release markdown mirrors
-(9.1.1) touched skills, agents and documentation only — `schema.sql` carries none of it, so a v9.0
-board is already a v9.1.1 board. The new invariant 8.1.0 brings, **G11 — nothing is deleted**,
+`software-architecture` (9.0.0–9.1.0), dropping the on-disk review/release markdown mirrors
+(9.1.1), and removing `guild:discuss` while making `new-requirement`'s interview sequential
+instead of a concurrent 3-way (9.2.0) touched skills, agents and documentation only — `schema.sql`
+carries none of it, so a v9.0 board is already a v9.2.0 board. The new invariant 8.1.0 brings, **G11 — nothing is deleted**,
 reads `event` rows the existing triggers already wrote, so there was nothing to add to the schema
 for it.
 

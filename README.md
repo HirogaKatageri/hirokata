@@ -1,10 +1,10 @@
 # HiroKata Claude Code Plugin Marketplace
 
-A curated collection of Claude Code plugins for enhanced development workflows. **Version 8.1.1** — [View Changelog](CHANGELOG.md)
+A curated collection of Claude Code plugins for enhanced development workflows. **Version 8.2.0** — [View Changelog](CHANGELOG.md)
 
 | Plugin | Version | What it is |
 |--------|---------|------------|
-| [**guild**](plugins/guild) | 9.1.1 | Continuous agent orchestration on a SQLite board whose rules live in the schema |
+| [**guild**](plugins/guild) | 9.2.0 | Continuous agent orchestration on a SQLite board whose rules live in the schema |
 | [**software**](plugins/software-project) | 1.1.1 | Task classification by clean-architecture phase, plan splitting, conventional commits, daily handoff reports |
 | [**research**](plugins/research) | 1.0.0 | Multi-perspective deep research, after Stanford's STORM method |
 | [**storytelling**](plugins/storytelling) | 1.0.0 | Six storytelling frameworks for making a message land |
@@ -99,14 +99,14 @@ guild status
 
 ## How to Use the Guild Plugin
 
-The Guild plugin (v9.1.1) provides continuous agent orchestration through a persistent, database-backed work cycle. The guild tracks direction, requirements, tasks, bugs and quality coverage across sessions — no per-session setup required.
+The Guild plugin (v9.2.0) provides continuous agent orchestration through a persistent, database-backed work cycle. The guild tracks direction, requirements, tasks, bugs and quality coverage across sessions — no per-session setup required.
 
 **The plugin is a schema and a set of skills — not a program.** `tursodb` already executes SQL, so the guild ships no second tool that does the same thing: members write their own SQL, and the guild's rules live *in the database* as CHECK constraints (the status vocabularies), views (the derived rules — the cursor, the review gate, readiness, the board, each with one definition) and triggers (the `event` record, written on every mutation). A member can forget to call a command; a member cannot bypass a trigger or a CHECK.
 
 **The one thing deliberately *not* in the database is the roster.** Who the guild's members are and what each can do is the `capabilities:` frontmatter of the agent files, read at dispatch time across every subagent available to you — this plugin's, your project's `.claude/agents/`, your `~/.claude/agents/`, and every other installed plugin's. A ticket names the capability it needs; adding an agent file that declares it is the whole of hiring, with nothing to sync.
 
 ```
-guild:new-requirement — live 3-way interview (project-manager + strategist + you)
+guild:new-requirement — a live interview with the project-manager, then the strategist plans
     → developers / developer-svelte (parallel waves, disjoint files)
     → test-planner → test-writer (unit & integration)
     → 4 reviewers in parallel → a review report you act on
@@ -133,7 +133,7 @@ tursodb .guild/guild.db < plugins/guild/schema.sql
 
 None is idempotent, and 006 and 007 fail safely on a second run. A fresh board needs none of this.
 
-**v8.1.0 and v9.0.0–v9.1.1 need no migration.** Removing `guild:clear-board` (8.1.0), renaming the roster to `project-manager`/`strategist` and splitting the `architecture` capability into `planning` and `software-architecture` (9.0.0–9.1.0), and dropping the on-disk review/release markdown mirrors (9.1.1) changed skills, agents and documentation only; `schema.sql` is untouched and `schema_version` stays at **9**.
+**v8.1.0 and v9.0.0–v9.2.0 need no migration.** Removing `guild:clear-board` (8.1.0), renaming the roster to `project-manager`/`strategist` and splitting the `architecture` capability into `planning` and `software-architecture` (9.0.0–9.1.0), dropping the on-disk review/release markdown mirrors (9.1.1), and removing `guild:discuss` while making `new-requirement`'s interview sequential rather than a concurrent 3-way (9.2.0) changed skills, agents and documentation only; `schema.sql` is untouched and `schema_version` stays at **9**.
 
 ### Setting Up
 
@@ -184,7 +184,7 @@ or with inline context:
 I need a feature: dark mode toggle for the settings page
 ```
 
-`guild:new-requirement` runs a **live 3-way interview**: the `project-manager` and the `strategist` are spawned directly (not queued as tickets), both relay their questions through the orchestrator, and by the time the skill returns the requirement, the implementation plan and every developer / test-planner / reviewer ticket already exist on the board. You do not write the requirement document manually.
+`guild:new-requirement` runs a **live interview, then a plan**: the `project-manager` is spawned directly (not queued as a ticket) and interviews you until the requirement is final, then the `strategist` plans from that finished requirement. By the time the skill returns, the requirement, the implementation plan and every developer / test-planner / reviewer ticket already exist on the board. You do not write the requirement document manually.
 
 Between the two, the guild offers to place the requirement on a **project** — an existing one, a new project, a new goal *and* its first project, or left unaffiliated. A project can be marked `concurrent` (it runs beside its siblings instead of waiting its turn) and can be cut into its own git worktree. Direction is yours to set: no agent creates a goal or a project on its own.
 
@@ -252,7 +252,7 @@ The dashboard is one self-contained file — all CSS and JS inline, deterministi
 | `guild:shift` | `check-in` with you taken out of the middle — runs unattended to the next gate, then stops and says why. Never decides a gate | "work a shift", "run unattended" |
 | `guild:brief` | The narrated read of the board — direction, in flight, bugs, what moved, what's next. Read-only | "guild status", "what's the status", "show the board", "where are we", "what changed" |
 | `guild:dashboard` | Build and open `.guild/dashboard.html` — six views, offline, self-contained | "the dashboard", "show the roadmap", "visualize the board", "the activity feed" |
-| `guild:new-requirement` | Live 3-way interview (project-manager + strategist + you) that leaves a planned, ticketed requirement on the board | "new requirement", "I need a feature", "I want to build" |
+| `guild:new-requirement` | Live interview with the project-manager, then the strategist plans — leaves a planned, ticketed requirement on the board | "new requirement", "I need a feature", "I want to build" |
 | `guild:qa` | Seed the independent QA discipline — risk-mapped coverage, e2e regression specs, bugs filed as rows | "QA the product", "run a QA pass", "build comprehensive e2e tests" |
 | `guild:comprehensive-review` | Run all 5 reviewers in parallel against recent changes | "review my changes", "run comprehensive review", "check all my code" |
 | `guild:create-workflow` | Interactively design and generate automation workflows (GitHub Actions, scripts, Makefiles) | "create a workflow", "generate a workflow", "add a GitHub Actions workflow", "set up automation" |
