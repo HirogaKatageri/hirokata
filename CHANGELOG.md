@@ -70,6 +70,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read `schema.sql` correctly as seeding version **9**.
 
 ### Removed
+- **Guild Plugin — `guild:discuss` removed.** It duplicated `new-requirement`'s interview, and its
+  "Plan immediately" path spawned the strategist directly with a locally-generated requirement
+  document rather than a board row — bypassing the requirement `strategist.md` expects to already
+  exist (`SELECT body FROM requirement WHERE id='REQ-NNN'`, with the id already in its dispatch
+  prompt). No other skill invoked `guild:discuss`. Removed the skill and its catalog entries from
+  both READMEs and `docs/architecture.md`'s file tree.
 - **Guild Plugin v9.1.1 — the review record and the release snapshot no longer write markdown to
   disk.** `check-in` and `shift` stopped writing `.guild/reviews/REQ-NNN.md` at `gate-repairs`,
   and `guild:release` stopped rendering `.guild/releases/{version}/REQ-NNN.md` and `RELEASE.md`.

@@ -256,7 +256,6 @@ The dashboard is one self-contained file — all CSS and JS inline, deterministi
 | `guild:qa` | Seed the independent QA discipline — risk-mapped coverage, e2e regression specs, bugs filed as rows | "QA the product", "run a QA pass", "build comprehensive e2e tests" |
 | `guild:comprehensive-review` | Run all 5 reviewers in parallel against recent changes | "review my changes", "run comprehensive review", "check all my code" |
 | `guild:create-workflow` | Interactively design and generate automation workflows (GitHub Actions, scripts, Makefiles) | "create a workflow", "generate a workflow", "add a GitHub Actions workflow", "set up automation" |
-| `guild:discuss` | Summarize conversation context and facilitate focused topic discussions | "discuss", "let's discuss", "discuss [topic]", "summarize the context", "what are we working on" |
 | `guild:release` | Stamp CHANGELOG, snapshot completed requirements from the export, create git tag | "cut a release", "ship it", "tag a version" |
 | `guild:verify-and-fix` | Diagnose an error end-to-end and apply a test-driven fix | "check this error", "I have a bug", "debug this", "this is broken" |
 | `guild:validate` | Run `docs/expectations.md` against the live board — nine global invariants, or one process's postconditions. Read-only | "validate the guild", "check the board is coherent" |

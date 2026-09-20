@@ -181,7 +181,7 @@ plugins/guild/
 │   ├── domain-software/    # the strategist's DOMAIN — what surveying means, what a ticket
 │   │                       # owns, how work routes, what a plan and a ticket carry.
 │   │                       # `domain:` in .guild/config.yaml picks one; absent means this.
-│   ├── release/ comprehensive-review/ discuss/ verify-and-fix/ create-workflow/
+│   ├── release/ comprehensive-review/ verify-and-fix/ create-workflow/
 │   └── svelte-*/           # specialist reference skills
 └── docs/
     ├── architecture.md           # this file

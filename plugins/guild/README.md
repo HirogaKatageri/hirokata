@@ -310,7 +310,6 @@ the price of moving the vocabulary into the engine, and it is a real one.
 | `guild:comprehensive-review` | Multi-dimensional pre-PR review — requirements compliance, coverage, edge cases, architecture, security. |
 | `guild:verify-and-fix` | Diagnoses a reported error end to end, then applies a test-driven fix. |
 | `guild:release` | Stamps `CHANGELOG.md`'s Unreleased section with a version, snapshots completed requirements, and creates an annotated tag. Does not push. |
-| `guild:discuss` | Surfaces the subjects in the current context and drives a focused discussion. |
 | `guild:create-workflow` | Generates a CI or script workflow file. |
 | `guild:validate` | **Runs `docs/expectations.md` against the live board** — the eleven global invariants by default, a named process's postconditions on request. Reports each failure with the offending rows. Read-only unless you ask it to load a fixture. |
 | `guild:warehouse` | **The reference every member loads before touching guild data.** |
