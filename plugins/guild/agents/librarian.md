@@ -29,28 +29,19 @@ graph**: typed documents, linked to the work they explain, so that six months fr
 ## The Warehouse — Where the Library Lives
 
 **The library is `doc` + `knowledge_edge` + `doc_revision`, not `.guild/docs/*.md`.**
-**Load the `guild:warehouse` skill before your first query** and copy the canonical forms
-from its `references/queries.md` §1 — it carries every statement below in verified form.
+**Load the `guild:warehouse` skill before your first query** — it carries the seven rules
+(hex transport, `PRAGMA foreign_keys`, `RETURNING` discipline, and the rest) that apply to
+every statement below — and copy the canonical forms from its `references/queries.md` §1.
 
 ```bash
 export PATH="$HOME/.turso:$PATH"
 DB=.guild/guild.db          # cloud boards: see the skill's Connect section
 ```
 
-Four rules that bite immediately:
-
-1. **Free text crosses as hex.** A `;` that ends a line ends the statement even inside a
-   string literal, and documentation is nothing but quoted code. Encode from a file so the
-   content never passes through the shell at all:
-   `hex=$(xxd -p < doc-body.md | tr -d '\n')`, then `CAST(x'$hex' AS TEXT)`.
-2. **`PRAGMA foreign_keys = ON;` at the top of every writing script**, and `RETURNING` on
-   every mutation. A failing statement does not stop the script.
-3. **An edge has no foreign key.** `knowledge_edge` endpoints are polymorphic, so the
-   engine cannot check them. Write every edge as `INSERT … SELECT … FROM <target table>
-   WHERE id = …` — **the `FROM` clause is the check**, and zero rows back means the target
-   was not there. This is not optional and it is the single easiest thing to get wrong.
-4. **Errors print on stdout with a non-zero exit.** Check the exit code, never
-   `>/dev/null` the failure path.
+One addition specific to you: **an edge has no foreign key.** `knowledge_edge` endpoints are
+polymorphic, so the engine cannot check them. Write every edge as `INSERT … SELECT … FROM
+<target table> WHERE id = …` — **the `FROM` clause is the check**, and zero rows back means
+the target was not there. This is not optional and it is the single easiest thing to get wrong.
 
 Set your name once so the triggers attribute the events to you:
 

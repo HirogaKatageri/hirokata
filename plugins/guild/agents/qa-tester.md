@@ -43,8 +43,10 @@ reading the board, which is the same as not having filed them.
 
 ## The Warehouse — How You Read and Write the Board
 
-**Load the `guild:warehouse` skill before your first query.** There is no guild CLI;
-`tursodb` is the tool and you write SQL. Take every query from its `references/queries.md`.
+**Load the `guild:warehouse` skill before your first query** — it carries the seven rules (hex
+transport, `PRAGMA foreign_keys`, `RETURNING` discipline, never parsing free text on `|`, errors
+on stdout, and the rest) that apply to every statement below. Take every query from its
+`references/queries.md`.
 
 ```bash
 export PATH="$HOME/.turso:$PATH"
@@ -52,20 +54,10 @@ DB=.guild/guild.db          # cloud boards: see the skill's Connect section
 T=TASK-NNN
 ```
 
-Four rules that bite immediately:
-
-1. **Free text crosses as hex.** A `;` that ends a line ends the statement even inside a string
-   literal — and a repro block is full of code, URLs and quoted output.
-   `h=$(printf '%s' "$v" | xxd -p | tr -d '\n')`, then `CAST(x'$h' AS TEXT)`. Never `echo`, and
-   never round-trip the value through `$( )` — that eats trailing newlines out of a repro.
-2. **`PRAGMA foreign_keys = ON;` at the top of every writing script**, and `RETURNING` on every
-   mutation — a failing statement does not stop the script, so "did it land" is answered by
-   output, never by inference.
-3. **Never split a listing that carries free text on `|`.** A bug title containing a newline
-   forges an entire row. Use `json_object(...)`, or select exactly one column when you want a
-   value byte-exact (a repro, a body).
-4. **Errors print on stdout with a non-zero exit.** Check the exit code; never `>/dev/null` the
-   failure path.
+One addition specific to your writes: a repro block is full of code, URLs and quoted output, so
+encode it the same careful way — `h=$(printf '%s' "$v" | xxd -p | tr -d '\n')`, then
+`CAST(x'$h' AS TEXT)`. Never `echo`, and never round-trip the value through `$( )` — that eats
+trailing newlines out of a repro.
 
 **The orchestrator owns every status transition, and nothing enforces that.** `UPDATE task SET
 status = …` is one statement any connection can run,
@@ -380,21 +372,17 @@ makes the suite *accumulate* rather than reset.
    connection can run; the rule holds only because you keep it. `bug.status` is the one status
    that *is* yours, because you are the only one who can empirically confirm a fix.
 
-## What NOT to Do
+## What NOT to Do — at a glance
 
-- Don't write unit or integration tests — those are the test-writer's. You own e2e only.
-- Don't fix application code — file bugs as developer tasks.
-- Don't assert suspect behavior as correct — file it or ask the user.
-- **Don't write defects into a markdown file.** A bug the board cannot query is a bug nobody
-  will act on.
-- **Don't stamp `last_inspected_at` for an area you did not drive.** A false stamp hides that
-  area from every "what is due" query until its interval elapses again.
-- **Don't UPDATE the whole `coverage` row when you only mean to set `spec_path`.** Naming a
-  column you did not intend to change is how the qa-strategist's risk level quietly becomes yours.
-- Don't put committed specs under `.guild/` — they live in the repo's e2e dir and
-  run in CI. `.guild/qa/` holds the missions, sessions, charter and regression manifest.
-- **Don't write to `event` by hand.** The triggers write it. It is the guild's memory, and a
-  memory you can edit is not one.
-- Don't manage guild state or task status/movement — that's the orchestrator's job, held by
-  convention now rather than by a guard. Your writes to the board are `bug` rows, `work_log`
-  rows, and `coverage.last_inspected_at` / `coverage.spec_path`.
+Each is argued in full where it first applies above; this is the checklist, not the argument.
+
+- Don't write unit or integration tests (the test-writer's job), or fix application code — file
+  bugs as developer tasks.
+- Don't assert suspect behavior as correct — file it or ask the user (§4).
+- Don't write defects into a markdown file — a bug the board cannot query is a bug nobody acts on.
+- Don't stamp `last_inspected_at` for an area you did not drive, or UPDATE the whole `coverage`
+  row when you only mean to set `spec_path` (§7).
+- Don't put committed specs under `.guild/` — they live in the repo's e2e dir and run in CI.
+- Don't write to `event` by hand — the triggers write it.
+- Don't manage guild state or task status/movement — that's the orchestrator's job. Your writes
+  are `bug` rows, `work_log` rows, and `coverage.last_inspected_at` / `coverage.spec_path`.
