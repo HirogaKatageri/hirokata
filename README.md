@@ -1,10 +1,10 @@
 # HiroKata Claude Code Plugin Marketplace
 
-A curated collection of Claude Code plugins for enhanced development workflows. **Version 8.2.0** — [View Changelog](CHANGELOG.md)
+A curated collection of Claude Code plugins for enhanced development workflows. **Version 8.3.0** — [View Changelog](CHANGELOG.md)
 
 | Plugin | Version | What it is |
 |--------|---------|------------|
-| [**guild**](plugins/guild) | 9.2.0 | Continuous agent orchestration on a SQLite board whose rules live in the schema |
+| [**guild**](plugins/guild) | 9.3.0 | Continuous agent orchestration on a SQLite board whose rules live in the schema |
 | [**software**](plugins/software-project) | 1.1.1 | Task classification by clean-architecture phase, plan splitting, conventional commits, daily handoff reports |
 | [**research**](plugins/research) | 1.0.0 | Multi-perspective deep research, after Stanford's STORM method |
 | [**storytelling**](plugins/storytelling) | 1.0.0 | Six storytelling frameworks for making a message land |
@@ -99,7 +99,7 @@ guild status
 
 ## How to Use the Guild Plugin
 
-The Guild plugin (v9.2.0) provides continuous agent orchestration through a persistent, database-backed work cycle. The guild tracks direction, requirements, tasks, bugs and quality coverage across sessions — no per-session setup required.
+The Guild plugin (v9.3.0) provides continuous agent orchestration through a persistent, database-backed work cycle. The guild tracks direction, requirements, tasks, bugs and quality coverage across sessions — no per-session setup required.
 
 **The plugin is a schema and a set of skills — not a program.** `tursodb` already executes SQL, so the guild ships no second tool that does the same thing: members write their own SQL, and the guild's rules live *in the database* as CHECK constraints (the status vocabularies), views (the derived rules — the cursor, the review gate, readiness, the board, each with one definition) and triggers (the `event` record, written on every mutation). A member can forget to call a command; a member cannot bypass a trigger or a CHECK.
 
@@ -133,7 +133,7 @@ tursodb .guild/guild.db < plugins/guild/schema.sql
 
 None is idempotent, and 006 and 007 fail safely on a second run. A fresh board needs none of this.
 
-**v8.1.0 and v9.0.0–v9.2.0 need no migration.** Removing `guild:clear-board` (8.1.0), renaming the roster to `project-manager`/`strategist` and splitting the `architecture` capability into `planning` and `software-architecture` (9.0.0–9.1.0), dropping the on-disk review/release markdown mirrors (9.1.1), and removing `guild:discuss` while making `new-requirement`'s interview sequential rather than a concurrent 3-way (9.2.0) changed skills, agents and documentation only; `schema.sql` is untouched and `schema_version` stays at **9**.
+**v8.1.0 and v9.0.0–v9.3.0 need no migration.** Removing `guild:clear-board` (8.1.0), renaming the roster to `project-manager`/`strategist` and splitting the `architecture` capability into `planning` and `software-architecture` (9.0.0–9.1.0), dropping the on-disk review/release markdown mirrors (9.1.1), and removing `guild:discuss` while making `new-requirement`'s interview sequential rather than a concurrent 3-way (9.2.0), and deciding per piece of work whether it is tested and reviewed (9.3.0) changed skills, agents and documentation only; `schema.sql` is untouched and `schema_version` stays at **9**.
 
 ### Setting Up
 

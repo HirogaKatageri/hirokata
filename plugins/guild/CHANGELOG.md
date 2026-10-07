@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [Unreleased]
+## [9.3.0] - 2026-10-07
 
 ### Changed
 - **Testing and review are decided per piece of work, not assumed.** The strategist has a new

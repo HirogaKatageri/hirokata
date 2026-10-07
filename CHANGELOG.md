@@ -33,11 +33,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   matched by capability. A hand-written ticket requiring `architecture` is the one board that could
   be affected; `SELECT task_id, capability FROM task_capability WHERE capability = 'architecture'`
   finds it.
-- Versions: guild **8.1.0 → 9.2.0**; marketplace **7.1.1 → 8.2.0**. Full detail, including the
-  8.1.1 and 8.1.2 releases folded into this jump, the 9.1.1 markdown-mirror removal and the 9.2.0
-  interview/skill changes below, is in [`plugins/guild/CHANGELOG.md`](plugins/guild/CHANGELOG.md).
+- Versions: guild **8.1.0 → 9.3.0**; marketplace **7.1.1 → 8.3.0**. Full detail, including the
+  8.1.1 and 8.1.2 releases folded into this jump, the 9.1.1 markdown-mirror removal, the 9.2.0
+  interview/skill changes and the 9.3.0 assurance assessment below, is in [`plugins/guild/CHANGELOG.md`](plugins/guild/CHANGELOG.md).
 
 ### Changed
+- **Guild Plugin v9.3.0 — testing and review are decided per piece of work, not assumed.** The
+  strategist assesses each ticket first: does running something catch a defect in it (`tests`,
+  `checks`, `none`), and would a second reader (`full`, `focused`, `none`)? A step ruled out is kept
+  in the graph as `skipped` with a recorded reason, so counts and edges do not change, and `review`
+  is no longer a required node. Review of security-relevant, stored-data, hard-to-undo or
+  explicitly requested work is never skipped. The plan and ticket briefs carry an `## Assurance`
+  section, `domain-software` gains a sixth slot, and G8 gains `skipped-assurance-step-no-deviation`.
+  No schema or migration change. Detail in [`plugins/guild/CHANGELOG.md`](plugins/guild/CHANGELOG.md).
 - **Guild Plugin v9.2.0 — `new-requirement` interviews sequentially instead of concurrently.**
   The project-manager and the strategist no longer run as a live 3-way with cross-talk; the
   project-manager now interviews you to a finished requirement first, and the strategist plans
