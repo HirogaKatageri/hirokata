@@ -53,7 +53,7 @@ domain profile you load as a skill:
 grep '^domain:' .guild/config.yaml 2>/dev/null || echo "domain: software"
 ```
 
-Then load `guild:domain-{name}` — `guild:domain-software` by default. It answers five slots:
+Then load `guild:domain-{name}` — `guild:domain-software` by default. It answers six slots:
 
 | Slot | The question | `software` answers |
 |---|---|---|
@@ -62,6 +62,11 @@ Then load `guild:domain-{name}` — `guild:domain-software` by default. It answe
 | 3 | Which capabilities does the work route to? | `implement,backend` → `developer`, and the rest |
 | 4 | What sections does the plan body carry? | adds `## Codebase Analysis` |
 | 5 | What sections does a ticket brief carry? | adds `## Files to Touch`, `## Interface Contract` |
+| 6 | What needs tests, and what needs review? | defaults for code, and the cases that are never skipped |
+
+**The profile is per project; the work is not.** A software project still receives an article, a
+diagram or a research note now and then. Slot 6 gives you the project's defaults, and Step 3.7
+decides each ticket on what it actually produces.
 
 **If the profile does not load, stop and say so** — do not fall back on what you assume a
 software project needs. A guild pointed at another domain and silently planned as if it were code
@@ -361,7 +366,8 @@ calls that a **deviation that needs a reason**, so when you pin, say why in the 
 Decisions table, and write the capability rows **as well** — the pin says who does it, the
 capabilities record what the work required, and that is what makes the pin reviewable later.
 
-**Two pins are not deviations — they are required, and dropping them breaks the board:**
+**Two pins are not deviations — they are required, and dropping them breaks the board** (when the
+review step runs at all — Step 3.7 may skip it, and then there is no reviewer ticket):
 
 - **The reviewer ticket MUST carry `agent = 'reviewer'`, the literal string.** The review gate is
   `v_task_actionable`, and it is keyed on exactly that: a `todo` ticket whose agent is `'reviewer'`
@@ -395,6 +401,36 @@ this is resolved at plan time, before anything is built.** Full procedure — co
 the exact `NEEDS INPUT: ROSTER GAP` block with its three options, and what each answer commits
 you to: `references/strategist-recruiting.md`. Read it the moment Step 3.5's scan comes back
 empty; do not create the affected ticket first.
+
+### 3.7 Assess Assurance — Decide What Gets Tested and Reviewed, Before You Write It Down
+
+**Not every piece of work needs tests, and not every piece needs review.** A research note has no
+behaviour to pin; a draft article has no attack surface. Running the full chain over work like
+that produces a test plan of checks with zero tests and four reviewers with zero findings — which
+is ceremony, not assurance, and it trains everyone to skim.
+
+So ask two questions of **each producing ticket** before the plan is written, and answer both on
+the record:
+
+1. **Verification** — can running something catch a defect here? `tests`, `checks` or `none`.
+2. **Review** — would a second reader catch something the author could not? `full`, `focused`
+   (name the lenses) or `none`.
+
+Your domain profile's **Slot 6** carries the defaults and the "never skip" cases for this domain —
+read it. The method, the signals, the three places the answer is written, and the verified SQL for
+skipping a step are in **`references/strategist-assurance.md`** — read it now.
+
+Three rules hold in every domain:
+
+- **When in doubt, keep the step.** A step skipped on a guess costs more than a step kept.
+- **Never skip review** of work that touches authentication, secrets, money, personal or
+  production data, a migration, anything hard to undo once released, or anything the requirement
+  asks to have reviewed or tested.
+- **A skip needs a reason you can write in a sentence**, and the guild master reads it at
+  `gate-plan` — which is the safety net, not a substitute for judgement here.
+
+You carry the result into three places: the plan's `## Assurance` section, each ticket's
+`## Assurance` lines, and the graph (Step 6b).
 
 ### 4. Write the Plan
 
@@ -584,9 +620,12 @@ printf "SELECT json_object('task',t.id,'group',COALESCE(t.parallel_group,''),'fi
 Repeat per implement ticket, then the tail:
 
 - **the test-planner ticket** — `agent` NULL, required capability `test-planning`, empty `files`,
-  no `parallel_group`, `node_key = 'test-plan'`;
+  no `parallel_group`, `node_key = 'test-plan'`. **Only if Step 3.7 kept `test-plan`.** A skipped
+  step gets no ticket — an open ticket under a node that will never run blocks the requirement
+  from closing;
 - **the reviewer ticket** — `agent = 'reviewer'` (the literal string, because the review gate is
-  keyed on it), required capability `review`, no `parallel_group`, `node_key = 'review'`;
+  keyed on it), required capability `review`, no `parallel_group`, `node_key = 'review'`.
+  **Only if Step 3.7 kept `review`** — and still one ticket, however many lenses you kept;
 - **the librarian ticket** — `agent` NULL, required capability `document`, empty `files`, no
   `parallel_group`, `node_key = 'document'`. Its `objective` says **what this requirement is
   likely to have produced worth writing down** — the domain area it touches, the decisions you
@@ -698,12 +737,17 @@ The shape you get, and what each node means for your plan:
 |---|---|---|
 | `gate-plan` | gate, required | **Your work ends here.** Nothing below runs until the guild master approves |
 | `implement` | `fanout: per-task`, `parallel: by-group` | One node per implement ticket; `parallel_group` labels decide the waves |
-| `test-plan` | after every implement node | The barrier — it inventories the whole diff |
-| `test-write` | `fanout: per-declaration` | The test-planner declares how many; you create none |
-| `review` | `fanout: fixed`, four reviewers, `parallel: all` | Required. Reshapeable, never droppable |
+| `test-plan` | after every implement node | The barrier — it inventories the whole diff. **Skipped** when Step 3.7 says verification is `none` |
+| `test-write` | `fanout: per-declaration` | The test-planner declares how many; you create none. **Skipped** when verification is `checks` or `none` |
+| `review` | `fanout: fixed`, four reviewers, `parallel: all` | Never deleted, always four nodes. **Skipped** wholly (review `none`) or in part (`focused`) per Step 3.7, each with a deviation row |
 | `gate-repairs` | gate, required, `select-findings` | Findings are COLLECTED during the run and judged here, together |
 | `repair` | `fanout: per-approved-finding` | Created from what the guild master approves at gate 2 |
 | `document` | one node, required | The librarian writes the requirement down and links it into the library. Runs last, after `repair`, so it records what actually shipped |
+
+**6a.2. Apply the assurance decisions from Step 3.7.** Skip the `test-plan`, `test-write` and
+reviewer nodes the assessment ruled out, each with its `graph_deviation` row — the statements are
+in `references/strategist-assurance.md`. Skipped nodes stay in the graph, so the node, edge and
+gate counts below are unchanged. If the assessment kept every step, there is nothing to do here.
 
 **6b. Deviate where the work genuinely calls for it — with a reason, every time.** A clean
 instantiation needs none of this section; load it only when departing from the template. A
@@ -758,6 +802,9 @@ Report completion in your final message:
 - the **graph**: which template, how many nodes / edges / gates against the expected
   N + 10 / 2N + 11 / 2, **every deviation with its reason**, and the validation result — name the
   checks you ran and say plainly that each returned zero rows;
+- the **assurance decisions** (step 3.7): for each ticket, verification and review with the
+  one-line reason, and which graph steps you skipped. If you skipped nothing, say "every step
+  kept" and why;
 - the **decisions you recorded** (step 4.5): each ADR slug, what it governs, and any decision it
   supersedes. **If you recorded none, say so and say why** — "this plan only applies existing
   patterns" is a fine answer and a silent zero is not;
@@ -805,6 +852,8 @@ Each is argued in full where it first applies above; this is the checklist, not 
 - Don't invent a capability, or drop `agent='reviewer'` from the review ticket (§3.5).
 - Don't create an agent file, or tell the orchestrator to on your say-so — name the gap and
   propose the spec; the user decides (§3.6).
+- Don't run the full test-and-review chain by reflex, and don't skip it by reflex either — decide
+  per ticket at Step 3.7, with a reason. Don't create a ticket for a step you skipped.
 - Don't create a ticket whose capability gap is unresolved — drop and recreate rather than
   patch it later (§3.6).
 - Don't fold two units of work into one ticket — one implement ticket per unit (Step 5).

@@ -541,8 +541,9 @@ written as `subject_type='shiftt'` returns `unknown-subject-type | event | 1:shi
 
 The execution graph is connected, stays inside its requirement, and matches its template.
 
-**`document` is in the required set** — it may be reshaped, never dropped, exactly like
-`review`. A `standard` graph missing it returns `dropped-required-node | REQ-nnn | document`,
+**`document` is in the required set** — it may be reshaped, never dropped. **`review` is not:**
+whether work is tested or reviewed is decided per deliverable (strategist Step 3.7), and a step
+the strategist found unnecessary is **skipped**, never deleted, with a deviation row stating why. A `standard` graph missing it returns `dropped-required-node | REQ-nnn | document`,
 which is the loud version of a documentation gap: a node that may be dropped is a node that gets
 dropped, and the cost is invisible for months and then enormous. Note that the `maintenance`
 template's key list below does **not** carry it: an inspection produces bugs and specs, not new
@@ -564,16 +565,24 @@ SELECT 'two-cycle', e1.from_node || ' <-> ' || e1.to_node, 'mutual edge'
 UNION ALL
 SELECT 'dropped-required-node', r.id, k.k
   FROM requirement r JOIN (SELECT 'gate-plan' AS k UNION ALL SELECT 'implement'
-                           UNION ALL SELECT 'review' UNION ALL SELECT 'gate-repairs'
-                           UNION ALL SELECT 'document') k
+                           UNION ALL SELECT 'gate-repairs' UNION ALL SELECT 'document') k
  WHERE (SELECT value FROM guild_state WHERE key = 'graph-template:' || r.id) = 'standard'
    AND NOT EXISTS (SELECT 1 FROM graph_node n WHERE n.requirement_id = r.id AND n.node_key = k.k)
 UNION ALL
 SELECT 'dropped-optional-node-no-deviation', r.id, k.k
-  FROM requirement r JOIN (SELECT 'test-plan' AS k UNION ALL SELECT 'test-write' UNION ALL SELECT 'repair') k
+  FROM requirement r JOIN (SELECT 'test-plan' AS k UNION ALL SELECT 'test-write'
+                           UNION ALL SELECT 'review' UNION ALL SELECT 'repair') k
  WHERE (SELECT value FROM guild_state WHERE key = 'graph-template:' || r.id) = 'standard'
    AND NOT EXISTS (SELECT 1 FROM graph_node n WHERE n.requirement_id = r.id AND n.node_key = k.k)
    AND NOT EXISTS (SELECT 1 FROM graph_deviation d WHERE d.requirement_id = r.id AND d.kind = 'drop-node' AND d.node_key = k.k)
+UNION ALL
+SELECT 'skipped-assurance-step-no-deviation', n.id, n.node_key
+  FROM graph_node n
+ WHERE n.status = 'skipped' AND n.node_key IN ('test-plan','test-write','review')
+   AND (SELECT value FROM guild_state WHERE key = 'graph-template:' || n.requirement_id) = 'standard'
+   AND NOT EXISTS (SELECT 1 FROM graph_deviation d
+                    WHERE d.requirement_id = n.requirement_id AND d.node_key = n.node_key
+                      AND d.kind IN ('drop-node','reshape'))
 UNION ALL
 SELECT 'deviation-with-empty-reason', CAST(d.id AS TEXT), d.kind || ' ' || d.node_key
   FROM graph_deviation d WHERE trim(d.reason) = ''
@@ -599,8 +608,10 @@ ORDER BY breach, row_id;
 traversal available, so a longer cycle cannot be detected in SQL at all — see *Cannot be
 asserted* below.
 
-*Verified to fire:* deleting the four `review` nodes returns
-`dropped-required-node | REQ-001 | review`. Adding a back-edge from `test-plan` to
+*Verified to fire:* deleting the `document` node returns
+`dropped-required-node | REQ-001 | document`; marking `test-plan` `skipped` with no deviation row
+returns `skipped-assurance-step-no-deviation | REQ-001/test-plan | test-plan`; deleting the four
+`review` nodes now returns `dropped-optional-node-no-deviation | REQ-001 | review`. Adding a back-edge from `test-plan` to
 `implement.auth-service` returns
 `two-cycle | REQ-001/implement.auth-service <-> REQ-001/test-plan`.
 
@@ -985,7 +996,8 @@ specific ways *this* flow goes wrong:
 | Any ticket left `todo` before `gate-plan` was approved | G4 `built-before-gate-plan` |
 | A third gate, or a missing one | G4 `added-gate`, `dropped-gate` |
 | A gate approved without the node being moved | G4 `decided-gate-node-not-moved` |
-| `implement` or `review` dropped from the graph | G8 `dropped-required-node` |
+| `implement` or `document` dropped from the graph | G8 `dropped-required-node` |
+| A test or review step skipped, or `review` removed, with no recorded reason | G8 `skipped-assurance-step-no-deviation`, `dropped-optional-node-no-deviation` |
 | A node key nobody recorded a deviation for | G8 `node-key-not-in-template` |
 | A review node `done` while its ticket is still open | G8 `node-done-while-its-task-open` |
 | The requirement closed over an open or blocked ticket | G6 `requirement-done-over-open-task` |
@@ -999,6 +1011,11 @@ specific ways *this* flow goes wrong:
   the decomposition is sensible, that the tickets are the right tickets, or that the file lists are
   complete. This is the single largest unasserted thing in the build flow, and it is exactly what
   `gate-plan` exists to put in front of a human.
+- **Whether skipping a test or review step was the right call.** G8 asserts the step was skipped
+  *with a recorded reason*, never that the reason is sound. A strategist that skips review of
+  something that needed it passes every assertion here. What stands in for an assertion is that the
+  assurance table is in the plan the guild master reads at `gate-plan`, and the strategist's
+  never-skip list in `agents/references/strategist-assurance.md`.
 - **Whether the code was actually written.** The board records that a ticket moved to `done`. It
   does not see the repository. A member that moves a ticket without writing code produces a board
   that passes every assertion here.

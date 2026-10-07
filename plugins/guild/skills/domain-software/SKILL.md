@@ -1,15 +1,16 @@
 ---
 name: domain-software
 description: >
-  The SOFTWARE domain profile for the strategist. A domain profile answers the five
+  The SOFTWARE domain profile for the strategist. A domain profile answers the six
   questions the strategist's method deliberately leaves open: what surveying the current
   state means, what two concurrent tickets contend for, which capabilities the work
-  routes to, what sections a plan carries, and what sections a ticket carries. This
-  profile answers all five for a code project — survey the codebase, contend over file
-  paths, route to developer/test-writer/reviewer, and carry Codebase Analysis and Files
-  to Touch. It is the DEFAULT profile: a guild with no `domain:` in `.guild/config.yaml`
-  loads this one. Trigger phrases include "domain profile", "domain software",
-  "files to touch", "codebase analysis", "what does a ticket own", "disjoint files".
+  routes to, what sections a plan carries, what sections a ticket carries, and what needs
+  tests and review. This profile answers all six for a code project — survey the codebase,
+  contend over file paths, route to developer/test-writer/reviewer, carry Codebase Analysis
+  and Files to Touch, and default to tests and review for code with behaviour. It is the
+  DEFAULT profile: a guild with no `domain:` in `.guild/config.yaml` loads this one. Trigger
+  phrases include "domain profile", "domain software", "files to touch", "codebase analysis",
+  "what does a ticket own", "disjoint files", "needs tests", "needs review".
 version: 1.0.0
 ---
 
@@ -24,7 +25,7 @@ purpose. This page is what makes it a software plan.
 `.guild/config.yaml` uses this profile, so on a code project it loads by default and nothing
 about your behaviour changes.
 
-Five slots. Each is a question the method asks and this profile answers.
+Six slots. Each is a question the method asks and this profile answers.
 
 ---
 
@@ -129,6 +130,14 @@ UI adds the preferred pair.
 ### 2. {Task Title} (complexity: {1|2|3})
 {...repeat — one entry per developer task...}
 
+## Assurance
+
+| Ticket | Verification | Review | Why |
+|--------|--------------|--------|-----|
+| {TASK} {title} | {tests / checks / none} | {full / focused: lenses / none} | {one sentence} |
+
+Graph effect: {which test and review steps run, and which are skipped}
+
 ## Technical Decisions
 
 | Decision | Choice | Rationale |
@@ -142,7 +151,7 @@ UI adds the preferred pair.
 | {Risk} | {Impact} | {How to handle} |
 ```
 
-`Architecture Overview`, `Technical Decisions` and `Risks and Mitigations` are the method's own
+`Architecture Overview`, `Assurance`, `Technical Decisions` and `Risks and Mitigations` are the method's own
 and every profile carries them. `Codebase Analysis` is this profile's survey section.
 
 ---
@@ -164,11 +173,15 @@ and every profile carries them. `Codebase Analysis` is this profile's survey sec
 ## Interface Contract
 {What this task exposes to or consumes from sibling tasks. Function signatures, types, events, routes — whatever other tickets need to know.}
 
+## Assurance
+- Verification: {tests | checks — the commands | none}
+- Review: {full | focused — the lenses | none}
+
 ## Acceptance Criteria
 - [ ] {Specific, verifiable outcome}
 ```
 
-`Objective`, `Approach` and `Acceptance Criteria` are the method's own. `Files to Touch` is this
+`Objective`, `Approach`, `Assurance` and `Acceptance Criteria` are the method's own. `Files to Touch` is this
 profile's contention section and `Interface Contract` is its hand-off section.
 
 **"Files to Touch" must be accurate and complete** — it is the basis for parallel-group
@@ -182,9 +195,47 @@ test-planner and the reviewers — orient from the overview, so keep it consiste
 
 ---
 
+## Slot 6 — What needs tests, and what needs review
+
+**The method decides per ticket at Step 3.7**; this slot is the software project's *defaults* and
+its *never-skip* list. The decision procedure, the three places it is written down and the SQL to
+skip a step are in `agents/references/strategist-assurance.md` — read it first.
+
+**A software project does not only receive code.** It also receives articles, diagrams, research
+notes, configuration and copy. Decide each ticket on what it produces, not on the repository it
+lives in.
+
+| The ticket produces… | Verification | Review |
+|---|---|---|
+| Logic, branching, state, parsing, validation, an API or a data contract | `tests` | `full` |
+| An integration seam — a route, a handler, a store, a queue consumer | `tests` | `full` |
+| A UI component with behaviour (state, events, async) | `tests` | `focused` — business-logic, edge-case, architecture; add security if it handles input or auth |
+| A pure-presentation change — styling, layout, copy in markup | `checks` — build, lint, typecheck, visual check | `focused` — business-logic, or `none` if it is trivially reversible |
+| A migration, anything touching auth, secrets, money or personal data | `tests` | `full` — **never skipped** |
+| Configuration or CI | `checks` — the pipeline itself is the test | `focused` — security, architecture |
+| An article, essay or documentation page | `checks` — the project's content checks, a build, a word count | `focused` — business-logic, edge-case; `none` while it is an unpublished draft only if nobody depends on it |
+| A diagram, figure or other static asset | `none` or `checks` | `none`, or `focused` if it states claims a reader will rely on |
+| Research notes, a decision record | `none` | `none` — the sources are the evidence |
+| A rename, a comment, a typo | `none` | `none` |
+
+**Read the repository's own rules before you apply the table.** If `CLAUDE.md` or the contributing
+guide says "tests must not depend on content" or "every change needs a test", that is the answer,
+and it beats the table.
+
+**Never skip review** of a migration, anything that handles credentials, authentication,
+authorization, money or personal data, a public contract other code depends on, or anything
+hard to retract once it ships.
+
+**Tests are run by the test-writer; checks are not tests.** A `checks` outcome means the author
+runs the project's own commands (`build`, `lint`, `typecheck`, a content checker) and the test
+planner, if one runs, only *plans* them. Do not ask for test files that would pin content or
+duplicate what the toolchain already enforces.
+
+---
+
 ## Writing a profile for another domain
 
-A domain profile is this page with the five slots answered differently. Nothing else changes:
+A domain profile is this page with the six slots answered differently. Nothing else changes:
 the method, the graph, the gates, the capability matching, the record and the audit are all
 domain-free already, and `task.files` is an opaque JSON array of strings that no view parses.
 
@@ -195,6 +246,7 @@ domain-free already, and `task.files` is an opaque JSON array of strings that no
 | 3 — Routing | `implement,backend` → `developer` | `draft,longform` → `copywriter` |
 | 4 — Plan section | `## Codebase Analysis` | `## Market Context` |
 | 5 — Ticket section | `## Files to Touch` | `## Assets and Channels` |
+| 6 — Tests and review | tests for behaviour, review for risk | a claims check and a legal read for anything public; no tests |
 
 Name the file `skills/domain-<name>/SKILL.md`, then point a project at it:
 

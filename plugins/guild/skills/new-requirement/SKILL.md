@@ -340,9 +340,11 @@ nobody justified:
 |---|---|
 | no `graph_node` rows | the strategist never built the graph — send it back |
 | more or fewer than the template's two gates | **never negotiable.** Dropping a gate removes the guild master's control surface; adding one turns unattended operation into a session that stops every twenty minutes |
-| a REQUIRED key missing — `gate-plan`, `implement`, `review`, `gate-repairs` or `document` (`document` on `standard` only) | **a `drop-node` deviation does NOT make this legal.** G8 asserts `dropped-required-node` over that exact set and fires whatever reason was recorded. A required node may be RESHAPED — fanned out, re-pointed, given a different capability — never dropped. Doing the paperwork correctly is what hides this one |
+| a REQUIRED key missing — `gate-plan`, `implement`, `gate-repairs` or `document` (`document` on `standard` only) | **a `drop-node` deviation does NOT make this legal.** G8 asserts `dropped-required-node` over that exact set and fires whatever reason was recorded. A required node may be RESHAPED — fanned out, re-pointed, given a different capability — never dropped. Doing the paperwork correctly is what hides this one |
 | a node key not in the template, with no `graph_deviation` row | the shape changed and nothing recorded why |
 | an OPTIONAL template key absent, with no `drop-node` deviation | same, in the other direction — the shape changed and nothing recorded why. For a required key see the row above: the deviation is not the point, the key is |
+| `test-plan`, `test-write` or a `review.*` node marked `skipped` with no `graph_deviation` row for that key | an assurance skip with no reason. G8 asserts `skipped-assurance-step-no-deviation`. Send it back — the reason is what the guild master reads at the gate |
+| a skipped step that still has a ticket (a `needs:test-planning` bounty, or a reviewer ticket, under a `skipped` node) | an open ticket under a node that will never run blocks the requirement from closing. Send it back so the strategist stops creating tickets for skipped steps |
 | `v_ready_nodes` empty for the requirement | the graph cannot start: no root, or a cycle. With no `WITH RECURSIVE` there is no traversal to find one, so the rule is written at build time — every edge points backwards in declaration order |
 | an unpinned ticket whose `--covers` scan returns nothing | a roster gap or a typo'd tag — Step 8.5, not something to paper over |
 
@@ -367,9 +369,14 @@ plan` away if they want it:
 ```
 REQ-007 — Session-backed authentication
   Plan: PLAN-004 · 3 implement tickets (auth-service, session-store, migrations) — file sets disjoint
-  Graph: standard · 9 nodes · 1 deviation
+  Graph: standard · 9 nodes · 3 deviations
     + research (before implement) — "the payments provider's webhook API is undocumented
       in the repo and no doc row covers it"
+  Assurance (from the plan — change any of this before approving):
+    TASK-011 auth-service     tests · review: full
+    TASK-012 migration        tests · review: full (never skipped — touches stored data)
+    TASK-013 runbook page     none  · review: none — prose, no behaviour, author runs the build
+    graph: no step skipped — tests and review cover TASK-011 and TASK-012 only
   Tickets: TASK-011 (implement,backend) · TASK-012, TASK-013 (wave A) ·
            TASK-014 test-planning · TASK-015 reviewer
   Then: implement → test-plan → test-write → review, running to completion without stopping,
@@ -391,6 +398,7 @@ the plan, as part of the same decision.
 | **Approve** | the three-write approval below | The plan is committed. `/guild:check-in` runs the first batch |
 | **Reject** | the same, with `'rejected'` throughout and the node to `'skipped'` | Nothing gets built. The plan and the graph stay on the board as the record of what was proposed and refused |
 | **Not yet / let me think** | nothing | The gate stays `pending`. Check-in will present it again |
+| **Approve, but change the assurance** (e.g. "review the article too", "skip tests for that one") | **nothing yet** — resume the strategist with the change, let it create or waive the ticket and rewrite the plan's Assurance table and deviation rows, then present again | Assurance is the strategist's call and the guild master's veto. A step the guild master puts back is flipped `skipped` → `pending` by you after the ticket exists; a step they remove is marked `skipped` with a deviation row |
 
 ```sql
 PRAGMA foreign_keys = ON;

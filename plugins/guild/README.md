@@ -83,6 +83,12 @@ bash. Nothing polices them now — they are documented in `schema.sql` and nowhe
   mirror of it, because a mirror is only ever as fresh as the last sync somebody remembered.
 - **The chain is data.** An execution template is instantiated per requirement into `graph_node` /
   `graph_edge` / `gate` rows. `v_ready_nodes` says what can run.
+- **Testing and review are decided, not assumed.** Before the plan is written, the strategist asks
+  of each piece of work whether running something could catch a defect in it, and whether a second
+  reader would. Code with behaviour gets tests and review; an article or a research note may get a
+  checklist and a focused read, or neither. A step ruled out stays in the graph as `skipped` with a
+  recorded reason, and you read the whole assessment at `gate-plan` before anything is built.
+  Review of anything security-relevant, stored data, or hard to undo is never skipped.
 - **Two gates, always.** `gate-plan` before anything is built; `gate-repairs` after review. Gates
   cannot live inside a workflow, because subagents cannot ask the user a question — segmenting at
   gates is the only shape that preserves guild-master control.
@@ -319,8 +325,8 @@ Agent-facing skills that specialists pre-load rather than users invoking: `guild
 `guild:svelte-env-vars-check`.
 
 `guild:domain-software` is the strategist's **domain profile** — what surveying the current state
-means, what two concurrent tickets contend for, which capabilities the work routes to, and what
-sections a plan and a ticket carry. `domain:` in `.guild/config.yaml` picks one; absent means
+means, what two concurrent tickets contend for, which capabilities the work routes to, what
+sections a plan and a ticket carry, and what needs tests and what needs review. `domain:` in `.guild/config.yaml` picks one; absent means
 `software`, so an existing project is unaffected. Another purpose is a second
 `skills/domain-<name>/SKILL.md` and one line of config.
 

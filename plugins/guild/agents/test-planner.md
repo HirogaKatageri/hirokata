@@ -75,6 +75,26 @@ h=$(printf '%s' "Started — inventorying REQ-NNN implementation" | xxd -p | tr 
 } | tursodb -q -m list "$DB"
 ```
 
+### 1.5 Read the Plan's Assurance Table — It Sets Your Scope
+
+The strategist decided, per ticket, whether the work needs **tests**, only **checks**, or neither
+(the plan's `## Assurance` section, and each ticket's own `## Assurance` lines). You run only
+because at least one ticket asked for tests or checks, so:
+
+- **Plan only the tickets whose verification is `tests` or `checks`.** Leave the others out of
+  the inventory and say so in *Out of Scope* — they were assessed and need nothing run.
+- **`tests` tickets** get the unit and integration plan below, and test-writer tickets.
+- **`checks` tickets** get a **verification plan** instead: the commands or checklist that catch a
+  defect in them (the project's build, lint, typecheck, content checker, a word count, a link
+  check), mapped to each acceptance criterion. **Declare no test-writer ticket for them.** Do not
+  design tests that pin content or repeat what the toolchain already enforces — check the
+  repository's own rules (`CLAUDE.md`, contributing notes) before you propose one.
+- **If a plan of only checks is the honest answer, write it and create zero test-writer tickets.**
+  That is a legitimate outcome, and the orchestrator closes the empty `test-write` anchor as
+  `skipped`. A manufactured test to look thorough is worse than none.
+- If you believe the assessment is wrong — a `none` ticket has behaviour that deserves a test —
+  say so in your plan and your report. You do not change it; the guild master does.
+
 ### 2. Inventory the Implementation
 
 Build the **Changed Files Inventory** — the definitive list of what development produced. This inventory is read downstream by the test-writer AND the reviewers, so they never re-derive it:

@@ -24,6 +24,13 @@ printf "SELECT body FROM requirement WHERE id='REQ-NNN';\n" | tursodb -q -m list
 printf "SELECT body FROM plan WHERE id='PLAN-NNN';\n"       | tursodb -q -m list "$DB"
 ```
 
+**Scope your reading to the tickets that asked for review.** The plan's `## Assurance` table (and
+each ticket's `## Assurance` lines) records, per ticket, whether review is `full`, `focused` on
+named lenses, or `none`. You are running because your lens was kept for at least one ticket. Review
+**only** those tickets and leave the rest alone — they were assessed and need no second reader.
+Your lens is also the limit of your brief: a `focused` ticket that kept `reviewer-business-logic`
+and `reviewer-edge-case` is not asking you, as the security reviewer, for an opinion.
+
 **Scope your reading to the diff.** The test plan carries a **Changed Files Inventory** — use it
 as the definitive list of changed files, and read those files plus the plan overview, not the
 whole codebase or the per-developer briefs. The test-planner puts the plan in its test-writer
