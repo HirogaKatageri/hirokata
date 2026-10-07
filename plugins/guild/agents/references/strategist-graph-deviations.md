@@ -23,7 +23,7 @@ The four kinds, and what each is for:
 | Kind | Use it when | What you also write |
 |---|---|---|
 | `add-node` | the work needs a step the template does not have — a `research` node ahead of `implement` for an unfamiliar API | the `graph_node` row, its `graph_edge`s, and a ticket declaring the capability |
-| `drop-node` | a template step is genuinely inapplicable — dropping `test-plan` for a docs-only change | **stitch the predecessors to the successors yourself** — nothing does it for you, and an unstitched drop severs the graph |
+| `drop-node` | a template step is genuinely inapplicable | **For `test-plan`, `test-write` and `review`: do not delete the node.** Mark it `skipped` (Step 3.7, `strategist-assurance.md`) — it keeps its edges and its successors become ready on their own. For any other step, deleting is legal but **you must stitch the predecessors to the successors yourself** — nothing does it for you, and an unstitched drop severs the graph |
 | `reshape` | the step stays but its width or waves change — fanning `review` wider for a UI-heavy requirement; splitting `implement` into sequential waves because the file sets are not disjoint | the extra/fewer nodes, and the `parallel_group` labels that express the waves |
 | `add-gate` | **never** | — |
 
@@ -42,12 +42,15 @@ The rules, and **who enforces each one — read this before you trust it:**
   asleep. If work needs a decision, it belongs at `gate-repairs`. An `add-gate` deviation row
   is a failure however good the reason — the template's check (c) looks for exactly that.
 - **A `required: true` node may be reshaped, never dropped.** `gate-plan`, `implement`,
-  `review`, `gate-repairs` and `document` are required — that is the exact set G8 asserts, and
+  `gate-repairs` and `document` are required — that is the exact set G8 asserts, and
   `document` is the one people forget, so a `standard` graph missing it returns
   `dropped-required-node | REQ-nnn | document`. (`maintenance` carries no `document`; an
-  inspection produces bugs and specs, not new subsystem knowledge.) Review always happens; how
-  wide it fans out is negotiable. Dropping it is a judgement about the guild's standards, which
-  is not yours to make.
+  inspection produces bugs and specs, not new subsystem knowledge.)
+- **`test-plan`, `test-write` and `review` are decided per requirement, not assumed.** They may be
+  **skipped** — never deleted — when Step 3.7 finds the work does not need them, and a skip
+  without a deviation row is a G8 breach (`skipped-assurance-step-no-deviation`). What you may not
+  do is skip review of the work `strategist-assurance.md` lists as never skippable, or skip on a
+  reason you cannot write in a sentence. `review` stays four nodes even when some are skipped.
 - **`add-node` must name a capability some available subagent declares.** A node nobody is
   eligible for is a node the run stalls at forever, discovered mid-shift. Check before you
   insert:

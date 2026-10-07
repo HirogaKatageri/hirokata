@@ -348,6 +348,13 @@ For each node in the batch:
 - **Unbound and no bounty for it** → the node is an **anchor** for a fanout that has not
   happened yet. See *Anchors* below.
 
+**A `skipped` node is never dispatched.** The strategist marks the test and review steps a
+requirement does not need as `skipped` when it builds the graph, with a deviation row that says
+why (`SELECT reason FROM graph_deviation WHERE requirement_id = 'REQ-NNN'`). `v_ready_nodes`
+offers `pending` nodes only, and `skipped` counts as finished for its successors, so you will
+simply never be handed one — and there is no ticket under it to find. If you do find an open
+ticket whose node is `skipped`, that is a plan error: report it, do not run it.
+
 **Never dispatch straight from `v_open_bounties`.** It answers "does this ticket ask for
 somebody", not "may this run yet". **The graph is the ordering; the bounty board only says
 the ticket is ready to be matched.**
@@ -463,6 +470,11 @@ ticket the anchor covers, one at a time unless the node says otherwise, then mov
 `done` **once**, when they are all finished. The anchor is the barrier; the tickets are the
 work.
 
+**An anchor with zero tickets is closed `skipped`, not `done`** — the test-planner declared no
+tests (a `checks` plan), or the repairs gate approved nothing. `skipped` says "this step had
+nothing to do" and is what the board should show; `done` would claim work that never happened.
+Move it in the same statement you would have used, with `'skipped'`.
+
 **Interview relay — applies to every agent.** No subagent can reach the user. Any agent's
 final message may, instead of a done/failed report, end with:
 
@@ -557,6 +569,23 @@ REQ-007 — Session-backed authentication: the run is complete.
 
 Findings and bugs from REQ-007 — approve which get repaired.
 ```
+
+**If nothing was collected** — no findings, no open bugs, no failed tasks, which is the normal
+outcome when review and tests were skipped as unnecessary or ran clean — **do not present an
+empty menu.** Ask one short question instead, with the gate's own prompt:
+
+```
+REQ-011 — Guild plugin research writing: the run is complete.
+  Nothing was collected — no findings, no bugs, no failed tasks.
+  (Review: skipped, 2 of 4 reviewers; tests: checks only — see the plan's Assurance table.)
+
+Confirm to close out: nothing to repair?
+```
+
+with `AskUserQuestion` options **Confirm — repair nothing** and **Hold**. Record it as the
+approved-with-`none` decision below. The gate stays: a gate is the guild master's decision and is
+never dropped, and `none` is how "approve, repair nothing" is said out loud. What you spare them is
+the menu, not the decision.
 
 **3. Ask with AskUserQuestion, as a MULTI-SELECT** — one option per numbered item ("Repair:
 {item}"). They can approve some, all or none; "Other" covers anything they would rather

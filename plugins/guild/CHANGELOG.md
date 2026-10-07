@@ -16,6 +16,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [9.3.0] - 2026-10-07
+
+### Changed
+- **Testing and review are decided per piece of work, not assumed.** The strategist has a new
+  **Step 3.7**: for each producing ticket it answers *can running something catch a defect here?*
+  (`tests`, `checks` or `none`) and *would a second reader catch something the author could not?*
+  (`full`, `focused` on named lenses, or `none`), and records the answer on the record. A run
+  that wrote a research article is the case that prompted it: the template forced a test plan of
+  22 checks and zero tests, an empty `test-write` anchor, and four code reviewers who returned zero
+  findings.
+- **A step the assessment rules out is `skipped`, never deleted.** `test-plan`, `test-write` and
+  the four `review.*` nodes are kept in the graph with their edges and marked `skipped`, each with
+  a `graph_deviation` row stating why. `done` and `skipped` both already counted as finished, so
+  successors become ready with no edge rewritten and the node, edge and gate counts do not change.
+  A skipped step gets no ticket. Verified against tursodb 0.7.2.
+- **`review` is no longer a required node.** The required set is now `gate-plan`, `implement`,
+  `gate-repairs` and `document`. Work that is security-relevant, touches stored or personal data,
+  is hard to undo, or that the requirement asks to have reviewed is never skipped
+  (`agents/references/strategist-assurance.md`).
+- **The plan and every ticket brief carry an `## Assurance` section**, so the guild master reads
+  what will and will not be tested and reviewed at `gate-plan`, and can change it before approving
+  (`new-requirement` presents it and offers "approve, but change the assurance").
+- **Domain profiles gain a sixth slot** — what needs tests and what needs review.
+  `domain-software` answers it with a table by kind of deliverable. The profile is per project but
+  the work is not, so a software project's article is decided as an article.
+- **`test-planner` and the reviewers work only on the tickets that asked for them**, and a plan of
+  checks only, with zero test-writer tickets, is now a stated, legitimate outcome.
+- **`check-in` closes an anchor with no tickets as `skipped`**, and presents `gate-repairs` as a
+  one-line confirmation when nothing was collected.
+
+### Added
+- **G8 `skipped-assurance-step-no-deviation`** — a skipped `test-plan`, `test-write` or `review`
+  node with no `drop-node` or `reshape` deviation for its key. Verified to stay quiet with a reason
+  recorded and to fire without one.
+
 ## [9.2.0] - 2026-09-20
 
 ### Removed

@@ -83,6 +83,12 @@ bash. Nothing polices them now — they are documented in `schema.sql` and nowhe
   mirror of it, because a mirror is only ever as fresh as the last sync somebody remembered.
 - **The chain is data.** An execution template is instantiated per requirement into `graph_node` /
   `graph_edge` / `gate` rows. `v_ready_nodes` says what can run.
+- **Testing and review are decided, not assumed.** Before the plan is written, the strategist asks
+  of each piece of work whether running something could catch a defect in it, and whether a second
+  reader would. Code with behaviour gets tests and review; an article or a research note may get a
+  checklist and a focused read, or neither. A step ruled out stays in the graph as `skipped` with a
+  recorded reason, and you read the whole assessment at `gate-plan` before anything is built.
+  Review of anything security-relevant, stored data, or hard to undo is never skipped.
 - **Two gates, always.** `gate-plan` before anything is built; `gate-repairs` after review. Gates
   cannot live inside a workflow, because subagents cannot ask the user a question — segmenting at
   gates is the only shape that preserves guild-master control.
@@ -319,8 +325,8 @@ Agent-facing skills that specialists pre-load rather than users invoking: `guild
 `guild:svelte-env-vars-check`.
 
 `guild:domain-software` is the strategist's **domain profile** — what surveying the current state
-means, what two concurrent tickets contend for, which capabilities the work routes to, and what
-sections a plan and a ticket carry. `domain:` in `.guild/config.yaml` picks one; absent means
+means, what two concurrent tickets contend for, which capabilities the work routes to, what
+sections a plan and a ticket carry, and what needs tests and what needs review. `domain:` in `.guild/config.yaml` picks one; absent means
 `software`, so an existing project is unaffected. Another purpose is a second
 `skills/domain-<name>/SKILL.md` and one line of config.
 
@@ -492,12 +498,12 @@ tursodb .guild/guild.db < schema.sql
 `CREATE TABLE project`, which is the safe direction to fail — and **order is not optional**. A fresh
 board needs none of this.
 
-**v8.1.0 and v9.0.0–v9.2.0 ship no migration.** Removing `guild:clear-board` (8.1.0), renaming
+**v8.1.0 and v9.0.0–v9.3.0 ship no migration.** Removing `guild:clear-board` (8.1.0), renaming
 the roster to `project-manager`/`strategist` and splitting `architecture` into `planning` and
 `software-architecture` (9.0.0–9.1.0), dropping the on-disk review/release markdown mirrors
 (9.1.1), and removing `guild:discuss` while making `new-requirement`'s interview sequential
-instead of a concurrent 3-way (9.2.0) touched skills, agents and documentation only — `schema.sql`
-carries none of it, so a v9.0 board is already a v9.2.0 board. The new invariant 8.1.0 brings, **G11 — nothing is deleted**,
+instead of a concurrent 3-way (9.2.0), and deciding per piece of work whether it is tested and reviewed (9.3.0) touched skills, agents and documentation only — `schema.sql`
+carries none of it, so a v9.0 board is already a v9.3.0 board. (9.3.0 marks skipped test and review steps with the existing `skipped` node status and `graph_deviation` rows, so an existing board needs nothing.) The new invariant 8.1.0 brings, **G11 — nothing is deleted**,
 reads `event` rows the existing triggers already wrote, so there was nothing to add to the schema
 for it.
 

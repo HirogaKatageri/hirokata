@@ -1131,7 +1131,10 @@ The architect instantiates the template and may deviate. Every deviation writes 
 `graph_deviation` row carrying a **non-empty reason**, and `guild graph validate` enforces:
 
 - A node marked `required: true` may be **reshaped** but never **dropped**. Review always
-  happens; how wide it fans out is negotiable.
+  happens; how wide it fans out is negotiable. *(Superseded: `review` is no longer required. Whether
+  work is tested and reviewed is now decided per deliverable by the strategist, and a step ruled
+  out is kept as `skipped` with a recorded reason — see
+  `agents/references/strategist-assurance.md`.)*
 - **A gate may never be dropped, and no new gate may be added.** Gates are the guild master's
   control surface, fixed at two. An architect removing your approval point is the obvious
   failure mode; an architect *adding* gates is the subtler one — it would quietly turn

@@ -11,8 +11,11 @@ gate-plan ─▶ implement (× tickets) ─▶ test-plan ─▶ test-write ─�
    └──────────────── segment 1: runs without stopping ──────────────┘              └───── segment 2 ─────┘
 ```
 
-Use it for every requirement that produces code. For inspecting code that already exists, use
-[`maintenance.md`](maintenance.md) instead.
+Use it for every requirement that produces work. Despite the code-shaped node names, `implement`
+is any producing ticket — code, an article, a diagram — and **the test and review steps are not
+assumed**: the strategist decides at Step 3.7 which of them this requirement needs, and a step
+that is not needed is kept in the graph and marked `skipped` (§5.1). For inspecting code that
+already exists, use [`maintenance.md`](maintenance.md) instead.
 
 ---
 
@@ -22,9 +25,9 @@ Use it for every requirement that produces code. For inspecting code that alread
 |---|----------|------|-------|---------|---------------------|----------|
 | 1 | `gate-plan` | gate | — | none, always one | n/a | yes |
 | 2 | `implement` | work | `gate-plan` | one node **per implement ticket** | tickets sharing a `parallel_group` | yes |
-| 3 | `test-plan` | work | `implement` (all of them) | none, always one | no | no |
-| 4 | `test-write` | work | `test-plan` | one **anchor**, tickets underneath | no | no |
-| 5 | `review` | work | `test-write` | **fixed at 4 named reviewers** | all four together | yes |
+| 3 | `test-plan` | work | `implement` (all of them) | none, always one | no | no — skipped when verification is `none` |
+| 4 | `test-write` | work | `test-plan` | one **anchor**, tickets underneath | no | no — skipped when verification is `checks` or `none` |
+| 5 | `review` | work | `test-write` | **fixed at 4 named reviewers** | all four together | no — skipped, wholly or in part, by the assurance decision |
 | 6 | `gate-repairs` | gate | `review` (all four) | none, always one | n/a | yes |
 | 7 | `repair` | work | `gate-repairs` | one **anchor**, tickets underneath | tickets sharing a `parallel_group` | no |
 | 8 | `document` | work | `repair` | none, always one | no | yes |
@@ -207,16 +210,47 @@ VALUES ('REQ-007', 'add-node', 'research',
 
 | rule | why |
 |---|---|
-| A `required: true` node may be **reshaped but never dropped** | Review always happens; *how wide it fans out* is negotiable. Reshaping is a judgement about this requirement. Dropping is a judgement about the guild's standards, which is not the strategist's to make. |
+| A `required: true` node may be **reshaped but never dropped** | `gate-plan`, `implement`, `gate-repairs` and `document` are the guild's standards, not a per-requirement judgement. |
+| **`test-plan`, `test-write` and `review` may be SKIPPED, never deleted — and only with a `graph_deviation` row carrying the reason** | Whether work needs tests or review is a judgement about *this deliverable*, and the guild master reads it at `gate-plan`. The node stays and is marked `skipped`; a deleted node is an unexplained hole. G8 asserts the row exists. |
 | **A gate may be neither dropped nor added** | §4. `add-gate` is refused outright, whatever the reason. |
 | **Every deviation carries a non-empty reason** | Whitespace-only is empty. A graph with unexplained divergence cannot be diffed against a baseline when a run goes wrong — you end up staring at a bespoke graph with no way to tell intent from accident. |
 | **An `add-node` must name a capability some available subagent declares** | Otherwise you get a graph that cannot run: a node nobody can be matched to, discovered at dispatch time in the middle of a shift. **Nothing in SQL can check this** — the roster is the agent files. Check with `roster.py --covers` before you insert (§8). |
 | **Every template key gets at least one node** | This is what makes "dropped" unambiguous. A key with zero rows was dropped — full stop, with no *"unless its fan-out happened to be empty"* caveat to hide behind. It is also why `implement` has a no-tickets fallback and why the anchors exist. |
 
 **Legitimate deviations look like:** a `research` node ahead of `implement` for an unfamiliar
-API; dropping `test-plan` and going straight to `test-write` for a docs-only change; fanning
-`review` to six with a performance and an accessibility reviewer for a UI-heavy requirement;
-splitting `implement` into three sequential waves because the file sets are not disjoint.
+API; skipping `test-plan` and `test-write` for an article whose rules the author checks with the
+site's own commands; skipping the security and architecture reviewers on a draft with no input,
+secrets or structure; fanning `review` to six with a performance and an accessibility reviewer for
+a UI-heavy requirement; splitting `implement` into three sequential waves because the file sets
+are not disjoint.
+
+### 5.1 Skipping a step on the assurance decision
+
+The strategist asks, at Step 3.7, whether each ticket needs tests and whether it needs review. The
+answers decide which of `test-plan`, `test-write` and the four `review.*` nodes run.
+
+| Verification | `test-plan` | `test-write` |
+|---|---|---|
+| `tests` | runs | runs |
+| `checks` | runs, declares **no** test-writer tickets | **skipped** |
+| `none` | **skipped** | **skipped** |
+
+| Review | the four `review.*` nodes |
+|---|---|
+| `full` | all four run |
+| `focused` | the named lenses run; the rest are **skipped** |
+| `none` | all four **skipped** |
+
+**A skipped node is kept, with its edges, and marked `skipped`.** `done` and `skipped` both count
+as finished (§7), so its successors become ready as soon as their other predecessors finish — no
+edge is rewritten, nothing is stitched, and the counts in §1 do not change. That is the whole
+reason this is a status and not a deletion. The `maintenance` template already works this way for
+`qa-plan`.
+
+Each skip carries a `graph_deviation` row — `drop-node` for a whole step, `reshape` for a narrowed
+`review`. The statements, verified against tursodb 0.7.2, are in
+`agents/references/strategist-assurance.md`. A skipped step gets **no ticket**; the orchestrator
+never has a bounty to bind to a node that will not run.
 
 ### What is enforced and what is convention — read this before you trust it
 
@@ -225,7 +259,7 @@ splitting `implement` into three sequential waves because the file sets are not 
 | `kind ∈ ('work','gate')`, `status` vocabulary | **the database**, via CHECK constraints — cannot be bypassed |
 | node id uniqueness, edge uniqueness, one gate row per gate node | **the database**, via PRIMARY KEY |
 | the readiness rule, the review gate, the board | **the database**, via views — one definition, not one per reader |
-| "no third gate", "no dropped required node", "reason is non-empty" | **you**, by running §8's checks. A trigger can enforce the gate rule if the warehouse schema carries one — check `SELECT name FROM sqlite_schema WHERE type='trigger'`. Do not assume it does. |
+| "no third gate", "no dropped required node", "reason is non-empty", "a skipped test or review step has a deviation" | **you**, by running §8's checks, and G8 after the fact. A trigger can enforce the gate rule if the warehouse schema carries one — check `SELECT name FROM sqlite_schema WHERE type='trigger'`. Do not assume it does. |
 | "the orchestrator owns every status transition" | **nobody.** It is a convention. The schema has no identity concept, so it cannot tell an orchestrator's UPDATE from an agent's. Follow it because the board is incoherent otherwise, not because something will stop you. |
 
 ---
@@ -445,7 +479,7 @@ Run these after any deviation. Each returns **zero rows when the graph is sound*
 -- (a) a template key with no instance = a DROPPED node
 WITH tpl(k, required) AS (VALUES
   ('gate-plan',1),('implement',1),('test-plan',0),('test-write',0),
-  ('review',1),('gate-repairs',1),('repair',0),('document',1))
+  ('review',0),('gate-repairs',1),('repair',0),('document',1))
 SELECT 'DROPPED' || CASE WHEN tpl.required = 1 THEN ' (REQUIRED)' ELSE '' END || ': ' || tpl.k
 FROM tpl
 WHERE NOT EXISTS (SELECT 1 FROM graph_node n
@@ -466,6 +500,16 @@ FROM graph_deviation WHERE requirement_id = 'REQ-007' AND kind = 'add-gate';
 SELECT 'EMPTY REASON: ' || kind || ' ' || node_key
 FROM graph_deviation
 WHERE requirement_id = 'REQ-007' AND trim(reason) = '';
+
+-- (d2) a test or review node skipped with no deviation recording why. A skip is a
+--      decision, and the reason is the whole of its value.
+SELECT 'SKIPPED WITHOUT REASON: ' || n.id
+FROM graph_node n
+WHERE n.requirement_id = 'REQ-007' AND n.status = 'skipped'
+  AND n.node_key IN ('test-plan','test-write','review')
+  AND NOT EXISTS (SELECT 1 FROM graph_deviation d
+                   WHERE d.requirement_id = n.requirement_id AND d.node_key = n.node_key
+                     AND d.kind IN ('drop-node','reshape'));
 
 -- (e) an edge that leaves the requirement, or a node with no path at all
 SELECT 'CROSS-REQ EDGE: ' || e.from_node || ' -> ' || e.to_node

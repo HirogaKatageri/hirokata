@@ -12,6 +12,7 @@ parse it and it will render as text.
 **The section list is your domain profile's (Slot 4).** Below is the shape every profile
 shares; the profile adds its own survey section — on `software` that is `## Codebase
 Analysis` — and may rename `Implementation Tasks` to whatever the domain calls a unit of work.
+`Assurance` is the method's own and every profile carries it.
 
 ```markdown
 # {Feature} Implementation Plan
@@ -32,6 +33,17 @@ Analysis` — and may rename `Implementation Tasks` to whatever the domain calls
 ### 2. {Task Title} (complexity: {1|2|3})
 {...repeat — one entry per developer task...}
 
+## Assurance
+
+{What gets tested and reviewed, per ticket, and why — Step 3.7. The guild master reads this at
+ `gate-plan`. A row for every producing ticket, including the ones that need nothing.}
+
+| Ticket | Verification (tests / checks / none) | Review (full / focused: lenses / none) | Why |
+|--------|--------------------------------------|----------------------------------------|-----|
+| {TASK} {title} | {…} | {…} | {one sentence a reader can disagree with} |
+
+Graph effect: {which of `test-plan`, `test-write` and the four reviewers run, and which are skipped}
+
 ## Technical Decisions
 
 | Decision | Choice | Rationale |
@@ -50,8 +62,8 @@ Analysis` — and may rename `Implementation Tasks` to whatever the domain calls
 One per developer task. This text becomes that ticket's `objective`, hexed from the file you
 wrote it to.
 
-**The section list is your domain profile's (Slot 5).** `Objective`, `Approach` and
-`Acceptance Criteria` are the method's and appear in every domain; the profile supplies the
+**The section list is your domain profile's (Slot 5).** `Objective`, `Approach`,
+`Assurance` and `Acceptance Criteria` are the method's and appear in every domain; the profile supplies the
 contention section and the hand-off section.
 
 ```markdown
@@ -68,6 +80,10 @@ contention section and the hand-off section.
 
 {PROFILE HAND-OFF SECTION — software: "## Interface Contract", what this task exposes to
  or consumes from sibling tasks: function signatures, types, events, routes}
+
+## Assurance
+- Verification: {tests | checks — the commands or checklist | none}
+- Review: {full | focused — the lenses | none}
 
 ## Acceptance Criteria
 - [ ] {Specific, verifiable outcome}

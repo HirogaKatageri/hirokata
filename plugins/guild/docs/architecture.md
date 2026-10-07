@@ -179,7 +179,8 @@ plugins/guild/
 │   ├── brief/ dashboard/
 │   ├── new-requirement/ qa/ qa-mindset/ qa-artifacts/
 │   ├── domain-software/    # the strategist's DOMAIN — what surveying means, what a ticket
-│   │                       # owns, how work routes, what a plan and a ticket carry.
+│   │                       # owns, how work routes, what a plan and a ticket carry, and what
+│   │                       # needs tests and review (the assurance assessment, Step 3.7).
 │   │                       # `domain:` in .guild/config.yaml picks one; absent means this.
 │   ├── release/ comprehensive-review/ verify-and-fix/ create-workflow/
 │   └── svelte-*/           # specialist reference skills
